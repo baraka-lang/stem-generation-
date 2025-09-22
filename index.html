@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI Music Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <style>
+    /* helper to hide horizontal scrollbar for take tray */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .card-border { border: 1px solid rgba(255,255,255,0.08); }
+
+    /* Non-blur player surface shared by player bar, mixer tray, and generate cards */
+    .player-surface {
+      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+    }
+
+    /* Keep content clear of player bar */
+    #techno-generator-page { padding-bottom: 7.5rem; }
+
+    /* Enlarge the navigation arrows inside waveform/take selectors */
+    [data-action="prev-take"] i,
+    [data-action="next-take"] i {
+      width: 1.5rem;
+      height: 1.5rem;
+    }
+
+    /* Red border when muted */
+    .sg-muted-border { border-color: rgb(239, 68, 68) !important; }
+  </style>
+</head>
+<body class="bg-zinc-900 text-white font-geist overflow-x-hidden">
+<canvas id="aurora-canvas"></canvas>
+
+<!-- Thin header with Library + Credits:100 + Account -->
+<header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+  <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between">
+    <div class="text-sm text-white/70">AI Music Studio</div>
+    <nav class="flex items-center gap-2">
+      <!-- Help button to open usage info -->
+      <button id="helpBtn" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
+        <i data-lucide="help-circle" class="w-4 h-4"></i>
+      </button>
+      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Credits: 100</button>
+      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Library</button>
+      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Account</button>
+    </nav>
+  </div>
+</header>
+
+<!-- Login Page -->
+<div id="login-page" class="min-h-[calc(100vh-40px)] flex items-center justify-center p-4">
+  <div class="text-center">
+    <h1 class="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+      343 Labs AI Music Studio
+    </h1>
+    <p class="text-xl text-white/60 mb-8">
+      Create professional-quality stems with AI-powered music generation
+    </p>
+    <button id="loginBtn" class="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-xl text-lg font-medium transition-all duration-300 hover:scale-105 shadow-lg">
+      Enter Studio
+    </button>
+  </div>
+</div>
+
+<!-- Generator Selection Page -->
+<div id="selection-page" class="min-h-[calc(100vh-40px)] flex items-center justify-center p-4 hidden">
+  <div class="max-w-6xl mx-auto">
+    <div class="text-center mb-12">
+      <h1 class="text-4xl font-bold mb-4">Choose Your Genre</h1>
+      <p class="text-xl text-white/60">Select a music generator to start creating</p>
+    </div>
+    
+    <div class="grid md:grid-cols-3 gap-8">
+      <!-- Techno Generator Card -->
+      <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+        <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center">
+          <i data-lucide="zap" class="w-10 h-10"></i>
+        </div>
+        <h3 class="text-2xl font-bold mb-4">Techno Generator</h3>
+        <p class="text-white/60 mb-6">Create deep, driving techno stems with industrial precision</p>
+        <ul class="text-sm text-white/40 mb-8 space-y-1">
+          <li>• 110-140 BPM range</li>
+          <li>• Industrial sounds</li>
+          <li>• Hypnotic loops</li>
+        </ul>
+        <button id="launchTechno" class="w-full px-6 py-3 bg-red-500/80 hover:bg-red-500 border border-red-500 rounded-lg transition text-sm font-medium">
+          Launch Techno Studio
+        </button>
+      </div>
+
+      <!-- Hip-Hop Generator Card -->
+      <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300 opacity-50">
+        <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-yellow-500 to-orange-600 rounded-full flex items-center justify-center">
+          <i data-lucide="mic" class="w-10 h-10"></i>
+        </div>
+        <h3 class="text-2xl font-bold mb-4">Hip-Hop Generator</h3>
+        <p class="text-white/60 mb-6">Generate boom-bap beats and modern trap elements</p>
+        <ul class="text-sm text-white/40 mb-8 space-y-1">
+          <li>• 80-100 BPM range</li>
+          <li>• 808 drums & bass</li>
+          <li>• Classic samples</li>
+        </ul>
+        <button id="launchHipHop" class="w-full px-6 py-3 bg-yellow-500/30 border border-yellow-500/30 rounded-lg text-sm font-medium cursor-not-allowed" disabled>
+          Coming Soon
+        </button>
+      </div>
+
+      <!-- House Generator Card -->
+      <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300 opacity-50">
+        <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
+          <i data-lucide="home" class="w-10 h-10"></i>
+        </div>
+        <h3 class="text-2xl font-bold mb-4">House Generator</h3>
+        <p class="text-white/60 mb-6">Create groovy four-on-the-floor house music</p>
+        <ul class="text-sm text-white/40 mb-8 space-y-1">
+          <li>• 118-130 BPM range</li>
+          <li>• Classic house groove</li>
+          <li>• Uplifting energy</li>
+        </ul>
+        <button id="launchHouse" class="w-full px-6 py-3 bg-green-500/30 border border-green-500/30 rounded-lg text-sm font-medium cursor-not-allowed" disabled>
+          Coming Soon
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Techno Generator Page -->
+<div id="techno-generator-page" class="hidden">
+  <!-- Stem Cards -->
+  <main id="stem-container" class="w-full max-w-5xl mx-auto px-4 py-8 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+    <!-- Cards injected by app.js -->
+  </main>
+</div>
+
+<!-- Instructions Modal (unchanged structure) -->
+<div id="instructionModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="modalOverlay"></div>
+  <div class="relative w-full max-w-2xl max-h-[80vh] glass card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-2xl font-medium text-white">Instructions</h2>
+      <button id="modalCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <div class="mb-6">
+      <label class="block text-sm text-white/60 mb-3">Describe the sound you want to generate:</label>
+      <textarea id="instructionTextarea" class="w-full h-40 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white/90 leading-relaxed resize-none focus:border-white/20 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition" placeholder="Enter detailed instructions for the AI music generation..."></textarea>
+    </div>
+    <div class="flex gap-3 justify-end">
+      <button id="modalCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+      <button id="modalSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Save Instructions</button>
+    </div>
+  </div>
+</div>
+
+<!-- Help & Tips Modal -->
+<div id="helpModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="helpModalOverlay"></div>
+  <div class="relative w-full max-w-md max-h-[80vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-medium text-white">Help &amp; Tips</h2>
+      <button id="helpModalCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <div class="text-sm text-white/80 space-y-3 overflow-y-auto max-h-[60vh]">
+      <p>Press the spacebar to play or pause the loop.</p>
+      <p>Use number keys 1–9 to mute or unmute the corresponding instruments.</p>
+      <p>If the number circles are red, it means either the stem has not been generated yet or the channel is muted.</p>
+      <p>A red border around a card indicates that the instrument or channel is muted.</p>
+      <p>Generations are not 100% predictable due to the nature of AI – experiment and generate multiple versions to find your favorite take.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Floating bottom player bar with mixer toggle -->
+<div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 hidden">
+  <div class="mx-auto max-w-5xl px-4 py-3">
+    <div class="flex items-center gap-3 flex-wrap">
+      <!-- Play/Pause -->
+      <button id="playBtn" class="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-white/10 transition"
+              data-action="play-pause" title="Play / Pause">
+        <i data-lucide="play" class="stroke-current w-5 h-5"></i>
+      </button>
+
+
+
+      <!-- Tempo (generation only) -->
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-white/60">Tempo</span>
+        <input id="tempoSlider" type="range" min="110" max="140" value="130"
+               class="w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
+        <span id="tempoValue" class="text-sm w-10 text-right">130</span>
+      </div>
+
+      <!-- Bars -->
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-white/60">Bars</span>
+        <select id="barsSelector" data-field="bars" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
+          <option value="4" selected>4</option>
+          <option value="8">8</option>
+        </select>
+      </div>
+
+      <!-- Key -->
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-white/60">Key</span>
+        <select id="rootSelector" data-field="root" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm w-12">
+          <option value="C">C</option>
+          <option value="C#">C♯</option>
+          <option value="D">D</option>
+          <option value="D#">D♯</option>
+          <option value="E">E</option>
+          <option value="F">F</option>
+          <option value="F#">F♯</option>
+          <option value="G">G</option>
+          <option value="G#">G♯</option>
+          <option value="A" selected>A</option>
+          <option value="A#">A♯</option>
+          <option value="B">B</option>
+        </select>
+        <select id="accidentalSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
+          <option value="natural">♮</option>
+          <option value="sharp">♯</option>
+          <option value="flat">♭</option>
+        </select>
+        <select id="modeSelector" data-field="mode" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
+          <option value="Minor" selected>Min</option>
+          <option value="Major">Maj</option>
+        </select>
+      </div>
+
+      <!-- Push mixer toggle to the right -->
+      <div class="ml-auto"></div>
+
+      <!-- Mixer toggle inside player -->
+      <button id="mixerToggleBtn"
+              class="px-4 py-2 rounded-full border border-white/20 player-surface text-sm tracking-wide hover:bg-white/10 transition"
+              aria-pressed="false">
+        open mixer
+      </button>
+    </div>
+  </div>
+
+  <!-- Docked Mixer Tray (expands upward) — same surface -->
+  <div id="mixerTray" class="player-surface max-h-0 overflow-hidden transition-[max-height] duration-200 ease-out border-t border-white/10">
+    <div class="mixer-inner max-w-5xl mx-auto px-4 py-3">
+      <div class="text-xs text-white/70 mb-2">Mixer</div>
+      <div id="mixerGrid" class="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-9 gap-2"><!-- filled by app.js --></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+@@ .. @@
+  color: #747bff;
+}
+button {
+  background-color: #f9f9f9;
+}
+}
+
+/* Aurora Canvas Background Styles */
+#aurora-canvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;
+}
+
+/* Glass Effects */
+.glass {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.card-border {
+  background: rgba(79, 70, 229, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(25px);
+  -webkit-backdrop-filter: blur(25px);
+  box-shadow: inset 0 0 30px rgba(79, 70, 229, 0.1),
+              inset 0 0 60px rgba(59, 130, 246, 0.05),
+              0 0 50px rgba(139, 92, 246, 0.2);
+}
+
+.gradient-border {
+  position: relative;
+  background: linear-gradient(135deg, rgba(79, 70, 229, 0.1), rgba(59, 130, 246, 0.1), rgba(139, 92, 246, 0.1));
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  background: linear-gradient(135deg, #4f46e5, #3b82f6, #8b5cf6, #f59e0b);
+  border-radius: inherit;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: xor;
+  -webkit-mask-composite: xor;
+}
+
+/* Custom Range Slider */
+input[type=range]::-webkit-slider-thumb {
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #8b5cf6;
+  cursor: pointer;
+  border: none;
+}
+
+/* Loading Animation */
+.loading-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Disabled State */
+button:disabled {
+  opacity: 0.4 !important;
+  pointer-events: none !important;
+}
+
+button[aria-disabled="true"] {
+  opacity: 0.4 !important;
+  pointer-events: none !important;
+}
+
+/* Tooltip */
+.tooltip {
+  position: relative;
+}
+
+.tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  margin-bottom: 4px;
+}
+
+.tooltip:hover::after {
+  opacity: 1;
+}
+
+/* Syncing Animation */
+.is-syncing {
+  animation: pulse-sync 1s ease-in-out infinite;
+}
+
+@keyframes pulse-sync {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.7);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow: 0 0 0 8px rgba(139, 92, 246, 0);
+  }
+}
+
+/* Status Line */
+.status-line {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 8px;
+}
+
+/* Disabled Icons */
+button:disabled i,
+button[aria-disabled="true"] i {
+  opacity: 0.3 !important;
+  cursor: default !important;
+}
