@@ -901,123 +901,46 @@ async function generateStem(st) {
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
     const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
 
-    // Offload prompt construction, composition and loop fixing to Supabase.
-    let audioBuffer, usedPrompt, tier, validated
-    try {
-      // Build request payload with per‑stem controls and master settings.  The
-      // master settings include the root base, accidental and mode, which are
-      // preserved from the UI.  We also pass a flag to indicate that Grok
-      // composition is disabled on the server for now.
-      const payload = {
-        stem: st,
-        controls: stemControlValues[st] || {},
-        master: {
-          tempo,
-          bars,
-          rootBase: stemControlValues.master?.rootBase || 'A',
-          accidental: stemControlValues.master?.accidental || 'natural',
-          mode: stemControlValues.master?.mode || 'Minor',
-        },
-        use_grok: false,
-      }
-
-      // Invoke the Supabase Edge function via the official client.  The
-      // supabase-js client automatically injects authentication headers
-      // and handles cross‑origin calls on our behalf.  If the call
-      // fails (for example due to CORS or a missing JWT), we fall
-      // back to a direct fetch against the `functions.supabase.co`
-      // domain using the anon key.  This dual approach improves
-      // resilience when running locally or via preview hosts where
-      // the Supabase client may not be configured with a valid
-      // Authorization token.  See the Supabase docs for disabling
-      // JWT verification【810483078752586†L232-L254】.
-      let fnData = null
-      try {
-        const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
-        if (error) throw error
-        fnData = data
-      } catch (invokeErr) {
-        console.warn('supabase.functions.invoke failed, falling back to fetch:', invokeErr?.message)
-        // Fallback: construct direct URL to the Edge Function on the
-        // main supabase domain.  We send the payload as plain text
-        // (`Content-Type: text/plain`) to avoid CORS preflight.  The
-        // anon key is attached as a query parameter instead of a
-        // header, since custom headers cause preflight.
-        try {
-          const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '')
-          const match = supabaseUrl.match(/https?:\/\/(.*?)\.supabase\.co/)
-          const projectRef = match ? match[1] : ''
-          const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || '')
-          if (!projectRef) throw new Error('Missing project ref for fallback')
-          const fnName = 'generate-techno-stem'
-          // Build a GET URL to avoid CORS preflight.  We encode the JSON
-          // payload into the `payload` query parameter and attach the
-          // anon key as `apikey`.  Example:
-          //   https://<project>.supabase.co/functions/v1/<fnName>?apikey=<anonKey>&payload=<encoded>
-          // Encode the payload once.  We avoid using URLSearchParams for the
-          // payload value to prevent double encoding.  The anonymous key
-          // is URL‑encoded separately.
-          // Base64‑encode the JSON payload.  We first convert the JSON
-          // string into a UTF‑8 byte sequence to support Unicode, then
-          // use `btoa` to create a base64 string.  Finally we
-          // URL‑encode the base64 to ensure it is safe for query params.
-          const jsonString = JSON.stringify(payload)
-          const utf8 = unescape(encodeURIComponent(jsonString))
-          const b64payload = btoa(utf8)
-          const encodedPayload = encodeURIComponent(b64payload)
-          const encodedAnon = anonKey ? encodeURIComponent(anonKey) : ''
-          // Use the `functions.supabase.co` subdomain instead of the `/functions/v1` path.
-          // According to Supabase docs, functions are available at
-          // `https://<project>.functions.supabase.co/<function>`【654614680547023†L84-L133】.
-          let fetchUrl = `https://${projectRef}.functions.supabase.co/${fnName}`
-          const qs = []
-          if (encodedAnon) qs.push(`apikey=${encodedAnon}`)
-          qs.push(`payload=${encodedPayload}`)
-          fetchUrl += `?${qs.join('&')}`
-          const fetchOptions = { method: 'GET', signal }
-          const resp = await fetch(fetchUrl, fetchOptions)
-          if (!resp.ok) {
-            const txt = await resp.text().catch(() => '')
-            throw new Error(`Fallback fetch error ${resp.status}: ${txt}`)
-          }
-          const json = await resp.json()
-          fnData = json
-        } catch (fallbackErr) {
-          // Rethrow with context
-          throw new Error(fallbackErr?.message || 'Failed to send a request to the Edge Function')
-        }
-      }
-      if (!fnData) {
-        throw new Error('No response from Supabase function')
-      }
-
-      usedPrompt = fnData.usedPrompt
-      tier = fnData.tier
-      validated = !!fnData.validated
-      // Decode base64 WAV returned from the server
-      const b64 = String(fnData.audio_b64 || '')
-      const base64Data = b64.split(',').pop() || ''
-      const binStr = atob(base64Data)
-      const len = binStr.length
-      const bytes = new Uint8Array(len)
-      for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i)
-      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+    // Use the old generate logic: call Eleven Labs via the proxy function
+    // (`eleven-music-compose`) and build a strict loop locally.  This
+    // avoids relying on a server-side `generate-techno-stem` function,
+    // which may not be deployed, and sidesteps complex CORS issues.
+    let audioBuffer, usedPrompt, tier = 0, failedValidation = false
+    if (st === 'hihat' || st === 'perc') {
+      // For hi-hat and snare, use tiered retries and validation
+      const res = await composeWithRetries(st, tempo, bars, signal, statusEl)
+      audioBuffer = res.buffer
+      usedPrompt = res.usedPrompt
+      tier = res.tier
+      failedValidation = !!res.failedValidation
+    } else {
+      const prompt = buildStemPrompt(st).trim()
+      const beats = bars * 4
+      const seconds = beats * (60 / tempo)
+      let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
+      music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
+      const body = USE_COMPOSITION_PLAN
+        ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
+        : { prompt, music_length_ms }
+      const ab = await composeOnce(body, signal)
       audioBuffer = await audioContext.decodeAudioData(ab)
-    } catch (e) {
-      // Propagate the error to the outer catch for user feedback
-      throw e
+      usedPrompt = prompt
+      tier = 0
+      failedValidation = false
     }
 
-    // Detect head index for record keeping (not used for playback)
-    try {
-      referenceHeadIndex = detectHeadIndex(audioBuffer)
-      referenceStemType = st
-    } catch {}
+    // Determine head index and build a strict loop from the raw buffer.  This
+    // trims the audio to exactly the requested number of bars at the
+    // current tempo, applies a micro crossfade at the seam and ramps at
+    // the edges.  See `buildLoopBufferFromRawStrict` for details.
+    referenceHeadIndex = detectHeadIndex(audioBuffer)
+    referenceStemType = st
+    const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
 
-    // Store raw buffer for reference and use the trimmed loop as returned from the server.
+    // Store raw and loop buffers.  Record the loop duration for per-stem transport.
     stemRaw[st]  = audioBuffer
-    stemLoop[st] = audioBuffer
-    stemLoopDuration[st] = audioBuffer.duration
+    stemLoop[st] = strictLoop
+    stemLoopDuration[st] = strictLoop.duration
 
     pushStemVersion(st, {
       id: `${st}_${Date.now()}`,
@@ -1027,12 +950,11 @@ async function generateStem(st) {
       sessionTag: SESSION_TAG,
       headIndex: referenceHeadIndex,
       raw: audioBuffer,
-      meta: { tier, validated }
+      meta: { tier, validated: !(failedValidation) }
     })
     renderHistoryDrawer(st)
 
-    // Do not rebuild other loops when head index changes; each stem keeps its own alignment
-
+    // Draw waveform for the new loop
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
       const cfg = stemConfigs[st]
@@ -1040,11 +962,8 @@ async function generateStem(st) {
     }
     if (statusEl) {
       const base = `Ready (${stemLoop[st].duration.toFixed(3)}s, loop-aligned)`
-      // Use the validated flag returned from the server to indicate success.  If
-      // validation failed after retries, show a warning.  Otherwise, show
-      // the strictness tier when greater than 0.
-      statusEl.textContent = (!validated)
-        ? `${base} — warning: validation failed after retries (kept strict take)`
+      statusEl.textContent = failedValidation
+        ? `${base} — warning: validator failed after retries (kept strict take)`
         : (tier > 0 ? `${base} — strict tier ${tier + 1}` : `${base}`)
     }
 
