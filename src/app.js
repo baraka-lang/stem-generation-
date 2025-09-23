@@ -938,30 +938,33 @@ async function generateStem(st) {
         fnData = data
       } catch (invokeErr) {
         console.warn('supabase.functions.invoke failed, falling back to fetch:', invokeErr?.message)
-        // Fallback: construct direct URL to the Edge Function using the
-        // functions subdomain.  Extract the project ID from the
-        // Supabase URL (e.g. https://project.supabase.co) and build
-        // https://project.functions.supabase.co/{function-name}.  Append
-        // the anon key as a query parameter to avoid the need for
-        // Authorization headers.
+        // Fallback: construct direct URL to the Edge Function on the
+        // main supabase domain.  We send the payload as plain text
+        // (`Content-Type: text/plain`) to avoid CORS preflight.  The
+        // anon key is attached as a query parameter instead of a
+        // header, since custom headers cause preflight.
         try {
           const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '')
-          const projectRef = supabaseUrl.replace(/^https?:\/\//, '').split('.')[0] || ''
+          const match = supabaseUrl.match(/https?:\/\/(.*?)\.supabase\.co/)
+          const projectRef = match ? match[1] : ''
           const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || '')
           if (!projectRef) throw new Error('Missing project ref for fallback')
           const fnName = 'generate-techno-stem'
-          let fetchUrl = `https://${projectRef}.functions.supabase.co/${fnName}`
-          // Attach anon key as query param if available
-          if (anonKey) {
-            const q = new URLSearchParams({ apikey: anonKey })
-            fetchUrl += `?${q.toString()}`
-          }
-          const fetchOptions = {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal,
-          }
+          // Build a GET URL to avoid CORS preflight.  We encode the JSON
+          // payload into the `payload` query parameter and attach the
+          // anon key as `apikey`.  Example:
+          //   https://<project>.supabase.co/functions/v1/<fnName>?apikey=<anonKey>&payload=<encoded>
+          // Encode the payload once.  We avoid using URLSearchParams for the
+          // payload value to prevent double encoding.  The anonymous key
+          // is URL‑encoded separately.
+          const encodedPayload = encodeURIComponent(JSON.stringify(payload))
+          const encodedAnon = anonKey ? encodeURIComponent(anonKey) : ''
+          let fetchUrl = `https://${projectRef}.supabase.co/functions/v1/${fnName}`
+          const qs = []
+          if (encodedAnon) qs.push(`apikey=${encodedAnon}`)
+          qs.push(`payload=${encodedPayload}`)
+          fetchUrl += `?${qs.join('&')}`
+          const fetchOptions = { method: 'GET', signal }
           const resp = await fetch(fetchUrl, fetchOptions)
           if (!resp.ok) {
             const txt = await resp.text().catch(() => '')
