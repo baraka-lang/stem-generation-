@@ -901,33 +901,63 @@ async function generateStem(st) {
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
     const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
 
-    let audioBuffer, usedPrompt, tier, failedValidation
-    if (st === 'hihat' || st === 'perc') {
-      const res = await composeWithRetries(st, tempo, bars, signal, statusEl)
-      audioBuffer = res.buffer; usedPrompt = res.usedPrompt; tier = res.tier; failedValidation = res.failedValidation
-    } else {
-      const prompt = buildStemPrompt(st).trim()
-      const beats = bars * 4
-      const seconds = beats * (60 / tempo)
-      let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
-      music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
-
-      const body = USE_COMPOSITION_PLAN
-        ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
-        : { prompt, music_length_ms }
-
-      const ab = await composeOnce(body, signal)
+    // Offload prompt construction, composition and loop fixing to Supabase.
+    let audioBuffer, usedPrompt, tier, validated
+    try {
+      // Build request payload with per‑stem controls and master settings.  The
+      // master settings include the root base, accidental and mode, which are
+      // preserved from the UI.
+      const payload = {
+        stem: st,
+        controls: stemControlValues[st] || {},
+        master: {
+          tempo,
+          bars,
+          rootBase: stemControlValues.master?.rootBase || 'A',
+          accidental: stemControlValues.master?.accidental || 'natural',
+          mode: stemControlValues.master?.mode || 'Minor',
+        },
+        use_grok: false,
+      }
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+      const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+      const resp = await fetch(`${supabaseUrl}/functions/v1/generate-techno-stem`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${anonKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal,
+      })
+      if (!resp.ok) {
+        const errTxt = await resp.text().catch(() => '')
+        throw new Error(`Server error ${resp.status}: ${errTxt}`)
+      }
+      const data = await resp.json()
+      usedPrompt = data.usedPrompt
+      tier = data.tier
+      validated = !!data.validated
+      // Decode base64 WAV returned from the server
+      const b64 = String(data.audio_b64 || '')
+      const base64Data = b64.split(',').pop() || ''
+      const binStr = atob(base64Data)
+      const len = binStr.length
+      const bytes = new Uint8Array(len)
+      for (let i = 0; i < len; i++) bytes[i] = binStr.charCodeAt(i)
+      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
       audioBuffer = await audioContext.decodeAudioData(ab)
-      usedPrompt = prompt; tier = 0
+    } catch (e) {
+      throw e
     }
 
-    // Detect head index (unused for raw looping) and store for record keeping
-    referenceHeadIndex = detectHeadIndex(audioBuffer)
-    referenceStemType = st
+    // Detect head index for record keeping (not used for playback)
+    try {
+      referenceHeadIndex = detectHeadIndex(audioBuffer)
+      referenceStemType = st
+    } catch {}
 
-    // Store raw buffer for reference and loop directly from the raw audio.  We no
-    // longer trim or crossfade the loop, so the entire generated audio plays
-    // back as a perfect loop at its original tempo.
+    // Store raw buffer for reference and use the trimmed loop as returned from the server.
     stemRaw[st]  = audioBuffer
     stemLoop[st] = audioBuffer
     stemLoopDuration[st] = audioBuffer.duration
@@ -940,7 +970,7 @@ async function generateStem(st) {
       sessionTag: SESSION_TAG,
       headIndex: referenceHeadIndex,
       raw: audioBuffer,
-      meta: { tier, validated: !(failedValidation === true) }
+      meta: { tier, validated }
     })
     renderHistoryDrawer(st)
 
@@ -953,9 +983,12 @@ async function generateStem(st) {
     }
     if (statusEl) {
       const base = `Ready (${stemLoop[st].duration.toFixed(3)}s, loop-aligned)`
-      statusEl.textContent = (failedValidation)
-        ? `${base} — warning: validator failed after retries (kept strict take)`
-        : (tier>0 ? `${base} — strict tier ${tier+1}` : `${base}`)
+      // Use the validated flag returned from the server to indicate success.  If
+      // validation failed after retries, show a warning.  Otherwise, show
+      // the strictness tier when greater than 0.
+      statusEl.textContent = (!validated)
+        ? `${base} — warning: validation failed after retries (kept strict take)`
+        : (tier > 0 ? `${base} — strict tier ${tier + 1}` : `${base}`)
     }
 
     if (isPlaying) restartStemNextBoundary(st)
