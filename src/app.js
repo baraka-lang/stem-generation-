@@ -921,56 +921,23 @@ async function generateStem(st) {
         use_grok: false,
       }
 
+      // Invoke the Supabase Edge function via the official client.  We
+      // deliberately avoid falling back to a direct fetch because the
+      // fallback may trigger CORS preflight errors (as seen in the
+      // console output).  The supabase-js client handles cross‑origin
+      // requests and authentication headers on our behalf.  If the
+      // invocation fails or returns no data, we propagate the error to
+      // surface meaningful feedback to the user.
       let fnData = null
-      let invokeError = null
-      // Attempt to invoke the Supabase Edge function via the official client.
       try {
         const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
+        if (error) throw error
         fnData = data
-        invokeError = error
-      } catch (err) {
-        invokeError = err
-      }
-
-      // Fallback: if invocation fails or returns no data, try calling the
-      // function endpoint directly.  This supports environments where the
-      // supabase-js client cannot invoke Edge functions (e.g., local dev
-      // servers or CORS restrictions).  We assemble the endpoint from
-      // available environment variables or fall back to a relative path.
-      if (!fnData) {
-        // Determine the function endpoint.  Use VITE_SUPABASE_URL if present,
-        // otherwise default to the current origin (useful when running with
-        // supabase-cli locally).  Append /functions/v1/generate-techno-stem.
-        const baseUrl = import.meta.env.VITE_SUPABASE_URL || ''
-        let endpoint = ''
-        if (baseUrl) {
-          endpoint = `${baseUrl.replace(/\/$/, '')}/functions/v1/generate-techno-stem`
-        } else {
-          endpoint = `/functions/v1/generate-techno-stem`
-        }
-        // Prepare headers.  Include both apikey and Authorization headers
-        // when an anon key is available.  Some Supabase deployments accept
-        // either header for unauthenticated calls.
-        const headers = { 'Content-Type': 'application/json' }
-        const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-        if (anonKey) {
-          headers['apikey'] = anonKey
-          headers['Authorization'] = `Bearer ${anonKey}`
-        }
-        const resp = await fetch(endpoint, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-          signal,
-        })
-        if (!resp.ok) {
-          const errTxt = await resp.text().catch(() => '')
-          throw new Error(`Server error ${resp.status}: ${errTxt}`)
-        }
-        fnData = await resp.json()
+      } catch (invokeErr) {
+        throw new Error(invokeErr?.message || 'Failed to invoke generate-techno-stem')
       }
       if (!fnData) {
-        throw invokeError || new Error('No response from Supabase function')
+        throw new Error('No response from Supabase function')
       }
 
       usedPrompt = fnData.usedPrompt
