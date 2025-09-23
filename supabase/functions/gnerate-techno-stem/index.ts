@@ -586,19 +586,8 @@ Deno.serve(async (req: Request) => {
       const payloadParam = url.searchParams.get('payload')
       if (payloadParam) {
         try {
-          // Decode URI component to get base64, then decode base64 into
-          // a binary string.  Convert the binary string into a Uint8Array
-          // and use TextDecoder to produce a UTF-8 string.  Finally
-          // parse the JSON.  This avoids deprecated escape/unescape.
-          const b64 = decodeURIComponent(payloadParam)
-          const binary = atob(b64)
-          const bytes = new Uint8Array(binary.length)
-          for (let i = 0; i < binary.length; i++) {
-            bytes[i] = binary.charCodeAt(i)
-          }
-          const decoder = new TextDecoder('utf-8')
-          const jsonStr = decoder.decode(bytes)
-          body = JSON.parse(jsonStr) as GenerateRequest
+          const decoded = decodeURIComponent(payloadParam)
+          body = JSON.parse(decoded) as GenerateRequest
         } catch (_err) {
           body = null
         }
