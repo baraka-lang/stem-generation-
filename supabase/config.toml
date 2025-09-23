@@ -1,0 +1,15 @@
+# Supabase Edge Function configuration
+
+# Disable JWT verification for specific functions.
+# By default, Supabase requires a valid JWT in the `Authorization` header for
+# every Edge Function invocation, which can cause `401` or CORS preflight
+# errors in browser clients that do not have a Supabase session.  Setting
+# `verify_jwt = false` makes the listed functions publicly accessible and
+# removes the need for a valid Authorization token.  See the Supabase
+# documentation for more details【810483078752586†L232-L254】.
+
+[functions.generate-techno-stem]
+verify_jwt = false
+
+[functions.loop-fix]
+verify_jwt = false
