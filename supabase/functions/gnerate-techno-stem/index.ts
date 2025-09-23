@@ -564,16 +564,59 @@ function makeWavFromPCM16(chans: Float32Array[], sr: number): Uint8Array {
 Deno.serve(async (req: Request) => {
   try {
     // CORS preflight
+    // The OPTIONS handler must be the very first check.  Browsers send a
+    // preflight OPTIONS request before the actual request to verify
+    // permissions【654614680547023†L84-L133】.  Responding early with CORS
+    // headers prevents the function logic from executing on a preflight
+    // request.
     if (req.method === 'OPTIONS') {
       return new Response('ok', { status: 200, headers: corsHeaders })
     }
-    if (req.method !== 'POST') {
+
+    // Support both POST and GET requests.  Supabase invokes this function via
+    // POST when called through the supabase-js client.  However, browser
+    // fetches may be forced to GET to avoid preflight.  In a GET request,
+    // we expect the payload to be encoded as a `payload` query parameter.
+    let body: GenerateRequest | null = null
+    if (req.method === 'GET') {
+      // Extract and decode the `payload` query parameter.  The client
+      // encodes the JSON string via encodeURIComponent, so decode it
+      // here before parsing.  If absent, body stays null.
+      const url = new URL(req.url)
+      const payloadParam = url.searchParams.get('payload')
+      if (payloadParam) {
+        try {
+          const decoded = decodeURIComponent(payloadParam)
+          body = JSON.parse(decoded) as GenerateRequest
+        } catch (_err) {
+          body = null
+        }
+      }
+    } else if (req.method === 'POST') {
+      // Parse JSON from application/json or plain text body
+      try {
+        body = (await req.json()) as GenerateRequest
+      } catch (_jsonErr) {
+        try {
+          const textPayload = await req.text()
+          body = JSON.parse(textPayload) as GenerateRequest
+        } catch (_textErr) {
+          body = null
+        }
+      }
+    } else {
+      // Reject any other HTTP methods
       return new Response('Not found', {
         status: 404,
         headers: { 'Content-Type': 'text/plain', ...corsHeaders },
       })
     }
-    const body = (await req.json()) as GenerateRequest
+    if (!body) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid request body' }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      )
+    }
     const stem = String(body.stem || '').toLowerCase()
     const controls = body.controls || {}
     const master = body.master || { tempo: 130, bars: 4, rootBase: 'A', accidental: 'natural', mode: 'Minor' }
