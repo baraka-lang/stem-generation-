@@ -957,9 +957,19 @@ async function generateStem(st) {
           // Encode the payload once.  We avoid using URLSearchParams for the
           // payload value to prevent double encoding.  The anonymous key
           // is URL‑encoded separately.
-          const encodedPayload = encodeURIComponent(JSON.stringify(payload))
+          // Base64‑encode the JSON payload.  We first convert the JSON
+          // string into a UTF‑8 byte sequence to support Unicode, then
+          // use `btoa` to create a base64 string.  Finally we
+          // URL‑encode the base64 to ensure it is safe for query params.
+          const jsonString = JSON.stringify(payload)
+          const utf8 = unescape(encodeURIComponent(jsonString))
+          const b64payload = btoa(utf8)
+          const encodedPayload = encodeURIComponent(b64payload)
           const encodedAnon = anonKey ? encodeURIComponent(anonKey) : ''
-          let fetchUrl = `https://${projectRef}.supabase.co/functions/v1/${fnName}`
+          // Use the `functions.supabase.co` subdomain instead of the `/functions/v1` path.
+          // According to Supabase docs, functions are available at
+          // `https://<project>.functions.supabase.co/<function>`【654614680547023†L84-L133】.
+          let fetchUrl = `https://${projectRef}.functions.supabase.co/${fnName}`
           const qs = []
           if (encodedAnon) qs.push(`apikey=${encodedAnon}`)
           qs.push(`payload=${encodedPayload}`)
