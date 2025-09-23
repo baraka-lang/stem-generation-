@@ -921,20 +921,58 @@ async function generateStem(st) {
         use_grok: false,
       }
 
-      // Invoke the Supabase Edge function via the official client.  We
-      // deliberately avoid falling back to a direct fetch because the
-      // fallback may trigger CORS preflight errors (as seen in the
-      // console output).  The supabase-js client handles cross‑origin
-      // requests and authentication headers on our behalf.  If the
-      // invocation fails or returns no data, we propagate the error to
-      // surface meaningful feedback to the user.
+      // Invoke the Supabase Edge function via the official client.  The
+      // supabase-js client automatically injects authentication headers
+      // and handles cross‑origin calls on our behalf.  If the call
+      // fails (for example due to CORS or a missing JWT), we fall
+      // back to a direct fetch against the `functions.supabase.co`
+      // domain using the anon key.  This dual approach improves
+      // resilience when running locally or via preview hosts where
+      // the Supabase client may not be configured with a valid
+      // Authorization token.  See the Supabase docs for disabling
+      // JWT verification【810483078752586†L232-L254】.
       let fnData = null
       try {
         const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
         if (error) throw error
         fnData = data
       } catch (invokeErr) {
-        throw new Error(invokeErr?.message || 'Failed to invoke generate-techno-stem')
+        console.warn('supabase.functions.invoke failed, falling back to fetch:', invokeErr?.message)
+        // Fallback: construct direct URL to the Edge Function using the
+        // functions subdomain.  Extract the project ID from the
+        // Supabase URL (e.g. https://project.supabase.co) and build
+        // https://project.functions.supabase.co/{function-name}.  Append
+        // the anon key as a query parameter to avoid the need for
+        // Authorization headers.
+        try {
+          const supabaseUrl = String(import.meta.env.VITE_SUPABASE_URL || '')
+          const projectRef = supabaseUrl.replace(/^https?:\/\//, '').split('.')[0] || ''
+          const anonKey = String(import.meta.env.VITE_SUPABASE_ANON_KEY || '')
+          if (!projectRef) throw new Error('Missing project ref for fallback')
+          const fnName = 'generate-techno-stem'
+          let fetchUrl = `https://${projectRef}.functions.supabase.co/${fnName}`
+          // Attach anon key as query param if available
+          if (anonKey) {
+            const q = new URLSearchParams({ apikey: anonKey })
+            fetchUrl += `?${q.toString()}`
+          }
+          const fetchOptions = {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal,
+          }
+          const resp = await fetch(fetchUrl, fetchOptions)
+          if (!resp.ok) {
+            const txt = await resp.text().catch(() => '')
+            throw new Error(`Fallback fetch error ${resp.status}: ${txt}`)
+          }
+          const json = await resp.json()
+          fnData = json
+        } catch (fallbackErr) {
+          // Rethrow with context
+          throw new Error(fallbackErr?.message || 'Failed to send a request to the Edge Function')
+        }
       }
       if (!fnData) {
         throw new Error('No response from Supabase function')
