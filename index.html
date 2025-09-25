@@ -274,7 +274,8 @@
 
   <!-- Docked Mixer Tray (expands upward) — same surface -->
   <div id="mixerTray" class="player-surface max-h-0 overflow-hidden transition-[max-height] duration-200 ease-out border-t border-white/10">
-    <div class="mixer-inner max-w-5xl mx-auto px-4 py-3">
+    <!-- The inner container scrolls only vertically when the mixer is open.  We hide horizontal overflow to prevent accidental sideways scrolling on mobile. -->
+    <div class="mixer-inner max-w-5xl mx-auto px-4 py-3 overflow-y-auto overflow-x-hidden">
       <div class="text-xs text-white/70 mb-2">Mixer</div>
       <!-- Mixer grid is built dynamically in app.js.  The initial element is empty so the script can set the correct classes depending on screen size. -->
       <div id="mixerGrid"><!-- filled by app.js --></div>
