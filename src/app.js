@@ -89,6 +89,8 @@ let transportTicker = null
 
 let referenceStemType = null
 let referenceHeadIndex = 0 // samples at decoded SR
+// Tooltip element for mixer sliders; created during init.  Shows dB or Hz values while adjusting sliders.
+let sliderTooltipEl = null
 
 // Flag indicating whether the session master settings (tempo, bars, key)
 // have been selected. Once this flag is true, the session settings are
@@ -1205,7 +1207,16 @@ function initializeStemControlValues() {
     stemMuteStates[st] = false
     if (!stemEqValues[st]) stemEqValues[st] = { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
     if (!stemFilterValues[st]) stemFilterValues[st] = { mode: 'lowpass', cutoff: defCutKnob }
-    if (cfg.controls) Object.entries(cfg.controls).forEach(([k, c]) => { stemControlValues[st][k] = c.default })
+    if (cfg.controls) {
+      Object.entries(cfg.controls).forEach(([k, c]) => {
+        // Initialise controls with provided defaults
+        stemControlValues[st][k] = c.default
+      })
+      // Override volume default to mid value (50 => 0 dB) so all channels start at unity gain
+      if ('volume' in cfg.controls) {
+        stemControlValues[st].volume = 50
+      }
+    }
   })
 }
 
@@ -1238,12 +1249,10 @@ function setVolumeUnified(st, newVal){
     const cfg=stemConfigs[st]?.controls?.volume
     if (display && cfg) display.textContent=`${v}${cfg.unit}`
   }
-  // Update new mixer volume slider and readout if present
+  // Update new mixer volume slider if present; value display is handled via tooltip
   const mixSlider=document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
   if (mixSlider) {
     mixSlider.value=String(v)
-    const ro=mixSlider.nextElementSibling
-    if (ro) ro.textContent=`${v}%`
   }
 
   if (isPlaying && stemNodes[st]?.gain) {
@@ -1290,46 +1299,46 @@ function volumeKnobHTML(st){
 function mixChannelRowHTML(st){
   const name = stemConfigs[st]?.name || st
   const idx  = STEM_ORDER.indexOf(st) + 1
-  const volVal = stemControlValues[st]?.volume ?? 80
+  // Retrieve current state values; initialise to defaults (50 => 0 dB) if undefined
+  const volVal = stemControlValues[st]?.volume ?? 50
   const eq = stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
   const filt = stemFilterValues[st] || { cutoff: freqToKnob(FILTER_DEFAULT_HZ), mode: 'lowpass' }
   const modeLabel = (filt.mode === 'lowpass') ? 'LP' : 'HP'
   return `
     <div class="sg-mix-row flex flex-col border border-white/15 bg-white/5 backdrop-blur-lg rounded-lg p-3 gap-2" data-mix-card="${st}">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <span data-mix-number="${st}" class="inline-flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>
-          <span class="text-xs font-medium">${name}</span>
-        </div>
-        <div class="flex gap-1">
-          <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>
-          <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>
-        </div>
-      </div>
+      <!-- Header: channel number and name -->
       <div class="flex items-center gap-2">
-        <span class="text-[10px] w-10">Vol</span>
+        <span data-mix-number="${st}" class="inline-flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>
+        <span class="text-xs font-medium">${name}</span>
+      </div>
+      <!-- Volume slider (0–100 mapped to dB) -->
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-12">Vol</span>
         <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
-        <span class="text-[10px] w-8 text-right" data-mix-readout="${st}">${volVal}%</span>
       </div>
+      <!-- EQ sliders: Low/Mid/High -->
       <div class="flex items-center gap-2">
-        <span class="text-[10px] w-10">Low</span>
+        <span class="text-[10px] w-12">Low</span>
         <input type="range" data-mix-eq="low" data-stem="${st}" min="0" max="100" value="${eq.low}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
-        <span class="text-[10px] w-8 text-right">${eq.low}</span>
       </div>
       <div class="flex items-center gap-2">
-        <span class="text-[10px] w-10">Mid</span>
+        <span class="text-[10px] w-12">Mid</span>
         <input type="range" data-mix-eq="mid" data-stem="${st}" min="0" max="100" value="${eq.mid}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
-        <span class="text-[10px] w-8 text-right">${eq.mid}</span>
       </div>
       <div class="flex items-center gap-2">
-        <span class="text-[10px] w-10">High</span>
+        <span class="text-[10px] w-12">High</span>
         <input type="range" data-mix-eq="high" data-stem="${st}" min="0" max="100" value="${eq.high}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
-        <span class="text-[10px] w-8 text-right">${eq.high}</span>
       </div>
+      <!-- Filter cutoff and mode toggle -->
       <div class="flex items-center gap-2">
-        <span class="text-[10px] w-10">Cutoff</span>
+        <span class="text-[10px] w-12">Cutoff</span>
         <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
         <button class="px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}">${modeLabel}</button>
+      </div>
+      <!-- Bottom bar: Mute/Solo buttons -->
+      <div class="flex justify-between mt-2">
+        <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>
+        <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>
       </div>
     </div>
   `
@@ -1344,9 +1353,9 @@ function buildFloatingMixerPanel(){
     grid.id = 'mixerGrid'
     tray.querySelector('.mixer-inner')?.appendChild(grid)
   }
-  // Always apply responsive classes: grid on mobile and flex column on larger screens
-  // Using grid-cols-3 ensures three columns on small devices; sm:flex turns into a vertical list on sm and above
-  grid.className = 'grid grid-cols-3 gap-2 sm:flex sm:flex-col sm:gap-4'
+  // Always apply responsive classes: single column on extra small screens and two columns on small screens and above
+  // On desktop (sm and up) this results in two channels per row; on very small screens there is one channel per row
+  grid.className = 'grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4'
   // Populate with full-width channel rows
   grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
   // Update mixer glow and card number colours
@@ -1617,9 +1626,6 @@ function setupEventListeners() {
       const v = Math.max(0, Math.min(100, Math.round(Number(target.value) || 0)))
       // update state
       stemEqValues[st] = { ...(stemEqValues[st] || {}), [band]: v }
-      // update readout (next sibling)
-      const ro = target.nextElementSibling
-      if (ro) ro.textContent = `${v}`
       // apply to audio nodes if playing
       const eqNodes = stemNodes[st]?.eq
       if (eqNodes) applyEqValuesToNodes(eqNodes, stemEqValues[st])
@@ -1646,6 +1652,57 @@ function setupEventListeners() {
       }
       if (key === 'volume') setVolumeUnified(st, val)
     }
+  })
+
+  // Slider tooltip handling for mixer sliders.  Display a small popup showing dB or Hz while adjusting.
+  let activeSlider = null
+  // Helper to update tooltip content and position
+  function updateSliderTooltip(sliderEl, pageX, pageY) {
+    if (!sliderTooltipEl) return
+    const val = Number(sliderEl.value) || 0
+    let text = ''
+    // Determine the type of slider and compute display value
+    if (sliderEl.dataset.mixSlider === 'volume' || sliderEl.dataset.mixEq) {
+      // Use knobToDb conversion for volume and EQ
+      const db = knobToDb(val)
+      // Format with sign and one decimal place
+      const dbStr = db >= 0 ? `+${db.toFixed(1)}` : db.toFixed(1)
+      text = `${dbStr} dB`
+    } else if (sliderEl.dataset.mixFilter === 'cutoff') {
+      // Show frequency
+      const hz = knobToFreq(val)
+      text = hz >= 1000 ? `${(hz/1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
+    }
+    sliderTooltipEl.textContent = text
+    // Position tooltip relative to pointer
+    const offsetX = 8
+    const offsetY = 24
+    sliderTooltipEl.style.left = `${pageX + offsetX}px`
+    sliderTooltipEl.style.top = `${pageY - offsetY}px`
+  }
+  // Show tooltip on pointerdown if target is a mixer slider
+  document.addEventListener('pointerdown', e => {
+    const t = e.target
+    if (t && (t.matches('input[data-mix-slider="volume"]') || t.matches('input[data-mix-eq]') || t.matches('input[data-mix-filter="cutoff"]'))) {
+      activeSlider = t
+      updateSliderTooltip(t, e.pageX, e.pageY)
+      if (sliderTooltipEl) sliderTooltipEl.style.opacity = '1'
+    }
+  })
+  // Update tooltip position/value while dragging
+  document.addEventListener('pointermove', e => {
+    if (activeSlider) {
+      updateSliderTooltip(activeSlider, e.pageX, e.pageY)
+    }
+  })
+  // Hide tooltip on pointerup/cancel
+  document.addEventListener('pointerup', () => {
+    if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
+    activeSlider = null
+  })
+  document.addEventListener('pointercancel', () => {
+    if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
+    activeSlider = null
   })
 
   // EQ knob gestures
@@ -1948,6 +2005,14 @@ function initTechnoGenerator(){
   // Build docked mixer
   buildFloatingMixerPanel()
   setMixerOpen(false) // hidden by default
+
+  // Create tooltip element for mixer sliders if it does not already exist
+  if (!sliderTooltipEl) {
+    sliderTooltipEl = document.createElement('div')
+    sliderTooltipEl.id = 'sliderTooltip'
+    sliderTooltipEl.className = 'fixed z-50 px-2 py-0.5 rounded bg-black/80 text-white text-[10px] pointer-events-none opacity-0 transition-opacity duration-75'
+    document.body.appendChild(sliderTooltipEl)
+  }
 
   if (typeof window !== 'undefined') {
     window.debugAudio = {
