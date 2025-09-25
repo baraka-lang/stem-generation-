@@ -32,10 +32,17 @@
     /* Red border when muted */
     .sg-muted-border { border-color: rgb(239, 68, 68) !important; }
 
-    /* On small screens, reduce the height of waveforms to keep cards compact */
+    /* On small screens, reduce the height of waveforms and general font sizes to keep cards compact */
     @media (max-width: 640px) {
       .waveform-canvas {
-        height: 3rem !important;
+        height: 2.5rem !important;
+      }
+      /* Reduce default font sizes inside the stem cards */
+      .stem-index {
+        font-size: 0.6rem !important;
+      }
+      #stem-container h3 {
+        font-size: 0.75rem !important;
       }
     }
   </style>
@@ -194,9 +201,23 @@
       </div>
     </div>
   </div>
+
+  <!-- Generate settings modal: appears when the user taps Generate on a stem card -->
+  <div id="generateSettingsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="generateSettingsOverlay"></div>
+    <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+      <h2 class="text-xl font-medium text-white mb-4">Stem Settings</h2>
+      <div id="generateSettingsContent" class="space-y-3 overflow-y-auto max-h-[60vh]"><!-- filled dynamically --></div>
+      <div class="flex justify-end gap-3 mt-6">
+        <button id="generateSettingsCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+        <button id="generateSettingsStartBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Start</button>
+      </div>
+    </div>
+  </div>
   <!-- Stem Cards -->
   <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
-  <main id="stem-container" class="w-full max-w-full sm:max-w-5xl mx-auto px-4 py-6 grid grid-cols-3 gap-4 sm:gap-6">
+  <!-- Stem container: always 3 columns, with smaller gaps on mobile to reduce overall width. -->
+  <main id="stem-container" class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-3 gap-2 sm:gap-4">
     <!-- Cards injected by app.js -->
   </main>
 </div>
@@ -281,8 +302,8 @@
 
   <!-- Docked Mixer Tray (expands upward) — same surface -->
   <div id="mixerTray" class="player-surface max-h-0 overflow-hidden transition-[max-height] duration-200 ease-out border-t border-white/10">
-    <!-- The inner container scrolls only vertically when the mixer is open.  We hide horizontal overflow to prevent accidental sideways scrolling on mobile. -->
-    <div class="mixer-inner max-w-5xl mx-auto px-4 py-3 overflow-y-auto overflow-x-hidden">
+    <!-- The inner container scrolls only vertically when the mixer is open.  We hide horizontal overflow to prevent accidental sideways scrolling on mobile. Use full width on all screens to avoid zoom issues. -->
+    <div class="mixer-inner max-w-full mx-auto px-4 py-3 overflow-y-auto overflow-x-hidden">
       <div class="text-xs text-white/70 mb-2">Mixer</div>
       <!-- Mixer grid is built dynamically in app.js.  The initial element is empty so the script can set the correct classes depending on screen size. -->
       <div id="mixerGrid"><!-- filled by app.js --></div>
