@@ -1151,19 +1151,14 @@ function createBuilderStemCard(st, cfg){
 
   const headerHTML = `\n        <div class="flex items-center justify-between mb-2">\n          <div class="flex items-center gap-2">\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n            <h3 class="text-lg font-medium text-white">${cfg.name}</h3>\n          </div>\n          ${headerActionButtonsHTML(st)}\n        </div>\n      `
 
-  const eqFilterHTML = `\n        <div class="flex items-center justify-between gap-6 mb-2">\n          <div class="flex items-center gap-6">\n            ${eqKnobHTML(st, 'low',  'Low')}\n            ${eqKnobHTML(st, 'mid',  'Mid')}\n            ${eqKnobHTML(st, 'high', 'High')}\n          </div>\n          <div class="flex items-center gap-3">\n            ${filterKnobHTML(st)}\n          </div>\n        </div>\n      `
+  // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
+  const eqFilterHTML = ''
 
-  // Volume row (label-left)
+  // Remove per-stem volume control from the card; volume is now controlled in the mixer
   let volumeHTML = ''
-  if (cfg.controls?.volume) {
-    const vcfg = cfg.controls.volume
-    const vid = `${st}-volume`
-    const vval = stemControlValues[st]?.volume ?? vcfg.default
-    volumeHTML = `\n        <div class="flex items-center gap-2 mb-2">\n          <label class="text-xs text-white/70 shrink-0 w-24">Volume</label>\n          <input type="range" id="${vid}" min="${vcfg.min}" max="${vcfg.max}" value="${vval}" step="1"\n                 class="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer"\n                 style="flex:1.5 1 0%"\n                 data-stem="${st}" data-control="volume">\n          <span class="text-xs w-10 text-right">${vval}${vcfg.unit}</span>\n        </div>\n      `
-  }
 
-  // Waveform + takes
-  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Takes and open -->\n            <div class="absolute left-2 top-2 text-[10px] flex flex-col items-start">\n              <div class="px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 pointer-events-none select-none">\n                takes: <span data-history-count="${st}">0</span> (#<span data-active-index="${st}">0</span>)\n              </div>\n              <button class="mt-0.5 px-1.5 py-0.5 rounded player-surface border border-white/10 text-white/90 text-[10px] hover:bg-white/10 transition"\n                      data-action="open-takes" data-stem="${st}" type="button">open</button>\n            </div>\n            <!-- Tempo indicator -->\n            <div class="absolute right-2 top-2 text-[10px] px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 pointer-events-none select-none" data-tempo-indicator="${st}">\n              tempo: --\n            </div>\n            <!-- Centered arrows -->\n            <div class="absolute inset-0 flex items-center justify-center gap-4 pointer-events-none">\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition pointer-events-auto"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition pointer-events-auto"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  // Waveform + takes with repositioned arrows and OPEN button
+  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Takes count -->\n            <div class="absolute left-2 top-2 text-[10px] flex flex-col items-start pointer-events-none">\n              <div class="px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 select-none">\n                takes: <span data-history-count="${st}">0</span> (#<span data-active-index="${st}">0</span>)\n              </div>\n            </div>\n            <!-- Tempo indicator -->\n            <div class="absolute right-2 top-2 text-[10px] px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 pointer-events-none select-none" data-tempo-indicator="${st}">\n              tempo: --\n            </div>\n            <!-- OPEN button at top center -->\n            <div class="absolute top-1 left-0 right-0 flex justify-center pointer-events-none">\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 text-[10px] hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="open-takes" data-stem="${st}" type="button">OPEN</button>\n            </div>\n            <!-- Arrows at bottom center -->\n            <div class="absolute bottom-1 left-0 right-0 flex items-center justify-center gap-4 pointer-events-none">\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-4 h-4"></i>\n              </button>\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-4 h-4"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Sliders (two knobs) — label-left, 50% wider sliders (equal size)
   let slidersRowsHTML = ''
@@ -1235,21 +1230,20 @@ function setVolumeUnified(st, newVal){
   const v=Math.max(0, Math.min(100, Math.round(Number(newVal)||0)))
   stemControlValues[st].volume=v
 
-  const slider=document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
-  if (slider) {
-    slider.value=v
-    const display=slider.parentElement?.querySelector('span:last-child')
+  // Update legacy card volume slider if present
+  const cardSlider=document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
+  if (cardSlider) {
+    cardSlider.value=v
+    const display=cardSlider.parentElement?.querySelector('span:last-child')
     const cfg=stemConfigs[st]?.controls?.volume
     if (display && cfg) display.textContent=`${v}${cfg.unit}`
   }
-
-  const mKnob=document.querySelector(`[data-mix-knob][data-stem="${st}"]`)
-  if (mKnob) {
-    mKnob.dataset.value=String(v)
-    const ptr=mKnob.querySelector('[data-mix-pointer]')
-    if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(v)}deg)`
-    const r=document.querySelector(`[data-mix-readout="${st}"]`)
-    if (r) r.textContent=v
+  // Update new mixer volume slider and readout if present
+  const mixSlider=document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
+  if (mixSlider) {
+    mixSlider.value=String(v)
+    const ro=mixSlider.nextElementSibling
+    if (ro) ro.textContent=`${v}%`
   }
 
   if (isPlaying && stemNodes[st]?.gain) {
@@ -1286,24 +1280,84 @@ function volumeKnobHTML(st){
   const idx = STEM_ORDER.indexOf(st) + 1
   return `\n        <div class="sg-mix-card relative flex flex-col items-center justify-center rounded-xl border border-white/15 bg-white/10 p-2 aspect-square select-none"\n             data-mix-card="${st}">\n          <span data-mix-number="${st}" class="absolute left-1 top-1 flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>\n          <div class="text-[10px] mb-1 text-white/85">${label}</div>\n          <div class="relative w-12 h-12 rounded-full border border-white/25 bg-white/10 shadow-inner cursor-[ns-resize]"\n               data-mix-knob data-stem="${st}" data-value="${v}" title="${label} Volume">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-4 bg-white/90 rounded pointer-events-none"\n                 data-mix-pointer style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] text-white/80"><span data-mix-readout="${st}">${v}</span>%</div>\n          <div class="mt-1 flex gap-1">\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>\n          </div>\n        </div>\n      `
 }
+
+// Build a mixer channel row with sliders for volume, EQ and filter.  Each
+// row spans the full width of the mixer panel on desktop.  EQ
+// sliders control low, mid and high bands.  The filter slider
+// controls cutoff frequency.  Mute and Solo buttons are included
+// along with the channel number.  Use data attributes to attach
+// event handlers.
+function mixChannelRowHTML(st){
+  const name = stemConfigs[st]?.name || st
+  const idx  = STEM_ORDER.indexOf(st) + 1
+  const volVal = stemControlValues[st]?.volume ?? 80
+  const eq = stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
+  const filt = stemFilterValues[st] || { cutoff: freqToKnob(FILTER_DEFAULT_HZ), mode: 'lowpass' }
+  const modeLabel = (filt.mode === 'lowpass') ? 'LP' : 'HP'
+  return `
+    <div class="sg-mix-row flex flex-col border border-white/15 bg-white/5 backdrop-blur-lg rounded-lg p-3 gap-2" data-mix-card="${st}">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span data-mix-number="${st}" class="inline-flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>
+          <span class="text-xs font-medium">${name}</span>
+        </div>
+        <div class="flex gap-1">
+          <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>
+          <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-10">Vol</span>
+        <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <span class="text-[10px] w-8 text-right" data-mix-readout="${st}">${volVal}%</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-10">Low</span>
+        <input type="range" data-mix-eq="low" data-stem="${st}" min="0" max="100" value="${eq.low}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <span class="text-[10px] w-8 text-right">${eq.low}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-10">Mid</span>
+        <input type="range" data-mix-eq="mid" data-stem="${st}" min="0" max="100" value="${eq.mid}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <span class="text-[10px] w-8 text-right">${eq.mid}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-10">High</span>
+        <input type="range" data-mix-eq="high" data-stem="${st}" min="0" max="100" value="${eq.high}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <span class="text-[10px] w-8 text-right">${eq.high}</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-10">Cutoff</span>
+        <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <button class="px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}">${modeLabel}</button>
+      </div>
+    </div>
+  `
+}
 function buildFloatingMixerPanel(){
   const tray=document.getElementById('mixerTray')
   if (!tray) return
-  let grid=tray.querySelector('#mixerGrid')
+  let grid = tray.querySelector('#mixerGrid')
+  // Create the grid element if it doesn't exist
   if (!grid) {
-    grid=document.createElement('div')
-    grid.id='mixerGrid'
-    grid.className='grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-9 gap-2'
+    grid = document.createElement('div')
+    grid.id = 'mixerGrid'
     tray.querySelector('.mixer-inner')?.appendChild(grid)
   }
-  grid.innerHTML = STEM_ORDER.map(st => volumeKnobHTML(st)).join('')
+  // Always apply responsive classes: grid on mobile and flex column on larger screens
+  // Using grid-cols-3 ensures three columns on small devices; sm:flex turns into a vertical list on sm and above
+  grid.className = 'grid grid-cols-3 gap-2 sm:flex sm:flex-col sm:gap-4'
+  // Populate with full-width channel rows
+  grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
+  // Update mixer glow and card number colours
   STEM_ORDER.forEach(updateMixerGlow)
   STEM_ORDER.forEach(updateCardNumberColor)
 }
 function setMixerOpen(open){
   const tray=document.getElementById('mixerTray')
   if (!tray) return
-  tray.style.maxHeight = open ? '56vh' : '0px'
+  // Expand the mixer to full viewport height when open; collapse to zero when closed
+  tray.style.maxHeight = open ? '100vh' : '0px'
   tray.dataset.open = open ? '1' : '0'
   // Update player toggle button label + ARIA
   const toggleBtn = document.getElementById('mixerToggleBtn')
@@ -1473,6 +1527,32 @@ function setupEventListeners() {
     })
   }
 
+  // Master Volume: controls the global output gain.  Updates the text display and ramps the master gain.
+  const masterVolSlider = document.getElementById('masterVolumeSlider')
+  const masterVolValue  = document.getElementById('masterVolumeValue')
+  if (masterVolSlider) {
+    // Initialize the slider display based on the current masterGain value, if available
+    if (masterVolValue && typeof masterGain?.gain?.value === 'number') {
+      const initVal = Math.round((masterGain.gain.value || 0) * 100)
+      masterVolSlider.value = String(initVal)
+      masterVolValue.textContent = `${initVal}%`
+    }
+    masterVolSlider.addEventListener('input', async e => {
+      const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0)))
+      // Update displayed percentage
+      if (masterVolValue) masterVolValue.textContent = `${v}%`
+      // Ensure the audio context exists and update the gain
+      await ensureAudioContext()
+      if (masterGain) {
+        const now = audioContext.currentTime
+        // Ramp smoothly to new gain value
+        masterGain.gain.cancelScheduledValues(now)
+        masterGain.gain.setValueAtTime(masterGain.gain.value, now)
+        masterGain.gain.linearRampToValueAtTime(v / 100, now + 0.02)
+      }
+    })
+  }
+
   // Key: root + accidental + mode
   const rootSelector = document.getElementById('rootSelector')
   const modeSelector = document.getElementById('modeSelector')
@@ -1509,13 +1589,58 @@ function setupEventListeners() {
 
   // Card inputs (live + gen)
   document.addEventListener('input', e => {
-    if (e.target.dataset.stem && e.target.dataset.control) {
-      const st = e.target.dataset.stem
-      const key = e.target.dataset.control
-      const val = e.target.type === 'checkbox' ? e.target.checked : parseInt(e.target.value, 10)
+    const target = e.target
+    const st = target.dataset.stem
+    // Mixer volume slider
+    if (target.dataset.mixSlider === 'volume' && st) {
+      const v = Math.max(0, Math.min(100, Math.round(Number(target.value) || 0)))
+      stemControlValues[st].volume = v
+      // update readout element (next sibling)
+      const ro = target.nextElementSibling
+      if (ro) ro.textContent = `${v}%`
+      // update audio gain if playing
+      if (stemNodes[st]?.gain) {
+        const g = stemNodes[st].gain.gain
+        const now = audioContext.currentTime
+        g.cancelScheduledValues(now)
+        g.setValueAtTime(g.value, now)
+        const muted = stemMuteStates[st]
+        const soloedOther = (soloedStem && soloedStem !== st)
+        const val = (muted || soloedOther) ? 0 : (v/100)
+        g.linearRampToValueAtTime(val, now + 0.01)
+      }
+      return
+    }
+    // Mixer EQ sliders
+    if (target.dataset.mixEq && st) {
+      const band = target.dataset.mixEq
+      const v = Math.max(0, Math.min(100, Math.round(Number(target.value) || 0)))
+      // update state
+      stemEqValues[st] = { ...(stemEqValues[st] || {}), [band]: v }
+      // update readout (next sibling)
+      const ro = target.nextElementSibling
+      if (ro) ro.textContent = `${v}`
+      // apply to audio nodes if playing
+      const eqNodes = stemNodes[st]?.eq
+      if (eqNodes) applyEqValuesToNodes(eqNodes, stemEqValues[st])
+      return
+    }
+    // Mixer filter slider
+    if (target.dataset.mixFilter === 'cutoff' && st) {
+      const v = Math.max(0, Math.min(100, Math.round(Number(target.value) || 0)))
+      stemFilterValues[st] = { ...(stemFilterValues[st] || {}), cutoff: v }
+      // apply to audio nodes if playing
+      const filterNode = stemNodes[st]?.filter
+      if (filterNode) applyFilterValuesToNode(filterNode, stemFilterValues[st])
+      return
+    }
+    // Card control sliders/toggles
+    if (target.dataset.stem && target.dataset.control) {
+      const key = target.dataset.control
+      const val = target.type === 'checkbox' ? target.checked : parseInt(target.value, 10)
       stemControlValues[st][key] = val
-      if (e.target.type === 'range') {
-        const display = e.target.parentElement.querySelector('span:last-child')
+      if (target.type === 'range') {
+        const display = target.parentElement.querySelector('span:last-child')
         const cfg = stemConfigs[st]?.controls[key]
         if (display) display.textContent = `${val}${cfg?.unit || ''}`
       }
@@ -1964,7 +2089,8 @@ function showSessionSetupModal() {
 // waveform cards and update the history drawer where needed.
 function applySessionSettingsToUI() {
   const master = stemControlValues.master
-  // Update tempo slider and value display
+  // If any of the old master controls exist (tempo, bars, key selectors), disable them and set their values.
+  // This keeps compatibility in case those elements are still present in the DOM for other generators.
   const tempoSlider = document.getElementById('tempoSlider')
   const tempoValueEl = document.getElementById('tempoValue')
   if (tempoSlider) {
@@ -1974,18 +2100,15 @@ function applySessionSettingsToUI() {
   if (tempoValueEl) {
     tempoValueEl.textContent = String(master.tempo)
   }
-  // Update bars selector
   const barsSelector = document.getElementById('barsSelector')
   if (barsSelector) {
     barsSelector.value = String(master.bars)
     barsSelector.disabled = true
   }
-  // Update root, accidental and mode selectors
   const rootSelector = document.getElementById('rootSelector')
   const accidentalSelector = document.getElementById('accidentalSelector')
   const modeSelector = document.getElementById('modeSelector')
   if (rootSelector) {
-    // Compose display string for root with accidental symbol
     let rootDisplay = master.rootBase
     if (master.accidental === 'sharp') rootDisplay += '#'
     else if (master.accidental === 'flat') rootDisplay += 'b'
@@ -1999,6 +2122,12 @@ function applySessionSettingsToUI() {
   if (modeSelector) {
     modeSelector.value = master.mode
     modeSelector.disabled = true
+  }
+  // Update the session info card in the player bar.
+  const infoEl = document.getElementById('sessionInfoText')
+  if (infoEl) {
+    const rootName = getRootText()
+    infoEl.textContent = `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
   }
   // Refresh tempo indicators on all cards
   STEM_ORDER.forEach(st => {
