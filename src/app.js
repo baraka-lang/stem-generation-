@@ -90,6 +90,11 @@ let transportTicker = null
 let referenceStemType = null
 let referenceHeadIndex = 0 // samples at decoded SR
 
+// Flag indicating whether the session master settings (tempo, bars, key)
+// have been selected. Once this flag is true, the session settings are
+// locked for the remainder of the session and the setup modal will not be shown again.
+let sessionSetupDone = false
+
 // Takes
 const stemHistory = {}
 const stemActiveIndex = {}
@@ -901,47 +906,85 @@ async function generateStem(st) {
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
     const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
 
-    // Use the old generate logic: call Eleven Labs via the proxy function
-    // (`eleven-music-compose`) and build a strict loop locally.  This
-    // avoids relying on a server-side `generate-techno-stem` function,
-    // which may not be deployed, and sidesteps complex CORS issues.
-    let audioBuffer, usedPrompt, tier = 0, failedValidation = false
-    if (st === 'hihat' || st === 'perc') {
-      // For hi-hat and snare, use tiered retries and validation
-      const res = await composeWithRetries(st, tempo, bars, signal, statusEl)
-      audioBuffer = res.buffer
-      usedPrompt = res.usedPrompt
-      tier = res.tier
-      failedValidation = !!res.failedValidation
-    } else {
-      const prompt = buildStemPrompt(st).trim()
-      const beats = bars * 4
-      const seconds = beats * (60 / tempo)
-      let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
-      music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
-      const body = USE_COMPOSITION_PLAN
-        ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
-        : { prompt, music_length_ms }
-      const ab = await composeOnce(body, signal)
-      audioBuffer = await audioContext.decodeAudioData(ab)
-      usedPrompt = prompt
-      tier = 0
-      failedValidation = false
+    // Attempt to generate the stem via the Supabase edge function
+    // `generate-techno-stem`.  This function builds the prompt, calls
+    // the ElevenLabs API and trims the loop server-side.  On success
+    // it returns a base64 encoded WAV along with prompt metadata.
+    let audioBuffer, usedPrompt, tier = 0, validated = true, failedValidation = false
+    try {
+      const payload = {
+        stem: st,
+        controls: stemControlValues[st] || {},
+        master: {
+          tempo,
+          bars,
+          rootBase: stemControlValues.master?.rootBase || 'A',
+          accidental: stemControlValues.master?.accidental || 'natural',
+          mode: stemControlValues.master?.mode || 'Minor'
+        },
+        use_grok: false
+      }
+      const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
+      if (error || !data) {
+        throw new Error(error?.message || 'Supabase invocation failed')
+      }
+      // data should contain audio_b64, usedPrompt, tier, validated
+      const { audio_b64, usedPrompt: up, tier: tt, validated: val } = data
+      usedPrompt = up || ''
+      tier = typeof tt === 'number' ? tt : 0
+      validated = val !== false
+      // Decode the base64 audio string
+      const commaIdx = (audio_b64 || '').indexOf(',')
+      const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
+      const binaryStr = atob(b64 || '')
+      const len = binaryStr.length
+      const bytes = new Uint8Array(len)
+      for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i)
+      audioBuffer = await audioContext.decodeAudioData(bytes.buffer)
+      // Determine head index for record keeping
+      referenceHeadIndex = detectHeadIndex(audioBuffer)
+      referenceStemType = st
+      // Use the returned audio as the strict loop
+      stemRaw[st]  = audioBuffer
+      stemLoop[st] = audioBuffer
+      stemLoopDuration[st] = audioBuffer.duration
+      failedValidation = !validated
+    } catch (supErr) {
+      // Supabase call failed or returned error; fallback to local generation
+      console.error('Supabase request failed', supErr)
+      // Use the old generate logic: call Eleven Labs via the proxy function
+      // (`composeOnce` and `composeWithRetries`) and build a strict loop locally.
+      if (st === 'hihat' || st === 'perc') {
+        const res = await composeWithRetries(st, tempo, bars, signal, statusEl)
+        audioBuffer = res.buffer
+        usedPrompt = res.usedPrompt
+        tier = res.tier
+        failedValidation = !!res.failedValidation
+      } else {
+        const prompt = buildStemPrompt(st).trim()
+        const beats = bars * 4
+        const seconds = beats * (60 / tempo)
+        let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
+        music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
+        const body = USE_COMPOSITION_PLAN
+          ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
+          : { prompt, music_length_ms }
+        const ab = await composeOnce(body, signal)
+        audioBuffer = await audioContext.decodeAudioData(ab)
+        usedPrompt = prompt
+        tier = 0
+        failedValidation = false
+      }
+      // Determine head index and build a strict loop from the raw buffer
+      referenceHeadIndex = detectHeadIndex(audioBuffer)
+      referenceStemType = st
+      const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
+      stemRaw[st]  = audioBuffer
+      stemLoop[st] = strictLoop
+      stemLoopDuration[st] = strictLoop.duration
     }
 
-    // Determine head index and build a strict loop from the raw buffer.  This
-    // trims the audio to exactly the requested number of bars at the
-    // current tempo, applies a micro crossfade at the seam and ramps at
-    // the edges.  See `buildLoopBufferFromRawStrict` for details.
-    referenceHeadIndex = detectHeadIndex(audioBuffer)
-    referenceStemType = st
-    const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
-
-    // Store raw and loop buffers.  Record the loop duration for per-stem transport.
-    stemRaw[st]  = audioBuffer
-    stemLoop[st] = strictLoop
-    stemLoopDuration[st] = strictLoop.duration
-
+    // Push the new version into history
     pushStemVersion(st, {
       id: `${st}_${Date.now()}`,
       createdAt: new Date().toISOString(),
@@ -949,11 +992,10 @@ async function generateStem(st) {
       tempo, bars,
       sessionTag: SESSION_TAG,
       headIndex: referenceHeadIndex,
-      raw: audioBuffer,
-      meta: { tier, validated: !(failedValidation) }
+      raw: stemRaw[st],
+      meta: { tier, validated: !failedValidation }
     })
     renderHistoryDrawer(st)
-
     // Draw waveform for the new loop
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
@@ -1407,6 +1449,8 @@ function setupEventListeners() {
     tempoSlider.value = stemControlValues.master.tempo || DEFAULT_TEMPO
     if (tempoValueEl) tempoValueEl.textContent = String(stemControlValues.master.tempo || DEFAULT_TEMPO)
     tempoSlider.addEventListener('input', e => {
+      // Do not update master tempo if the session has been locked
+      if (sessionSetupDone) return
       const value = clampTempo(e.target.value)
       e.target.value = value
       stemControlValues.master.tempo = value
@@ -1420,6 +1464,7 @@ function setupEventListeners() {
   if (barsSelector) {
     barsSelector.value = String(stemControlValues.master.bars)
     barsSelector.addEventListener('change', e => {
+      if (sessionSetupDone) return
       stemControlValues.master.bars = parseInt(e.target.value, 10)
       STEM_ORDER.forEach(st => {
         const drawer = document.querySelector(`[data-history-drawer="${st}"]`)
@@ -1440,13 +1485,23 @@ function setupEventListeners() {
     else if (/b/i.test(v)) stemControlValues.master.accidental = 'flat'
     if (accidentalSelector) accidentalSelector.value = stemControlValues.master.accidental
     rootSelector.addEventListener('change', e => {
+      if (sessionSetupDone) return
       const vv = String(e.target.value || 'A')
       const mm = vv.match(/^[A-G]/i)
       if (mm) stemControlValues.master.rootBase = mm[0].toUpperCase()
     })
   }
-  if (accidentalSelector) accidentalSelector.addEventListener('change', e => { stemControlValues.master.accidental = e.target.value })
-  if (modeSelector) { modeSelector.value = stemControlValues.master.mode; modeSelector.addEventListener('change', e => { stemControlValues.master.mode = e.target.value }) }
+  if (accidentalSelector) accidentalSelector.addEventListener('change', e => {
+    if (sessionSetupDone) return
+    stemControlValues.master.accidental = e.target.value
+  })
+  if (modeSelector) {
+    modeSelector.value = stemControlValues.master.mode
+    modeSelector.addEventListener('change', e => {
+      if (sessionSetupDone) return
+      stemControlValues.master.mode = e.target.value
+    })
+  }
 
   // Hide "Format" selector if present
   const fmt = document.getElementById('outputFormatSelector')
@@ -1787,6 +1842,11 @@ function initTechnoGenerator(){
     updateMutedBorder(st)
     updateTempoIndicator(st)
   })
+  // Present the session setup modal if settings have not been chosen
+  // yet.  This ensures the user sets the master tempo, bars and key
+  // before generating any stems.  The modal will only appear once
+  // per session.
+  showSessionSetupModal()
   console.log('✅ App ready (session ' + SESSION_TAG + ')')
 }
 
@@ -1835,4 +1895,113 @@ function setupHelpModal(){
   if (helpBtn) helpBtn.addEventListener('click', openModal)
   if (overlay) overlay.addEventListener('click', closeModal)
   if (closeBtn) closeBtn.addEventListener('click', closeModal)
+}
+
+/* =========================================================
+   Session Setup Modal
+   ========================================================= */
+// Display the session setup modal on page load.  If session settings have
+// already been chosen (sessionSetupDone === true), the modal will not
+// appear.  When the user confirms their selections, the values are
+// stored in stemControlValues.master and the bottom controls are
+// disabled accordingly.  The selected values persist for the
+// remainder of the session.
+function showSessionSetupModal() {
+  if (sessionSetupDone) return
+  const modal = document.getElementById('sessionSetupModal')
+  if (!modal) return
+  const overlay = document.getElementById('sessionSetupOverlay')
+  const tempoSlider = document.getElementById('setupTempoSlider')
+  const tempoValue = document.getElementById('setupTempoValue')
+  const barsSelector = document.getElementById('setupBarsSelector')
+  const rootSelector = document.getElementById('setupRootSelector')
+  const accidentalSelector = document.getElementById('setupAccidentalSelector')
+  const modeSelector = document.getElementById('setupModeSelector')
+  const cancelBtn = document.getElementById('setupCancelBtn')
+  const saveBtn = document.getElementById('setupSaveBtn')
+  if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !cancelBtn || !saveBtn) return
+  // Update displayed tempo when slider moves
+  tempoSlider.addEventListener('input', e => {
+    const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
+    tempoValue.textContent = String(val)
+  })
+  // Cancel button closes modal without locking settings
+  cancelBtn.addEventListener('click', () => {
+    modal.style.opacity = '0'
+    setTimeout(() => { modal.classList.add('hidden') }, 300)
+  })
+  // Save button applies settings and locks them
+  saveBtn.addEventListener('click', () => {
+    const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
+    const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
+    const rootText = String(rootSelector.value || 'A')
+    // Determine base letter and accidental from the root selection
+    let rootBase = rootText.replace(/[♯♭]/g, '').toUpperCase()
+    const selectedAccidental = accidentalSelector.value
+    const modeVal = String(modeSelector.value || 'Minor')
+    // Set master values
+    stemControlValues.master.tempo = tempoVal
+    stemControlValues.master.bars = barsVal
+    stemControlValues.master.rootBase = rootBase
+    stemControlValues.master.accidental = selectedAccidental
+    stemControlValues.master.mode = modeVal
+    sessionSetupDone = true
+    applySessionSettingsToUI()
+    // Hide modal
+    modal.style.opacity = '0'
+    setTimeout(() => { modal.classList.add('hidden') }, 300)
+  })
+  // Show the modal
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+  })
+}
+
+// Apply the session settings to the UI: update the bottom controls
+// with the locked values and disable them so the user cannot modify
+// them mid-session.  Also refresh the tempo indicators on the
+// waveform cards and update the history drawer where needed.
+function applySessionSettingsToUI() {
+  const master = stemControlValues.master
+  // Update tempo slider and value display
+  const tempoSlider = document.getElementById('tempoSlider')
+  const tempoValueEl = document.getElementById('tempoValue')
+  if (tempoSlider) {
+    tempoSlider.value = String(master.tempo)
+    tempoSlider.disabled = true
+  }
+  if (tempoValueEl) {
+    tempoValueEl.textContent = String(master.tempo)
+  }
+  // Update bars selector
+  const barsSelector = document.getElementById('barsSelector')
+  if (barsSelector) {
+    barsSelector.value = String(master.bars)
+    barsSelector.disabled = true
+  }
+  // Update root, accidental and mode selectors
+  const rootSelector = document.getElementById('rootSelector')
+  const accidentalSelector = document.getElementById('accidentalSelector')
+  const modeSelector = document.getElementById('modeSelector')
+  if (rootSelector) {
+    // Compose display string for root with accidental symbol
+    let rootDisplay = master.rootBase
+    if (master.accidental === 'sharp') rootDisplay += '#'
+    else if (master.accidental === 'flat') rootDisplay += 'b'
+    rootSelector.value = rootDisplay
+    rootSelector.disabled = true
+  }
+  if (accidentalSelector) {
+    accidentalSelector.value = master.accidental
+    accidentalSelector.disabled = true
+  }
+  if (modeSelector) {
+    modeSelector.value = master.mode
+    modeSelector.disabled = true
+  }
+  // Refresh tempo indicators on all cards
+  STEM_ORDER.forEach(st => {
+    updateTempoIndicator(st)
+  })
 }
