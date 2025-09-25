@@ -877,7 +877,7 @@ async function composeWithRetries(st, tempo, bars, signal, statusEl){
   const controls=stemControlValues[st]||{}
   for(let tier=0;tier<3;tier++){
     const prompt=(st==='hihat')?buildHihatPrompt(controls, master, tier):buildSnarePrompt(controls, master, tier)
-    if (statusEl) statusEl.textContent=`Generating… (${st}, tier ${tier+1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
+    if (statusEl) statusEl.textContent=`Creating… (${st}, tier ${tier+1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
     const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt, music_length_ms }
     const ab=await composeOnce(body, signal)
     const buf=await audioContext.decodeAudioData(ab)
@@ -895,7 +895,9 @@ async function generateStem(st) {
   const ctrl = getNewStemController(st)
   const { signal } = ctrl
 
-  const button = document.querySelector(`[data-stem="${st}"] [data-action="generate"]`)
+  // The create button (opens the settings modal) also acts as the trigger for generation.  Select
+  // the button that opens the settings (open-create-settings) so we can show loading state.
+  const button = document.querySelector(`[data-stem="${st}"] [data-action="open-create-settings"]`)
   const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
   const card = document.querySelector(`[data-stem="${st}"]`)
 
@@ -906,7 +908,7 @@ async function generateStem(st) {
       if (icon) { icon.setAttribute('data-lucide', 'loader-2'); icon.classList.add('loading-spin'); window.lucide?.createIcons() }
     }
     if (card) card.classList.add('is-generating')
-    if (statusEl) statusEl.textContent = `Generating… (Eleven Music v1)`
+    if (statusEl) statusEl.textContent = `Creating… (Eleven Music v1)`
 
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
     const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
@@ -1062,7 +1064,7 @@ function encodeWAV(audioBuffer){
 }
 function downloadStem(st){
   const buf=stemLoop[st]
-  if(!buf){ alert(`No audio for ${stemConfigs[st]?.name || st}. Generate first.`); return }
+  if(!buf){ alert(`No audio for ${stemConfigs[st]?.name || st}. Create first.`); return }
   const wav=encodeWAV(buf)
   const url=URL.createObjectURL(wav)
   const a=document.createElement('a')
@@ -1147,6 +1149,14 @@ function filterKnobHTML(st){
 function headerActionButtonsHTML(st){
   return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `
 }
+
+// Mobile version of header action buttons.  On small screens the action icons
+// appear below the card title at 25% smaller size and reduced spacing.  This
+// helper is used in the card header markup to display a second row of
+// buttons on mobile only (hidden on sm and larger).
+function headerActionButtonsMobileHTML(st) {
+  return `\n        <div class="flex items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `
+}
 function createBuilderStemCard(st, cfg){
   const card = document.createElement('div')
   // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
@@ -1155,7 +1165,11 @@ function createBuilderStemCard(st, cfg){
 
   const idx = STEM_ORDER.indexOf(st) + 1
 
-  const headerHTML = `\n        <div class="flex items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2">\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n          </div>\n          ${headerActionButtonsHTML(st)}\n        </div>\n      `
+  // Build header markup.  On mobile (below sm), action buttons appear on a second row beneath
+  // the title and number.  On sm and above, the action buttons appear inline to the right of
+  // the title.  We wrap the desktop actions in a hidden container on mobile and include a
+  // separate mobile action row using headerActionButtonsMobileHTML.
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2">\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n          </div>\n          <div class="hidden sm:block">${headerActionButtonsHTML(st)}</div>\n          ${headerActionButtonsMobileHTML(st)}\n        </div>\n      `
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -1163,8 +1177,8 @@ function createBuilderStemCard(st, cfg){
   // Remove per-stem volume control from the card; volume is now controlled in the mixer
   let volumeHTML = ''
 
-  // Waveform + takes with repositioned arrows and OPEN button
-  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Takes count -->\n            <div class="absolute left-2 top-2 text-[10px] flex flex-col items-start pointer-events-none">\n              <div class="px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 select-none">\n                takes: <span data-history-count="${st}">0</span> (#<span data-active-index="${st}">0</span>)\n              </div>\n            </div>\n            <!-- Tempo indicator -->\n            <div class="absolute right-2 top-2 text-[10px] px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 pointer-events-none select-none" data-tempo-indicator="${st}">\n              tempo: --\n            </div>\n            <!-- OPEN button at top center -->\n            <div class="absolute top-1 left-0 right-0 flex justify-center pointer-events-none">\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 text-[10px] hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="open-takes" data-stem="${st}" type="button">OPEN</button>\n            </div>\n            <!-- Arrows at bottom center -->\n            <div class="absolute bottom-1 left-0 right-0 flex items-center justify-center gap-4 pointer-events-none">\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-4 h-4"></i>\n              </button>\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-4 h-4"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  // Waveform display: center navigation arrows and remove takes/tempo indicators/open button
+  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Arrows centered both vertically and horizontally -->\n            <div class="absolute inset-0 flex items-center justify-center gap-4 pointer-events-none">\n              <button class="px-2 py-1 rounded bg-black/50 text-white/90 flex items-center justify-center hover:bg-white/20 transition pointer-events-auto"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n              <button class="px-2 py-1 rounded bg-black/50 text-white/90 flex items-center justify-center hover:bg-white/20 transition pointer-events-auto"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -1175,7 +1189,12 @@ function createBuilderStemCard(st, cfg){
 
   // Define a generate button fragment.  The sliders and toggles are shown in a popup instead of on the card.
   const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to generate</div>\n      `
+
+  // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
+  // a modal for configuring generation settings when clicked.
+  const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
+  // Use our custom create button HTML instead of the default generate button.  Update status line text accordingly.
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
 
   updateHistoryBadge(st)
   updateFilterReadout(st)
@@ -1345,7 +1364,8 @@ function buildFloatingMixerPanel(){
   // Always apply responsive classes: single column on extra small screens and two columns on small screens and above
   // On desktop (sm and up) this results in two channels per row; on very small screens there is one channel per row
   // Use two columns for the mixer on all screen sizes; maintain gap scaling on larger screens
-  grid.className = 'grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4'
+  // Use two columns on small screens and three columns on medium and larger screens for the mixer layout
+  grid.className = 'grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4 md:grid-cols-3'
   // Populate with full-width channel rows
   grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
   // Update mixer glow and card number colours
@@ -1479,6 +1499,29 @@ function setupEventListeners() {
   if (genCancelBtn) genCancelBtn.addEventListener('click', () => hideGenerateSettingsModal())
   if (genOverlay) genOverlay.addEventListener('click', () => hideGenerateSettingsModal())
   if (genStartBtn) genStartBtn.addEventListener('click', () => { applyGenerateSettingsAndStart() })
+
+  // Live update the value labels in the create settings modal.  When the user moves a slider, update
+  // the adjacent span to reflect the new value and unit.
+  const genSettingsContent = document.getElementById('generateSettingsContent')
+  if (genSettingsContent) {
+    genSettingsContent.addEventListener('input', (e) => {
+      const target = e.target
+      if (!target || !target.getAttribute) return
+      const control = target.getAttribute('data-gen-control')
+      if (control && target.type === 'range') {
+        const unit = target.getAttribute('data-unit') || ''
+        // The span displaying the value is the last child of the parent container
+        const container = target.parentElement
+        if (container) {
+          const spans = container.getElementsByTagName('span')
+          if (spans && spans.length) {
+            const display = spans[spans.length - 1]
+            display.textContent = `${target.value}${unit}`
+          }
+        }
+      }
+    })
+  }
 
   // (Space) toggle playback; (1–9) mute/unmute; ignore while editing
   document.addEventListener('keydown', async (e) => {
@@ -1771,7 +1814,7 @@ function setupEventListeners() {
       const st = btn.dataset.stem
       if (action === 'generate' && st) { await generateStem(st); return }
       // When clicking the new generate button, open the settings modal instead of generating immediately
-      if (action === 'open-generate-settings' && st) { showGenerateSettingsModal(st); return }
+      if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
       if (action === 'download-stem' && st) { downloadStem(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       // Open the takes browser via the "open" button
@@ -1924,7 +1967,7 @@ function renderHistoryDrawer(st){
   ensureStemHistory(st)
   list.innerHTML=''
   const takes=stemHistory[st]
-  if (!takes.length) { list.innerHTML = `<div class="text-xs text-white/60 px-2 py-6">No takes yet. Generate some!</div>`; return }
+  if (!takes.length) { list.innerHTML = `<div class="text-xs text-white/60 px-2 py-6">No takes yet. Create some!</div>`; return }
   const active=stemActiveIndex[st]
   takes.forEach((take, i) => {
     const item=document.createElement('button')
@@ -2099,6 +2142,15 @@ function setupHelpModal(){
   if (closeBtn) closeBtn.addEventListener('click', closeModal)
 }
 
+// -----------------------------------------------------------------------------
+// Override mobile header action buttons with a smaller variant and tighter spacing.
+// This override ensures the existing definition in headerActionButtonsMobileHTML
+// uses 5x5 buttons, 2.5x2.5 icons and a reduced gap between actions.  It is
+// defined here to avoid complex string patching inside the original function.
+headerActionButtonsMobileHTML = function(st) {
+  return `\n        <div class="flex items-center gap-0.5 sm:hidden mt-1">\n          <button class="sg-toggle w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="sg-toggle w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-2.5 h-2.5"></i>\n          </button>\n        </div>\n      `;
+};
+
 /* =========================================================
    Generate settings modal helpers
    When the user taps the Generate button on a stem card, we show a popup
@@ -2119,7 +2171,7 @@ function buildGenerateSettingsContent(st) {
     if (c.type === 'knob') {
       html += `<div class="flex items-center gap-2">\n` +
               `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
-              `  <input type="range" data-gen-control="${key}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-2 bg-white/10 rounded-lg cursor-pointer">\n` +
+              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-2 bg-white/10 rounded-lg cursor-pointer">\n` +
               `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
               `</div>`
     } else if (c.type === 'toggle') {
@@ -2142,6 +2194,19 @@ function showGenerateSettingsModal(st) {
     content.innerHTML = buildGenerateSettingsContent(st)
     modal.classList.remove('hidden')
     requestAnimationFrame(() => { modal.style.opacity = '1' })
+
+    // Reset start and cancel buttons to their default state whenever the modal is shown.
+    const startBtn = document.getElementById('generateSettingsStartBtn')
+    const cancelBtn = document.getElementById('generateSettingsCancelBtn')
+    if (startBtn) {
+      startBtn.disabled = false
+      // Restore the original label if stored, else default to "Start"
+      const orig = startBtn.dataset.originalLabel
+      startBtn.innerHTML = orig || 'Start'
+    }
+    if (cancelBtn) {
+      cancelBtn.disabled = false
+    }
   }
 }
 
@@ -2174,6 +2239,22 @@ async function applyGenerateSettingsAndStart() {
         stemControlValues[st][key] = input.checked
       }
     })
+  }
+  // Provide feedback on the start and cancel buttons while generation is being scheduled.  Disable
+  // both buttons and show a spinner on the start button.
+  const startBtn = document.getElementById('generateSettingsStartBtn')
+  const cancelBtn = document.getElementById('generateSettingsCancelBtn')
+  if (startBtn) {
+    startBtn.disabled = true
+    // Preserve original label so we can restore it later if needed
+    if (!startBtn.dataset.originalLabel) {
+      startBtn.dataset.originalLabel = startBtn.innerHTML
+    }
+    startBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 loading-spin"></i>`
+    window.lucide?.createIcons()
+  }
+  if (cancelBtn) {
+    cancelBtn.disabled = true
   }
   hideGenerateSettingsModal()
   // Trigger generation for this stem
