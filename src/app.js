@@ -1153,7 +1153,6 @@ function createBuilderStemCard(st, cfg){
   const idx = STEM_ORDER.indexOf(st) + 1
 
   const headerHTML = `\n        <div class="flex items-center justify-between mb-2">\n          <div class="flex items-center gap-2">\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n            <h3 class="text-base sm:text-lg font-medium text-white">${cfg.name}</h3>\n          </div>\n          ${headerActionButtonsHTML(st)}\n        </div>\n      `
-            <canvas class="waveform-canvas w-full h-12 sm:h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
