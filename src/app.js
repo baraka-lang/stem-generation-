@@ -92,6 +92,9 @@ let referenceHeadIndex = 0 // samples at decoded SR
 // Tooltip element for mixer sliders; created during init.  Shows dB or Hz values while adjusting sliders.
 let sliderTooltipEl = null
 
+// Track which stem's settings are being edited in the generate settings modal
+let currentGenerateStem = null
+
 // Flag indicating whether the session master settings (tempo, bars, key)
 // have been selected. Once this flag is true, the session settings are
 // locked for the remainder of the session and the setup modal will not be shown again.
@@ -1146,13 +1149,13 @@ function headerActionButtonsHTML(st){
 }
 function createBuilderStemCard(st, cfg){
   const card = document.createElement('div')
-  // Use smaller padding on mobile and larger on desktop to make cards more compact on small screens
-  card.className = `glass card-border rounded-2xl p-4 sm:p-6 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500`
+  // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
+  card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500`
   card.setAttribute('data-stem', st)
 
   const idx = STEM_ORDER.indexOf(st) + 1
 
-  const headerHTML = `\n        <div class="flex items-center justify-between mb-2">\n          <div class="flex items-center gap-2">\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n            <h3 class="text-base sm:text-lg font-medium text-white">${cfg.name}</h3>\n          </div>\n          ${headerActionButtonsHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2">\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n          </div>\n          ${headerActionButtonsHTML(st)}\n        </div>\n      `
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -1163,31 +1166,16 @@ function createBuilderStemCard(st, cfg){
   // Waveform + takes with repositioned arrows and OPEN button
   const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Takes count -->\n            <div class="absolute left-2 top-2 text-[10px] flex flex-col items-start pointer-events-none">\n              <div class="px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 select-none">\n                takes: <span data-history-count="${st}">0</span> (#<span data-active-index="${st}">0</span>)\n              </div>\n            </div>\n            <!-- Tempo indicator -->\n            <div class="absolute right-2 top-2 text-[10px] px-1.5 py-0.5 rounded bg-black/60 border border-white/10 text-white/90 pointer-events-none select-none" data-tempo-indicator="${st}">\n              tempo: --\n            </div>\n            <!-- OPEN button at top center -->\n            <div class="absolute top-1 left-0 right-0 flex justify-center pointer-events-none">\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 text-[10px] hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="open-takes" data-stem="${st}" type="button">OPEN</button>\n            </div>\n            <!-- Arrows at bottom center -->\n            <div class="absolute bottom-1 left-0 right-0 flex items-center justify-center gap-4 pointer-events-none">\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-4 h-4"></i>\n              </button>\n              <button class="px-2 py-1 rounded player-surface border border-white/10 text-white/90 flex items-center justify-center hover:bg-white/10 transition backdrop-blur-lg bg-white/5 pointer-events-auto"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-4 h-4"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
-  // Sliders (two knobs) — label-left, 50% wider sliders (equal size)
+  // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
   let togglesMenuHTML = ''
-  if (cfg.controls) {
-    const entries = Object.entries(cfg.controls).filter(([k]) => k !== 'volume')
-    const knobEntries = entries.filter(([,c]) => c.type === 'knob')
-    const toggleEntries = entries.filter(([,c]) => c.type === 'toggle')
-
-    knobEntries.forEach(([key, c]) => {
-      const id = `${st}-${key}`
-      const val = stemControlValues[st]?.[key] ?? c.default
-      slidersRowsHTML += `\n            <div class="flex items-center gap-2">\n              <label for="${id}" class="w-24 shrink-0 text-[11px] text-white/80 whitespace-nowrap">${c.label}</label>\n              <input type="range" id="${id}" min="${c.min}" max="${c.max}" value="${val}" step="1"\n                     class="w-full h-1 rounded-lg appearance-none cursor-pointer bg-white/20"\n                     style="flex:2.25 1 0%"\n                     data-stem="${st}" data-control="${key}">\n              <span class="text-[11px] w-10 text-right">${val}${c.unit}</span>\n            </div>\n          `
-    })
-
-    toggleEntries.forEach(([key, c]) => {
-      const id = `${st}-${key}`
-      const val = stemControlValues[st]?.[key] ?? c.default
-      togglesMenuHTML += `\n            <label class="flex items-center gap-2 text-xs text-white/90">\n              <input type="checkbox" id="${id}" ${val ? 'checked' : ''} class="w-4 h-4 rounded border-white/40 bg-transparent"\n                     data-stem="${st}" data-control="${key}">\n              <span>${c.label}</span>\n            </label>\n          `
-    })
-  }
 
   // Generate panel: player-surface look, black Generate button, click-to-toggle overlay above sliders
   const genPanelHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-3 relative">\n          <div class="flex items-start gap-4">\n            <div class="relative flex-1">\n              <div class="grid grid-cols-1 gap-2">${slidersRowsHTML}</div>\n              <div class="absolute left-0 right-0 -top-2 z-20 hidden" data-options-panel="${st}">\n                <div class="bg-black border-2 border-white/80 rounded-xl p-3 shadow-xl">\n                  ${togglesMenuHTML || '<div class="text-xs text-white/60">No options</div>'}\n                </div>\n              </div>\n            </div>\n            <div class="flex flex-col items-end">\n              <button class="w-9 h-9 rounded-lg border border-white/30 flex items-center justify-center hover:bg-white/10"\n                      data-action="toggle-stem-options" data-stem="${st}" aria-pressed="false" title="Stem options">\n                <i data-lucide="sliders" class="w-4 h-4"></i>\n              </button>\n            </div>\n          </div>\n          <button class="mt-3 w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="generate" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `
 
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genPanelHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to generate</div>\n      `
+  // Define a generate button fragment.  The sliders and toggles are shown in a popup instead of on the card.
+  const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to generate</div>\n      `
 
   updateHistoryBadge(st)
   updateFilterReadout(st)
@@ -1484,6 +1472,14 @@ function setupEventListeners() {
   const mixerToggleBtn = document.getElementById('mixerToggleBtn')
   if (mixerToggleBtn) mixerToggleBtn.addEventListener('click', () => toggleMixerOpen())
 
+  // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
+  const genCancelBtn = document.getElementById('generateSettingsCancelBtn')
+  const genStartBtn  = document.getElementById('generateSettingsStartBtn')
+  const genOverlay   = document.getElementById('generateSettingsOverlay')
+  if (genCancelBtn) genCancelBtn.addEventListener('click', () => hideGenerateSettingsModal())
+  if (genOverlay) genOverlay.addEventListener('click', () => hideGenerateSettingsModal())
+  if (genStartBtn) genStartBtn.addEventListener('click', () => { applyGenerateSettingsAndStart() })
+
   // (Space) toggle playback; (1–9) mute/unmute; ignore while editing
   document.addEventListener('keydown', async (e) => {
     const ae = document.activeElement
@@ -1774,6 +1770,8 @@ function setupEventListeners() {
       const action = btn.dataset.action
       const st = btn.dataset.stem
       if (action === 'generate' && st) { await generateStem(st); return }
+      // When clicking the new generate button, open the settings modal instead of generating immediately
+      if (action === 'open-generate-settings' && st) { showGenerateSettingsModal(st); return }
       if (action === 'download-stem' && st) { downloadStem(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       // Open the takes browser via the "open" button
@@ -2099,6 +2097,87 @@ function setupHelpModal(){
   if (helpBtn) helpBtn.addEventListener('click', openModal)
   if (overlay) overlay.addEventListener('click', closeModal)
   if (closeBtn) closeBtn.addEventListener('click', closeModal)
+}
+
+/* =========================================================
+   Generate settings modal helpers
+   When the user taps the Generate button on a stem card, we show a popup
+   with all control sliders and toggles for that stem.  After the user
+   clicks Start, we update stemControlValues and trigger generation.
+   ========================================================= */
+
+// Build the inner HTML for the generate settings modal.  Each control
+// defined on the stem config (except volume) becomes a slider or checkbox.
+function buildGenerateSettingsContent(st) {
+  let html = ''
+  const cfg = stemConfigs[st] || {}
+  const controls = cfg.controls || {}
+  const values = stemControlValues[st] || {}
+  for (const [key, c] of Object.entries(controls)) {
+    if (key === 'volume') continue // volume is controlled in the mixer
+    const val = values[key] ?? c.default
+    if (c.type === 'knob') {
+      html += `<div class="flex items-center gap-2">\n` +
+              `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
+              `  <input type="range" data-gen-control="${key}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-2 bg-white/10 rounded-lg cursor-pointer">\n` +
+              `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
+              `</div>`
+    } else if (c.type === 'toggle') {
+      const checked = val ? 'checked' : ''
+      html += `<label class="flex items-center gap-2 text-xs text-white/90">\n` +
+              `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
+              `  <span>${c.label}</span>\n` +
+              `</label>`
+    }
+  }
+  return html
+}
+
+// Show the generate settings modal for the given stem
+function showGenerateSettingsModal(st) {
+  currentGenerateStem = st
+  const modal = document.getElementById('generateSettingsModal')
+  const content = document.getElementById('generateSettingsContent')
+  if (modal && content) {
+    content.innerHTML = buildGenerateSettingsContent(st)
+    modal.classList.remove('hidden')
+    requestAnimationFrame(() => { modal.style.opacity = '1' })
+  }
+}
+
+// Hide the generate settings modal
+function hideGenerateSettingsModal() {
+  const modal = document.getElementById('generateSettingsModal')
+  if (modal) {
+    modal.style.opacity = '0'
+    setTimeout(() => {
+      modal.classList.add('hidden')
+    }, 200)
+  }
+  currentGenerateStem = null
+}
+
+// Apply the settings from the modal to the current stem and trigger generation
+async function applyGenerateSettingsAndStart() {
+  const st = currentGenerateStem
+  if (!st) return
+  const content = document.getElementById('generateSettingsContent')
+  if (content) {
+    const inputs = content.querySelectorAll('[data-gen-control]')
+    inputs.forEach(input => {
+      const key = input.getAttribute('data-gen-control')
+      if (!key) return
+      if (input.type === 'range') {
+        const val = parseInt(input.value, 10)
+        stemControlValues[st][key] = val
+      } else if (input.type === 'checkbox') {
+        stemControlValues[st][key] = input.checked
+      }
+    })
+  }
+  hideGenerateSettingsModal()
+  // Trigger generation for this stem
+  await generateStem(st)
 }
 
 /* =========================================================
