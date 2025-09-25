@@ -31,6 +31,13 @@
 
     /* Red border when muted */
     .sg-muted-border { border-color: rgb(239, 68, 68) !important; }
+
+    /* On small screens, reduce the height of waveforms to keep cards compact */
+    @media (max-width: 640px) {
+      .waveform-canvas {
+        height: 3rem !important;
+      }
+    }
   </style>
 </head>
 <body class="bg-zinc-900 text-white font-geist overflow-x-hidden">
@@ -189,7 +196,7 @@
   </div>
   <!-- Stem Cards -->
   <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
-  <main id="stem-container" class="w-full max-w-5xl mx-auto px-4 py-8 grid grid-cols-3 gap-6">
+  <main id="stem-container" class="w-full max-w-full sm:max-w-5xl mx-auto px-4 py-6 grid grid-cols-3 gap-4 sm:gap-6">
     <!-- Cards injected by app.js -->
   </main>
 </div>
