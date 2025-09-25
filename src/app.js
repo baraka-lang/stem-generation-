@@ -1314,25 +1314,25 @@ function mixChannelRowHTML(st){
       <!-- Volume slider (0–100 mapped to dB) -->
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Vol</span>
-        <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <!-- EQ sliders: Low/Mid/High -->
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Low</span>
-        <input type="range" data-mix-eq="low" data-stem="${st}" min="0" max="100" value="${eq.low}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <input type="range" data-mix-eq="low" data-stem="${st}" min="0" max="100" value="${eq.low}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Mid</span>
-        <input type="range" data-mix-eq="mid" data-stem="${st}" min="0" max="100" value="${eq.mid}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <input type="range" data-mix-eq="mid" data-stem="${st}" min="0" max="100" value="${eq.mid}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">High</span>
-        <input type="range" data-mix-eq="high" data-stem="${st}" min="0" max="100" value="${eq.high}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <input type="range" data-mix-eq="high" data-stem="${st}" min="0" max="100" value="${eq.high}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <!-- Filter cutoff and mode toggle -->
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Cutoff</span>
-        <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}" class="flex-1 h-1 bg-white/10 rounded-lg cursor-pointer">
+        <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
         <button class="px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}">${modeLabel}</button>
       </div>
       <!-- Bottom bar: Mute/Solo buttons -->
@@ -1355,7 +1355,8 @@ function buildFloatingMixerPanel(){
   }
   // Always apply responsive classes: single column on extra small screens and two columns on small screens and above
   // On desktop (sm and up) this results in two channels per row; on very small screens there is one channel per row
-  grid.className = 'grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-4'
+  // Use two columns for the mixer on all screen sizes; maintain gap scaling on larger screens
+  grid.className = 'grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4'
   // Populate with full-width channel rows
   grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
   // Update mixer glow and card number colours
@@ -1373,6 +1374,18 @@ function setMixerOpen(open){
   if (toggleBtn) {
     toggleBtn.textContent = open ? 'close mixer' : 'open mixer'
     toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
+  }
+
+  // When the mixer is open on mobile, prevent the page from scrolling or panning.
+  // Disable body overflow so touch interactions are confined to the mixer.
+  if (open) {
+    // Hide page scrolling and prevent gestures from propagating outside the mixer
+    document.body.style.overflow = 'hidden'
+    // When the mixer is open, disable touch-action on the tray so that horizontal drags are consumed by sliders and not by the page
+    tray.style.touchAction = 'none'
+  } else {
+    document.body.style.overflow = ''
+    tray.style.touchAction = ''
   }
 }
 function toggleMixerOpen(){
