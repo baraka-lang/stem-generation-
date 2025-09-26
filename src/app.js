@@ -1078,8 +1078,10 @@ function downloadStem(st){
    ========================================================= */
 function knobToDb(val){
   const v=Math.max(0, Math.min(100, Number(val)||0))
-  if (v <= 50) return EQ_MIN_DB + (v/50) * (0 - EQ_MIN_DB)
-  return ((v - 50) / 50) * EQ_MAX_DB
+  // Shift the 0 dB point to 75% of the slider to mirror professional DAW faders.
+  const pivot = 75
+  if (v <= pivot) return EQ_MIN_DB + (v / pivot) * (0 - EQ_MIN_DB)
+  return ((v - pivot) / (100 - pivot)) * EQ_MAX_DB
 }
 function formatDb(db){
   if (db <= EQ_MIN_DB + 0.5) return 'CUT'
@@ -1160,7 +1162,7 @@ function headerActionButtonsMobileHTML(st) {
 function createBuilderStemCard(st, cfg){
   const card = document.createElement('div')
   // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
-  card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500`
+  card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
   card.setAttribute('data-stem', st)
 
   const idx = STEM_ORDER.indexOf(st) + 1
@@ -1177,8 +1179,8 @@ function createBuilderStemCard(st, cfg){
   // Remove per-stem volume control from the card; volume is now controlled in the mixer
   let volumeHTML = ''
 
-  // Waveform display: center navigation arrows and remove takes/tempo indicators/open button
-  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Arrows centered both vertically and horizontally -->\n            <div class="absolute inset-0 flex items-center justify-center gap-4 pointer-events-none">\n              <button class="px-2 py-1 rounded bg-black/50 text-white/90 flex items-center justify-center hover:bg-white/20 transition pointer-events-auto"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n              <button class="px-2 py-1 rounded bg-black/50 text-white/90 flex items-center justify-center hover:bg-white/20 transition pointer-events-auto"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  // Waveform display: remove takes/tempo indicators/open button and add left/right arrow zones occupying 25% of the width each.
+  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Left and right arrow zones: occupy 25% width each with black background -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -1195,6 +1197,25 @@ function createBuilderStemCard(st, cfg){
   const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
   // Use our custom create button HTML instead of the default generate button.  Update status line text accordingly.
   card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
+  // The span within the create button becomes the label, and the icon gets a special class so
+  // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
+  // the DOM after insertion.
+  {
+    const labelSpan = card.querySelector('[data-action="open-create-settings"] span')
+    if (labelSpan) labelSpan.classList.add('create-label')
+    const iconEl = card.querySelector('[data-action="open-create-settings"] i')
+    if (iconEl) iconEl.classList.add('create-icon')
+    // Adjust arrow button padding to bring icons closer to the edges.  Remove px-2/py-1 and use p-1 instead.
+    const prevBtn = card.querySelector('[data-action="prev-take"]')
+    const nextBtn = card.querySelector('[data-action="next-take"]')
+    ;[prevBtn, nextBtn].forEach(btn => {
+      if (btn) {
+        btn.classList.remove('px-2', 'py-1')
+        btn.classList.add('p-1')
+      }
+    })
+  }
 
   updateHistoryBadge(st)
   updateFilterReadout(st)
@@ -1322,26 +1343,34 @@ function mixChannelRowHTML(st){
       <!-- Volume slider (0–100 mapped to dB) -->
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Vol</span>
-        <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
+        <!-- Make the dB slider the same length as the shortest slider (cutoff) -->
+        <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <!-- EQ sliders: Low/Mid/High -->
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Low</span>
-        <input type="range" data-mix-eq="low" data-stem="${st}" min="0" max="100" value="${eq.low}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
+        <input type="range" data-mix-eq="low" data-stem="${st}" min="0" max="100" value="${eq.low}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Mid</span>
-        <input type="range" data-mix-eq="mid" data-stem="${st}" min="0" max="100" value="${eq.mid}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
+        <input type="range" data-mix-eq="mid" data-stem="${st}" min="0" max="100" value="${eq.mid}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">High</span>
-        <input type="range" data-mix-eq="high" data-stem="${st}" min="0" max="100" value="${eq.high}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
+        <input type="range" data-mix-eq="high" data-stem="${st}" min="0" max="100" value="${eq.high}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <!-- Filter cutoff and mode toggle -->
       <div class="flex items-center gap-2">
         <span class="text-[10px] w-12">Cutoff</span>
-        <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}" class="flex-1 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
-        <button class="px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}">${modeLabel}</button>
+        <!-- Shorter slider for cutoff so the LP/HP button remains visible -->
+        <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
+        <button class="px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"
+                data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}">${modeLabel}</button>
       </div>
       <!-- Bottom bar: Mute/Solo buttons -->
       <div class="flex justify-between mt-2">
@@ -1365,7 +1394,8 @@ function buildFloatingMixerPanel(){
   // On desktop (sm and up) this results in two channels per row; on very small screens there is one channel per row
   // Use two columns for the mixer on all screen sizes; maintain gap scaling on larger screens
   // Use two columns on small screens and three columns on medium and larger screens for the mixer layout
-  grid.className = 'grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4 md:grid-cols-3'
+  // Display three channels per row on all screen sizes for consistency.
+  grid.className = 'grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 md:grid-cols-3'
   // Populate with full-width channel rows
   grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
   // Update mixer glow and card number colours
@@ -1808,6 +1838,22 @@ function setupEventListeners() {
 
   // Click actions (Generate / Download / Filter mode / options overlay / history / waveform navigation)
   document.addEventListener('click', async e => {
+    // Toggle mute/unmute when clicking on an instrument card outside of interactive elements.
+    {
+      const cardEl = e.target.closest('[data-stem]')
+      if (cardEl) {
+        // Do not toggle if the click is on a button, a link or other interactive element
+        const isButton = e.target.closest('button, [data-action], input, label, select, textarea')
+        const isWaveform = e.target.closest('.waveform-canvas')
+        if (!isButton && !isWaveform) {
+          const st = cardEl.getAttribute('data-stem')
+          if (st) {
+            toggleMute(st)
+            return
+          }
+        }
+      }
+    }
     const btn = e.target.closest('[data-action]')
     if (btn) {
       const action = btn.dataset.action
@@ -2149,6 +2195,14 @@ function setupHelpModal(){
 // defined here to avoid complex string patching inside the original function.
 headerActionButtonsMobileHTML = function(st) {
   return `\n        <div class="flex items-center gap-0.5 sm:hidden mt-1">\n          <button class="sg-toggle w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="sg-toggle w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-2.5 h-2.5"></i>\n          </button>\n        </div>\n      `;
+};
+
+// Redefine the mobile action buttons to occupy the full card width on small screens.
+// The original override defines smaller buttons; this updated version makes each
+// button flex‑1 so that all four icons span the card.  The icons remain
+// modestly sized and the row uses a small gap.  Hidden on sm+.
+headerActionButtonsMobileHTML = function(st) {
+  return `\n        <div class="flex w-full items-center gap-0.5 sm:hidden mt-1">\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `;
 };
 
 /* =========================================================
