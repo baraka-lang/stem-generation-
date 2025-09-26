@@ -44,6 +44,16 @@
       #stem-container h3 {
         font-size: 0.75rem !important;
       }
+      /* Shrink the create button label and icon on mobile.  The base font size
+         is reduced to approximately 70% and the icon is scaled down to
+         0.75rem (12px).  These classes are assigned dynamically in JS. */
+      .create-label {
+        font-size: 0.75rem !important;
+      }
+      .create-icon {
+        width: 0.75rem !important;
+        height: 0.75rem !important;
+      }
     }
   </style>
 </head>
@@ -217,7 +227,7 @@
   <!-- Stem Cards -->
   <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
   <!-- Stem container: always 3 columns, with smaller gaps on mobile to reduce overall width. -->
-  <main id="stem-container" class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-3 gap-2 sm:gap-4">
+  <main id="stem-container" class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-3 gap-2 sm:gap-4 select-none cursor-default">
     <!-- Cards injected by app.js -->
   </main>
 </div>
@@ -264,7 +274,7 @@
 </div>
 
 <!-- Floating bottom player bar with mixer toggle -->
-<div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 hidden">
+<div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 select-none cursor-default hidden">
   <div class="mx-auto max-w-5xl px-4 py-3">
     <div class="flex items-center gap-3 flex-wrap">
       <!-- Play/Pause -->
