@@ -1171,7 +1171,7 @@ function createBuilderStemCard(st, cfg){
   // the title and number.  On sm and above, the action buttons appear inline to the right of
   // the title.  We wrap the desktop actions in a hidden container on mobile and include a
   // separate mobile action row using headerActionButtonsMobileHTML.
-  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2">\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n          </div>\n          <div class="hidden sm:block">${headerActionButtonsHTML(st)}</div>\n          ${headerActionButtonsMobileHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2 w-full">\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30 ml-auto">${idx}</span>\n          </div>\n          <div class="hidden sm:block">${headerActionButtonsHTML(st)}</div>\n          ${headerActionButtonsMobileHTML(st)}\n        </div>\n      `
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -1206,6 +1206,10 @@ function createBuilderStemCard(st, cfg){
     if (labelSpan) labelSpan.classList.add('create-label')
     const iconEl = card.querySelector('[data-action="open-create-settings"] i')
     if (iconEl) iconEl.classList.add('create-icon')
+
+    // Apply responsive sizing for the create button's label and icon: make them 30% smaller on mobile.
+    if (labelSpan) labelSpan.classList.add('text-xs', 'sm:text-sm')
+    if (iconEl) iconEl.classList.add('w-3', 'h-3', 'sm:w-4', 'sm:h-4')
     // Adjust arrow button padding to bring icons closer to the edges.  Remove px-2/py-1 and use p-1 instead.
     const prevBtn = card.querySelector('[data-action="prev-take"]')
     const nextBtn = card.querySelector('[data-action="next-take"]')
@@ -1215,6 +1219,12 @@ function createBuilderStemCard(st, cfg){
         btn.classList.add('p-1')
       }
     })
+
+    // Remove the "Previous takes" label from the history drawer.  We leave only the close button.
+    const historySpan = card.querySelector(`[data-history-drawer="${st}"] span`)
+    if (historySpan) {
+      historySpan.remove()
+    }
   }
 
   updateHistoryBadge(st)
@@ -1234,16 +1244,16 @@ function initializeStemControlValues() {
   Object.entries(stemConfigs).forEach(([st, cfg]) => {
     stemControlValues[st] = {}
     stemMuteStates[st] = false
-    if (!stemEqValues[st]) stemEqValues[st] = { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
+    if (!stemEqValues[st]) stemEqValues[st] = { low: 75, mid: 75, high: 75 }
     if (!stemFilterValues[st]) stemFilterValues[st] = { mode: 'lowpass', cutoff: defCutKnob }
     if (cfg.controls) {
       Object.entries(cfg.controls).forEach(([k, c]) => {
         // Initialise controls with provided defaults
         stemControlValues[st][k] = c.default
       })
-      // Override volume default to mid value (50 => 0 dB) so all channels start at unity gain
+      // Override volume default to 75 (toward the right) so all channels start at 0 dB with the new mapping
       if ('volume' in cfg.controls) {
-        stemControlValues[st].volume = 50
+        stemControlValues[st].volume = 75
       }
     }
   })
@@ -1854,6 +1864,22 @@ function setupEventListeners() {
         }
       }
     }
+
+    // Toggle mute/unmute when clicking on a mixer channel outside of interactive elements.
+    {
+      const mixCardEl = e.target.closest('[data-mix-card]')
+      if (mixCardEl) {
+        // Prevent toggling if the click is on a slider, button or other interactive element
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea')
+        if (!isInteractive) {
+          const st = mixCardEl.getAttribute('data-mix-card')
+          if (st) {
+            toggleMute(st)
+            return
+          }
+        }
+      }
+    }
     const btn = e.target.closest('[data-action]')
     if (btn) {
       const action = btn.dataset.action
@@ -2150,6 +2176,21 @@ export async function initApp(){
   console.log('✅ Navigation system ready')
 }
 
+// -----------------------------------------------------------------------------
+// UI Overrides
+// These overrides adjust the behaviour and appearance of certain controls.
+// 1) headerActionButtonsHTML: replace the solo icon with a simple 'S' label.
+// 2) headerActionButtonsMobileHTML: on small screens, action buttons fill the card's width
+//    and the solo button uses 'S'.
+
+function headerActionButtonsHTML(st) {
+  return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-sm">S</span>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `;
+}
+
+function headerActionButtonsMobileHTML(st) {
+  return `\n        <div class="flex w-full items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-[10px]">S</span>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `;
+}
+
 /* =========================================================
    Global styles
    ========================================================= */
@@ -2176,11 +2217,15 @@ function setupHelpModal(){
     requestAnimationFrame(() => {
       helpModal.style.opacity = '1'
     })
+    // Disable body scroll while help modal is open
+    document.body.style.overflow = 'hidden'
   }
   function closeModal(){
     helpModal.style.opacity = '0'
     setTimeout(() => {
       helpModal.classList.add('hidden')
+      // Restore body scroll when help modal is closed
+      document.body.style.overflow = ''
     }, 300)
   }
   if (helpBtn) helpBtn.addEventListener('click', openModal)
@@ -2223,9 +2268,10 @@ function buildGenerateSettingsContent(st) {
     if (key === 'volume') continue // volume is controlled in the mixer
     const val = values[key] ?? c.default
     if (c.type === 'knob') {
+      // Use a taller track for mobile (h-3) and add touch-action-none to prevent page scrolling while dragging.
       html += `<div class="flex items-center gap-2">\n` +
               `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
-              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-2 bg-white/10 rounded-lg cursor-pointer">\n` +
+              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-3 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
               `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
               `</div>`
     } else if (c.type === 'toggle') {
@@ -2261,6 +2307,8 @@ function showGenerateSettingsModal(st) {
     if (cancelBtn) {
       cancelBtn.disabled = false
     }
+    // Disable body scrolling while any generate settings modal is open
+    document.body.style.overflow = 'hidden'
   }
 }
 
@@ -2274,6 +2322,8 @@ function hideGenerateSettingsModal() {
     }, 200)
   }
   currentGenerateStem = null
+  // Re-enable body scrolling when the generate settings modal is hidden
+  document.body.style.overflow = ''
 }
 
 // Apply the settings from the modal to the current stem and trigger generation
@@ -2347,6 +2397,8 @@ function showSessionSetupModal() {
   cancelBtn.addEventListener('click', () => {
     modal.style.opacity = '0'
     setTimeout(() => { modal.classList.add('hidden') }, 300)
+    // Restore page scrolling when the session setup modal is closed
+    document.body.style.overflow = ''
   })
   // Save button applies settings and locks them
   saveBtn.addEventListener('click', () => {
@@ -2368,12 +2420,16 @@ function showSessionSetupModal() {
     // Hide modal
     modal.style.opacity = '0'
     setTimeout(() => { modal.classList.add('hidden') }, 300)
+    // Restore page scrolling when the session setup modal is closed
+    document.body.style.overflow = ''
   })
   // Show the modal
   modal.classList.remove('hidden')
   requestAnimationFrame(() => {
     modal.style.opacity = '1'
   })
+  // Disable page scrolling while the session setup modal is visible
+  document.body.style.overflow = 'hidden'
 }
 
 // Apply the session settings to the UI: update the bottom controls
