@@ -1171,7 +1171,7 @@ function createBuilderStemCard(st, cfg){
   // the title and number.  On sm and above, the action buttons appear inline to the right of
   // the title.  We wrap the desktop actions in a hidden container on mobile and include a
   // separate mobile action row using headerActionButtonsMobileHTML.
-  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2 w-full">\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30 ml-auto">${idx}</span>\n          </div>\n          <div class="hidden sm:block">${headerActionButtonsHTML(st)}</div>\n          ${headerActionButtonsMobileHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2 w-full">\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30 ml-auto">${idx}</span>\n          </div>\n          <div class="hidden sm:block">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -1194,7 +1194,7 @@ function createBuilderStemCard(st, cfg){
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
-  const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
+  const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
   // Use our custom create button HTML instead of the default generate button.  Update status line text accordingly.
   card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
@@ -2183,11 +2183,11 @@ export async function initApp(){
 // 2) headerActionButtonsMobileHTML: on small screens, action buttons fill the card's width
 //    and the solo button uses 'S'.
 
-function headerActionButtonsHTML(st) {
+function customHeaderActionButtonsHTML(st) {
   return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-sm">S</span>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `;
 }
 
-function headerActionButtonsMobileHTML(st) {
+function customHeaderActionButtonsMobileHTML(st) {
   return `\n        <div class="flex w-full items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-[10px]">S</span>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `;
 }
 
@@ -2234,21 +2234,17 @@ function setupHelpModal(){
 }
 
 // -----------------------------------------------------------------------------
-// Override mobile header action buttons with a smaller variant and tighter spacing.
-// This override ensures the existing definition in headerActionButtonsMobileHTML
-// uses 5x5 buttons, 2.5x2.5 icons and a reduced gap between actions.  It is
-// defined here to avoid complex string patching inside the original function.
-headerActionButtonsMobileHTML = function(st) {
-  return `\n        <div class="flex items-center gap-0.5 sm:hidden mt-1">\n          <button class="sg-toggle w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="sg-toggle w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-2.5 h-2.5"></i>\n          </button>\n          <button class="w-5 h-5 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-2.5 h-2.5"></i>\n          </button>\n        </div>\n      `;
-};
+// Note: The default headerActionButtonsMobileHTML defined earlier is retained.
+// Custom layouts are implemented via customHeaderActionButtonsMobileHTML and used
+// directly in createBuilderStemCard.  Duplicate overrides were removed to
+// prevent redeclaration errors.
 
-// Redefine the mobile action buttons to occupy the full card width on small screens.
-// The original override defines smaller buttons; this updated version makes each
-// button flex‑1 so that all four icons span the card.  The icons remain
-// modestly sized and the row uses a small gap.  Hidden on sm+.
-headerActionButtonsMobileHTML = function(st) {
-  return `\n        <div class="flex w-full items-center gap-0.5 sm:hidden mt-1">\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `;
-};
+// Assign the default header action button helpers to our custom implementations.
+// This ensures any call sites referencing headerActionButtonsHTML or
+// headerActionButtonsMobileHTML will use the versions that replace the
+// headphone icon with a plain "S" label and provide full-width buttons on mobile.
+headerActionButtonsHTML = customHeaderActionButtonsHTML;
+headerActionButtonsMobileHTML = customHeaderActionButtonsMobileHTML;
 
 /* =========================================================
    Generate settings modal helpers
@@ -2271,7 +2267,8 @@ function buildGenerateSettingsContent(st) {
       // Use a taller track for mobile (h-3) and add touch-action-none to prevent page scrolling while dragging.
       html += `<div class="flex items-center gap-2">\n` +
               `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
-              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-3 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
+              // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
+              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
               `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
               `</div>`
     } else if (c.type === 'toggle') {
