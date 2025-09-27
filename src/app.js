@@ -1,330 +1,2484 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AI Music Studio</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/styles.css" />
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
-  <style>
-    /* helper to hide horizontal scrollbar for take tray */
-    .no-scrollbar::-webkit-scrollbar { display: none; }
-    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-    .card-border { border: 1px solid rgba(255,255,255,0.08); }
+// app.js — Techno Generator (Loop-Perfect Edition) — Player/Mixer toggle + wider sliders + hotkeys
+// Modified to add card numbering, waveform navigation buttons, help modal and red borders on mute.
 
-    /* Non-blur player surface shared by player bar, mixer tray, and generate cards */
-    .player-surface {
-      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+import { createClient } from '@supabase/supabase-js'
+
+/* =========================================================
+   Feature flags / Env toggles
+   ========================================================= */
+const USE_COMPOSITION_PLAN = String(import.meta.env.VITE_ELEVEN_USE_PLAN || 'false').toLowerCase() === 'true'
+const PRIMARY_OUTPUT_FORMAT = 'pcm_44100'
+const FALLBACK_OUTPUT_FORMAT = 'mp3_44100_128'
+
+/* =========================================================
+   Generation format (server)
+   ========================================================= */
+const PRO_FORMAT = PRIMARY_OUTPUT_FORMAT
+
+/* =========================================================
+   UX flags
+   ========================================================= */
+const PROMPTS_MODE = 'builder' // 'builder' | 'freeform'
+
+/* =========================================================
+   Transport / DSP constants
+   ========================================================= */
+const TEMPO_MIN = 110
+const TEMPO_MAX = 140
+const DEFAULT_TEMPO = 130
+const DEFAULT_BARS  = 4
+
+const START_ENV_MS   = 5
+const EDGE_RAMP_MS   = 5
+const LOOP_XFADE_MS  = 12
+const ALIGN_SEARCH_MS = 45
+const ZERO_FALLBACK_SAMPLES = 384
+
+const BOUNDARY_LOOKAHEAD_MS = 120
+const GEN_TAIL_PAD_MS = 200
+
+/* =========================================================
+   EQ‑3 + Filter defaults
+   ========================================================= */
+const EQ_MIN_DB = -80
+const EQ_MAX_DB =  +6
+const EQ_DEFAULT = 50
+const EQ_SMOOTH_TC = 0.02
+
+const EQ_LOW_FREQ  = 180
+const EQ_MID_FREQ  = 2200
+const EQ_MID_Q     = 1.20
+const EQ_HIGH_FREQ = 6500
+
+const FILTER_MIN_HZ = 40
+const FILTER_MAX_HZ = 18000
+const FILTER_Q = 0.707
+const FILTER_SMOOTH_TC = 0.02
+const FILTER_DEFAULT_HZ = 12000 // 12 kHz default
+
+/* =========================================================
+   Global state
+   ========================================================= */
+let audioContext = null
+let masterGain   = null
+let isPlaying    = false
+
+const stemRaw   = {}
+const stemLoop  = {}
+// active nodes: { source, env, filter, eq:{low,mid,high}, gain }
+const stemNodes = {}
+const stemGains = {}
+
+// Each stem maintains its own loop duration.  When a loop is built from a raw
+// buffer (after generation or when selecting a take), its duration is stored
+// here.  The transport uses these durations to compute per‑stem phases and
+// restart offsets, ensuring each stem plays back at its own tempo without
+// reference to a shared master tempo.
+const stemLoopDuration = {}
+
+let stemControlValues = {}
+let stemMuteStates = {}
+let soloedStem = null
+
+const stemEqValues = {}
+const stemFilterValues = {}
+
+let loopStartTime  = 0
+let loopDuration   = 0
+let transportTicker = null
+
+let referenceStemType = null
+let referenceHeadIndex = 0 // samples at decoded SR
+// Tooltip element for mixer sliders; created during init.  Shows dB or Hz values while adjusting sliders.
+let sliderTooltipEl = null
+
+// Track which stem's settings are being edited in the generate settings modal
+let currentGenerateStem = null
+
+// Flag indicating whether the session master settings (tempo, bars, key)
+// have been selected. Once this flag is true, the session settings are
+// locked for the remainder of the session and the setup modal will not be shown again.
+let sessionSetupDone = false
+
+// Takes
+const stemHistory = {}
+const stemActiveIndex = {}
+const HISTORY_LIMIT = 50
+function ensureStemHistory(st) {
+  if (!stemHistory[st]) stemHistory[st] = []
+  if (stemActiveIndex[st] == null) stemActiveIndex[st] = -1
+}
+function pushStemVersion(st, entry) {
+  ensureStemHistory(st)
+  stemHistory[st].push(entry)
+  if (stemHistory[st].length > HISTORY_LIMIT) stemHistory[st].shift()
+  stemActiveIndex[st] = stemHistory[st].length - 1
+  updateHistoryBadge(st)
+  updateHistoryIndicator(st)
+  updateCardNumberColor(st)
+  updateTempoIndicator(st)
+}
+function getActiveVersion(st) {
+  ensureStemHistory(st)
+  const i = stemActiveIndex[st]
+  if (i < 0) return null
+  return stemHistory[st][i]
+}
+
+/* =========================================================
+   Supabase client
+   ========================================================= */
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+)
+
+/* =========================================================
+   Visual helpers
+   ========================================================= */
+function getColorRGB(colorName) {
+  const m = {
+    red: '239, 68, 68',
+    orange: '249, 115, 22',
+    yellow: '234, 179, 8',
+    green: '34, 197, 94',
+    cyan: '6, 182, 212',
+    purple: '147, 51, 234',
+    blue: '59, 130, 246',
+    pink: '236, 72, 153'
+  }
+  return m[colorName] || '156, 163, 175'
+}
+function drawWaveform(canvas, audioBuffer, color) {
+  if (!canvas || !audioBuffer) return
+  const ctx = canvas.getContext('2d')
+  const { width, height } = canvas
+  ctx.clearRect(0, 0, width, height)
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1
+  const data = audioBuffer.getChannelData(0)
+  const step = Math.ceil(data.length / width)
+  const amp = height / 2
+  ctx.beginPath()
+  for (let x = 0; x < width; x++) {
+    let min = 1, max = -1
+    for (let j = 0; j < step && (x*step + j) < data.length; j++) {
+      const v = data[x*step + j]
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    const y1 = (1 + min) * amp
+    const y2 = (1 + max) * amp
+    ctx.moveTo(x, y1)
+    ctx.lineTo(x, y2)
+  }
+  ctx.stroke()
+}
+function drawTinyWaveform(canvas, audioBuffer) {
+  if (!canvas || !audioBuffer) return
+  const ctx = canvas.getContext('2d')
+  const { width, height } = canvas
+  ctx.clearRect(0, 0, width, height)
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'
+  ctx.fillRect(0, 0, width, height)
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+  ctx.lineWidth = 1
+  const data = audioBuffer.getChannelData(0)
+  const step = Math.max(1, Math.floor(data.length / (width * 2)))
+  const amp = height / 2
+  ctx.beginPath()
+  for (let x = 0, i = 0; x < width; x++, i += step) {
+    let min = 1, max = -1
+    for (let k = 0; k < step && (i + k) < data.length; k++) {
+      const v = data[i + k]
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    const y1 = (1 + min) * amp
+    const y2 = (1 + max) * amp
+    ctx.moveTo(x, y1)
+    ctx.lineTo(x, y2)
+  }
+  ctx.stroke()
+}
+
+/* =========================================================
+   Stem configs (9 cards) — order defines 1–9 hotkeys
+   ========================================================= */
+const stemConfigs = {
+  kick:  {
+    name: 'Kick', color: 'red', basePrompt: 'deep techno kick drum',
+    controls: {
+      punch: { type:'knob', min:0, max:100, default:70, unit:'%', label:'Punch' },
+      decay: { type:'knob', min:0, max:100, default:40, unit:'%', label:'Decay' },
+      texture:{ type:'toggle', default:false, label:'Distortion' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  perc:  {
+    name: 'Snare', color: 'cyan', basePrompt: 'industrial techno snare',
+    controls: {
+      intensity:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Intensity' },
+      variation:{ type:'knob', min:0, max:100, default:40, unit:'%', label:'Variation' },
+      metallic:{ type:'toggle', default:false, label:'Metallic' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  bass:  {
+    name: 'Bass', color: 'yellow', basePrompt: 'dark techno bassline',
+    controls: {
+      depth:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Depth' },
+      movement:{ type:'knob', min:0, max:100, default:30, unit:'%', label:'Movement' },
+      filter:{ type:'toggle', default:true, label:'Filter Sweep' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  lead:  {
+    name: 'Lead', color: 'green', basePrompt: 'hypnotic techno lead synth',
+    controls: {
+      brightness:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Brightness' },
+      complexity:{ type:'knob', min:0, max:100, default:40, unit:'%', label:'Complexity' },
+      delay:{ type:'toggle', default:false, label:'Delay' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  hihat: {
+    name: 'Hihat', color: 'orange', basePrompt: 'crisp techno closed hi-hat',
+    controls: {
+      brightness:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Brightness' },
+      pattern:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Pattern' },
+      reverb:{ type:'toggle', default:false, label:'Reverb' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  pad:   {
+    name: 'Pad', color: 'purple', basePrompt: 'ambient techno pad',
+    controls: {
+      warmth:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Warmth' },
+      evolution:{ type:'knob', min:0, max:100, default:30, unit:'%', label:'Evolution' },
+      chorus:{ type:'toggle', default:true, label:'Chorus' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  arp:   {
+    name: 'Arp', color: 'blue', basePrompt: 'techno synthesizer arpeggio',
+    controls: {
+      rate:{ type:'knob', min:0, max:100, default:55, unit:'%', label:'Rate' },
+      complexity:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Complexity' },
+      gate:{ type:'toggle', default:false, label:'Long Gate' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  fx:    {
+    name: 'FX', color: 'pink', basePrompt: 'techno transition effects and atmos',
+    controls: {
+      intensity:{ type:'knob', min:0, max:100, default:65, unit:'%', label:'Intensity' },
+      movement:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Movement' },
+      reverb:{ type:'toggle', default:true, label:'Small Reverb' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  },
+  perc2: {
+    name: 'Perc', color: 'orange', basePrompt: 'techno top percussion loop',
+    controls: {
+      density:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Density' },
+      groove:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Groove' },
+      metallic:{ type:'toggle', default:false, label:'Metallic' },
+      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
+    }
+  }
+}
+// Fixed hotkey order (1–9)
+const STEM_ORDER = ['kick','perc','bass','lead','hihat','pad','arp','fx','perc2']
+
+/* =========================================================
+   Prompt scaffold (unchanged)
+   ========================================================= */
+const SESSION_TAG = (() => Math.random().toString(36).slice(2, 10))()
+function globalScaffold({ tempo, bars, root, mode }) {
+  //
+  // Construct a global scaffold for the prompt that strongly emphasises
+  // strict adherence to tempo and bar length. ElevenLabs documentation
+  // notes that the model follows BPM when explicitly told to【732721151118734†L136-L146】.  To
+  // reinforce this behaviour, we provide ABSOLUTE directives to insist
+  // on the exact tempo and number of bars.  This helps minimise
+  // deviations where the generated audio might otherwise be slightly
+  // faster or slower than the requested BPM.  The loop description also
+  // clarifies that the full length of the audio should match the
+  // specified bars at the given tempo, with no extra or missing
+  // material.
+  return [
+    `Project: ${SESSION_TAG}`,
+    'Genre: modern techno',
+    'TimeSignature: 4/4 (no swing)',
+    `Tempo: ${tempo} BPM (constant; no variation)`,
+    `Length: EXACT ${bars} bars (no extra bars)`,
+    `Key: ${root} ${mode} (strictly diatonic; no modulation)`,
+    'Start: bar 1 beat 1 (no count-in; no pre-roll)',
+    `End: precisely at end of bar ${bars} (no tail; no reverb/delay bleed)`,
+    'Loop: seamless at bar boundary (phase-coherent)',
+    'Quantization: strict grid (no humanization)',
+    'Delivery: instrumental only',
+    // ABSOLUTE directive to follow the tempo and bar count exactly.  This
+    // line explicitly instructs the model not to deviate from the given
+    // BPM and not to add or remove bars.  We include this to
+    // complement the existing instructions above and align with
+    // ElevenLabs recommendations【732721151118734†L136-L146】.
+    `ABSOLUTE: The loop length must be exactly ${bars} bars at ${tempo} BPM; do not alter the tempo or add/remove bars`
+  ].join('. ')
+}
+function scaleKnob(v, a, b, c, d, e) {
+  const x = Number(v ?? 50)
+  if (x <= 20) return a
+  if (x <= 40) return b
+  if (x <= 60) return c
+  if (x <= 80) return d
+  return e
+}
+
+/* ---------- Builders (hihat/snare strict + others) ---------- */
+// (Builders unchanged; omitted for brevity in comments — logic preserved)
+function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const brightness = scaleKnob(controls.brightness, 'dark', 'balanced', 'crisp', 'bright', 'very bright')
+  const space = controls.reverb ? 'Space: tiny room; decay < 120ms; gate tails before seam.' : 'Space: dry, minimal.'
+  const common = [
+    'STEM: HIHAT — solo closed hi-hat only.',
+    'Identity: crisp techno closed hi-hat.',
+    g,
+    'ROLE: isolated closed hat (no open-hat).',
+    'Pattern: strict 1/16 notes; first hit exactly at bar 1 beat 1; consistent every bar.',
+    `Tone: ${brightness}; unpitched; short decay (40–120ms).`,
+    space,
+    'Exclude: ride, shaker, clap, snare, kick, toms, crashes; no melodic content, sweeps, or FX.',
+    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+  ]
+  if (strictness === 1) common.push('ABSOLUTE: Only closed-hat hits on a straight 1/16 grid; zero swing.')
+  else if (strictness >= 2) common.push(
+    'MUST: closed-hat hits on each 1/16 step (16 hits/bar).',
+    'MUST: zero reverb tail at seam; gate hits before bar end.',
+    'MUST: exclude open hat, ride, shaker, snare, clap, toms, crashes.'
+  )
+  return common.join(' ')
+}
+function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const varTxt = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
+  const intensity = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
+  const body = controls.metallic ? 'Timbre: slightly metallic; tight transient; short decay (80–180ms).' : 'Timbre: dry, tight; short decay (80–180ms).'
+  const common = [
+    'STEM: SNARE — solo snare only.',
+    'Identity: industrial techno snare; drum-machine style; no clap.',
+    g,
+    'ROLE: isolated electronic snare.',
+    'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
+    `Dynamics: ${intensity}; ${body}`,
+    `Variation: ${varTxt} but positions remain 2 & 4.`,
+    'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam.',
+    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+  ]
+  if (strictness === 1) common.push('ABSOLUTE: only beat 2 and beat 4 per bar; no extra hits.', 'ABSOLUTE: no off-grid timing.')
+  else if (strictness >= 2) common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.')
+  return common.join(' ')
+}
+function mapArpRate(v){ const x=Number(v??55); return x<=33?'1/8 notes': x<=66?'1/16 notes':'1/32 notes' }
+function buildArpPrompt(controls, master){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const rate = mapArpRate(controls.rate)
+  const complexity = scaleKnob(controls.complexity, 'simple','moderate','interesting','intricate','ornate')
+  const gate = controls.gate ? 'long-ish gate (80–160ms)' : 'short gate (30–80ms)'
+  return [
+    'STEM: ARPEGGIATOR — solo synth arpeggio only.',
+    `Identity: ${stemConfigs.arp.basePrompt}.`,
+    g,
+    'ROLE: isolated arp; strictly diatonic in ${root} ${mode}; no chords.',
+    `Pattern: ${rate}; fully quantized; phrase length must evenly divide ${bars} bars.`,
+    `Complexity: ${complexity}; consistent motif and octave moves.`,
+    `Envelope: ${gate}; no delay/reverb across seam.`,
+    'Exclude: drums/percussion/bass/pads/leads/vocals.',
+    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+  ].join(' ')
+}
+function buildFXPrompt(controls, master){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const intensity = scaleKnob(controls.intensity, 'subtle','moderate','medium','strong','intense')
+  const movement  = scaleKnob(controls.movement, 'static','gentle motion','evolving','animated','dynamic')
+  const space = controls.reverb ? 'Space: tiny room; decay ≤ 150ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
+  return [
+    'STEM: FX — solo techno transition effects & atmos only.',
+    `Identity: ${stemConfigs.fx.basePrompt}.`,
+    g,
+    'ROLE: bar-internal whooshes/sweeps/noise beds that RESET each bar.',
+    `Intensity: ${intensity}. Movement: ${movement}.`,
+    space,
+    'Exclude: pitched melodies/drums/percussion; avoid risers/falls that exceed a single bar.',
+    'Deliver a bar-perfect seamless loop; zero tail beyond the bar.'
+  ].join(' ')
+}
+function buildPercLoopPrompt(controls, master){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const density = scaleKnob(controls.density, 'sparse','light','medium','busy','dense')
+  const metallic = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
+  const groove = scaleKnob(controls.groove, 'straight','straight with mild syncopation','syncopated but quantized','complex yet quantized','complex yet quantized')
+  return [
+    'STEM: PERCUSSION — solo top percussion only (shakers/blocks/taps); not snare/hat/kick.',
+    `Identity: ${stemConfigs.perc2.basePrompt}.`,
+    g,
+    `ROLE: quantized on-grid accents; ${groove}; zero swing.`,
+    `Density: ${density}; keep consistent across bars.`,
+    `Timbre: ${metallic}; short releases; zero tails at seam.`,
+    'Exclude: tonal hits/kick/snare/clap/hat/ride/toms/crashes.',
+    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+  ].join(' ')
+}
+function roleDirectives(st, c){ /* ... same as before ... */ 
+  switch (st) {
+    case 'kick': return [
+      'ROLE: single isolated kick only',
+      'Pattern: four-on-the-floor; hits on beats 1–4 every bar',
+      'Pitch: unpitched; no tonal sub note; no toms',
+      `Decay: ${scaleKnob(c.decay, 'very short','short','medium','long','very long')}`,
+      `Punch: ${scaleKnob(c.punch, 'soft','firm','punchy','very punchy','aggressive')}`,
+      c.texture ? 'Saturation: light; no tail' : 'Saturation: minimal; clean transient',
+      'Exclude: fills/intro flam/crashes'
+    ].join('. ')
+    case 'bass': return [
+      'ROLE: single isolated bass only',
+      'Harmony: strictly diatonic in project key (no chromatic notes)',
+      'Pitch: root + fifth primarily; occasional octave',
+      `Movement: ${scaleKnob(c.movement, 'static','simple','groovy','animated','busy')} repeating per bar`,
+      `Depth: ${scaleKnob(c.depth, 'light','medium','deep','deeper','subby')} low-end; controlled release`,
+      c.filter ? 'Filter: subtle motion within bar; reset each bar' : 'Filter: stable',
+      'Start note on beat 1; no slides across seam'
+    ].join('. ')
+    case 'lead': return [
+      'ROLE: single isolated lead synth only',
+      'Melody: strictly diatonic; avoid chromatic passing tones',
+      `Phrase length evenly divides ${Math.max(1, stemControlValues?.master?.bars || DEFAULT_BARS)} bar(s)`,
+      `Complexity: ${scaleKnob(c.complexity, 'simple','moderate','interesting','intricate','ornate')} (quantized)`,
+      `Brightness: ${scaleKnob(c.brightness,'dark','mellow','balanced','bright','very bright')}`,
+      c.delay ? 'Delay: minimal tempo-synced; cut at bar end' : 'Delay: off',
+      'No bends/slides across loop seam'
+    ].join('. ')
+    case 'pad': return [
+      'ROLE: single isolated pad only',
+      'Chord: sustained diatonic chord(s); no modulation',
+      `Evolution: ${scaleKnob(c.evolution,'static','gentle','subtle motion','evolving','animated')} but reset every bar`,
+      `Warmth: ${scaleKnob(c.warmth,'cool','neutral','warm','lush','very lush')}`,
+      c.chorus ? 'Chorus: subtle; no stereo smear at seam' : 'Chorus: off',
+      'No long reverb tail; envelope ends before bar boundary'
+    ].join('. ')
+    default: return 'ROLE: single isolated instrument only'
+  }
+}
+function negatives(st){ /* ... same as before ... */ 
+  const common = [
+    'no vocals or speech','no cymbal crash on the last beat','no count-in','no pre-roll',
+    'no silence at start','no tempo changes','no swing','no off-grid timing','no modulation or key change'
+  ]
+  const per = {
+    kick:['no toms','no pitch glides','no tonal sub drops','no reverb tail'],
+    hihat:['no open hats','no ride','no shaker','no clap','no snare','no pitch sweeps','no reverb tail'],
+    perc:['no clap','no rimshot','no hi-hat','no kick','no toms','no melodic percussion','no reverb tail'],
+    bass:['no chords','no distortion tail','no slides across seam'],
+    lead:['no atonal notes','no portamento across seam','no long delay tail'],
+    pad:['no huge reverb','no side instruments','no arpeggios','no tail at seam'],
+    arp:['no drums','no percussion','no bass','no pads','no leads','no vocals','no FX'],
+    fx:['no drums or percussion','no pitched melodies','no vocals','no tails across seam'],
+    perc2:['no kick','no snare','no clap','no hi-hat','no ride','no toms','no tonal hits','no tail across seam']
+  }
+  return [...common, ...(per[st] || [])].join('; ')
+}
+function buildStemPrompt(st, strictness=0){
+  const controls = stemControlValues[st] || {}
+  const master = getMasterForPrompt()
+  if (st === 'hihat') return buildHihatPrompt(controls, master, strictness)
+  if (st === 'perc')  return buildSnarePrompt(controls, master, strictness)
+  if (st === 'arp')   return buildArpPrompt(controls, master)
+  if (st === 'fx')    return buildFXPrompt(controls, master)
+  if (st === 'perc2') return buildPercLoopPrompt(controls, master)
+  const cfg = stemConfigs[st]
+  const stemBase = cfg?.basePrompt || 'single instrument'
+  const global   = globalScaffold(master)
+  const role     = roleDirectives(st, controls)
+  const negs     = negatives(st)
+  return [
+    `STEM: ${st.toUpperCase()} — solo ${stemBase}.`,
+    global,
+    role,
+    `Avoid: ${negs}.`,
+    'Deliver a bar-perfect loop that aligns exactly with bar boundaries and starts at bar 1 beat 1.'
+  ].join(' ')
+}
+
+/* =========================================================
+   Audio graph (Filter + EQ)
+   ========================================================= */
+async function ensureAudioContext() {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)()
+    masterGain = audioContext.createGain()
+    masterGain.gain.setValueAtTime(0.9, audioContext.currentTime)
+    masterGain.connect(audioContext.destination)
+  }
+  if (audioContext.state === 'suspended') await audioContext.resume()
+}
+function createEqNodes() {
+  const low  = audioContext.createBiquadFilter()
+  low.type = 'lowshelf'
+  low.frequency.setValueAtTime(EQ_LOW_FREQ, audioContext.currentTime)
+  low.gain.setValueAtTime(0, audioContext.currentTime)
+
+  const mid  = audioContext.createBiquadFilter()
+  mid.type = 'peaking'
+  mid.frequency.setValueAtTime(EQ_MID_FREQ, audioContext.currentTime)
+  mid.Q.setValueAtTime(EQ_MID_Q, audioContext.currentTime)
+  mid.gain.setValueAtTime(0, audioContext.currentTime)
+
+  const high = audioContext.createBiquadFilter()
+  high.type = 'highshelf'
+  high.frequency.setValueAtTime(EQ_HIGH_FREQ, audioContext.currentTime)
+  high.gain.setValueAtTime(0, audioContext.currentTime)
+
+  return { low, mid, high }
+}
+function knobToFreq(val) {
+  const v = Math.max(0, Math.min(100, Number(val)||0))
+  const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
+  const lnF = lnMin + (v/100) * (lnMax - lnMin)
+  return Math.exp(lnF)
+}
+function freqToKnob(freq) {
+  const f = Math.max(FILTER_MIN_HZ, Math.min(FILTER_MAX_HZ, Number(freq)||FILTER_DEFAULT_HZ))
+  const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
+  const lnF = Math.log(f)
+  return Math.round(((lnF - lnMin) / (lnMax - lnMin)) * 100)
+}
+function createFilterNode(st) {
+  const filter = audioContext.createBiquadFilter()
+  const vals = stemFilterValues[st] || { mode: 'lowpass', cutoff: freqToKnob(FILTER_DEFAULT_HZ) }
+  filter.type = vals.mode
+  filter.Q.setValueAtTime(FILTER_Q, audioContext.currentTime)
+  filter.frequency.setValueAtTime(knobToFreq(vals.cutoff), audioContext.currentTime)
+  return filter
+}
+function createStemNodes(st, loopBuffer) {
+  const src = audioContext.createBufferSource()
+  src.buffer = loopBuffer
+  src.loop = true
+  src.loopStart = 0
+  src.loopEnd = loopBuffer.duration
+
+  const env = audioContext.createGain()
+  env.gain.setValueAtTime(0, audioContext.currentTime)
+
+  const filter = createFilterNode(st)
+  const eq = createEqNodes()
+
+  const g = stemGains[st] || audioContext.createGain()
+  if (!stemGains[st]) {
+    stemGains[st] = g
+    const vol = (stemControlValues[st]?.volume ?? 80) / 100
+    g.gain.setValueAtTime(vol, audioContext.currentTime)
+    g.connect(masterGain)
+  }
+
+  src.connect(env)
+  env.connect(filter)
+  filter.connect(eq.low)
+  eq.low.connect(eq.mid)
+  eq.mid.connect(eq.high)
+  eq.high.connect(g)
+
+  applyEqValuesToNodes(eq, stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT })
+  applyFilterValuesToNode(filter, stemFilterValues[st] || { mode: 'lowpass', cutoff: freqToKnob(FILTER_DEFAULT_HZ) })
+
+  return { source: src, env, filter, eq, gain: g }
+}
+
+/* =========================================================
+   Loop math + seam tools
+   ========================================================= */
+// (unchanged helpers)
+function clampTempo(t){ const x=Math.round(Number(t)||DEFAULT_TEMPO); return Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, x)) }
+function computeTargetFrames(sr, bpm, bars){ const beats=bars*4; const seconds=beats*(60/bpm); return Math.round(seconds*sr) }
+function removeDcOffset(buffer){ const ch=buffer.numberOfChannels; for(let c=0;c<ch;c++){ const d=buffer.getChannelData(c); let sum=0; for(let i=0;i<d.length;i++) sum+=d[i]; const mean=sum/d.length; if(Math.abs(mean)>1e-6){ for(let i=0;i<d.length;i++) d[i]-=mean } } }
+function nearestZeroCrossing(data, around, radius){ const n=data.length; let best=around,bestVal=Math.abs(data[around]||0); const a=Math.max(0,around-radius), b=Math.min(n-1,around+radius); for(let i=a;i<=b;i++){ const v=Math.abs(data[i]); if(v<bestVal){ bestVal=v; best=i } } return best }
+function detectHeadIndex(buffer){ const sr=buffer.sampleRate; const maxMs=1000; const maxN=Math.min(buffer.length, Math.round((maxMs/1000)*sr)); if(maxN<=0) return 0; const x=buffer.getChannelData(0); const env=new Float32Array(maxN); for(let i=0;i<maxN;i++) env[i]=Math.abs(x[i]); const win=Math.max(2, Math.round((8/1000)*sr)); let acc=0; for(let i=0;i<win && i<env.length;i++) acc+=env[i]; const sm=new Float32Array(maxN); for(let i=0;i<maxN;i++){ if(i>=win) acc+=env[i]-env[i-win]; sm[i]=acc/Math.min(win,i+1) } let peak=0; for(let i=0;i<maxN;i++) if(sm[i]>peak) peak=sm[i]; const th=Math.max(Math.pow(10,-45/20), peak*0.12); const backOff=Math.round(0.0035*sr); for(let i=0;i<maxN;i++) if(sm[i]>=th){ const z=nearestZeroCrossing(x, Math.max(0,i-backOff), ZERO_FALLBACK_SAMPLES); return Math.max(0,z) } return 0 }
+function sampleAt(data, idx){ const n=data.length; while(idx<0) idx+=n; while(idx>=n) idx-=n; return data[idx] }
+function findBestSeamOffset(raw, startIdx, targetLen, xfadeN){
+  const sr = raw.sampleRate
+  const d0 = raw.getChannelData(0)
+  const search = Math.max(0, Math.round((ALIGN_SEARCH_MS/1000)*sr))
+  const step = Math.max(1, Math.round(sr / 12000))
+  let bestOffset = 0, bestScore = Number.POSITIVE_INFINITY
+  for (let off = -search; off <= search; off += step) {
+    let score = 0
+    for (let i=0;i<xfadeN;i+=step) {
+      const a = sampleAt(d0, startIdx + i + off)
+      const b = sampleAt(d0, startIdx + targetLen - xfadeN + i + off)
+      const diff = a - b
+      score += diff*diff
+    }
+    if (score < bestScore) { bestScore = score; bestOffset = off }
+  }
+  return bestOffset
+}
+function applySeamCrossfade(buffer, xfadeMs=LOOP_XFADE_MS){
+  const sr=buffer.sampleRate, n=buffer.length
+  const xfadeN=Math.max(2, Math.round((xfadeMs/1000)*sr))
+  for(let c=0;c<buffer.numberOfChannels;c++){
+    const d=buffer.getChannelData(c)
+    for(let i=0;i<xfadeN;i++){
+      const t=i/(xfadeN-1)
+      const wa=Math.cos(0.5*Math.PI*t), wb=Math.sin(0.5*Math.PI*t)
+      const endIdx=n-xfadeN+i
+      d[endIdx]= (d[endIdx]*wa + d[i]*wb)
+    }
+    d[n-1]=d[0]
+  }
+}
+function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
+  const sr=buffer.sampleRate, n=buffer.length
+  const ramp=Math.max(2, Math.round((rampMs/1000)*sr))
+  for(let c=0;c<buffer.numberOfChannels;c++){
+    const d=buffer.getChannelData(c)
+    for(let i=0;i<ramp && i<n;i++) d[i]*=Math.sin(0.5*Math.PI*(i/(ramp-1)))
+    for(let i=0;i<ramp && i<n;i++) d[n-1-i]*=Math.sin(0.5*Math.PI*(1-(i/(ramp-1))))
+  }
+}
+function buildLoopBufferFromRawStrict(raw, bpm, bars, headIndex){
+  removeDcOffset(raw)
+  const sr=raw.sampleRate
+  const target=computeTargetFrames(sr,bpm,bars)
+  const ch=raw.numberOfChannels
+  const out=new AudioBuffer({ length: target, numberOfChannels: ch, sampleRate: sr })
+  const xfadeN=Math.max(2, Math.round((LOOP_XFADE_MS/1000)*sr))
+  const bestOff=findBestSeamOffset(raw, headIndex, target, xfadeN)
+  const start=((headIndex+bestOff)%raw.length + raw.length)%raw.length
+  const end=start+target
+  for(let c=0;c<ch;c++){
+    const src=raw.getChannelData(c), dst=out.getChannelData(c)
+    if(end<=raw.length) dst.set(src.subarray(start,end),0)
+    else { const first=raw.length-start; dst.set(src.subarray(start),0); dst.set(src.subarray(0, target-first), first) }
+  }
+  applyEdgeRamps(out, EDGE_RAMP_MS)
+  applySeamCrossfade(out, LOOP_XFADE_MS)
+  return out
+}
+
+/* =========================================================
+   Validators (unchanged)
+   ========================================================= */
+function countOnsets(buf, refractorySec=0.08, relThresh=0.35){
+  const sr=buf.sampleRate
+  const x=buf.getChannelData(0)
+  let sum=0; for(let i=0;i<x.length;i+=512){ const v=x[i]; sum+=v*v }
+  const rms=Math.sqrt(sum/Math.max(1, Math.floor(x.length/512)))
+  const thr=Math.max(0.02, rms*relThresh)
+  const refr=Math.max(1, Math.round(refractorySec*sr))
+  let peaks=0,i=0
+  while(i<x.length){ if(Math.abs(x[i])>=thr){ peaks++; i+=refr } else i++ }
+  return peaks
+}
+function validateSnare(buf, bpm, bars, tolMs=40){
+  const sr=buf.sampleRate
+  const barSec=4*(60/bpm)
+  const beatSec=60/bpm
+  const tol=Math.round((tolMs/1000)*sr)
+  const x=buf.getChannelData(0)
+  function hasPeakNear(sampleIdx, win=tol, mult=3.0){
+    const a=Math.max(0, sampleIdx-win), b=Math.min(x.length-1, sampleIdx+win)
+    let s=0,n=0; for(let i=a;i<=b;i+=4){ const v=x[i]; s+=v*v; n++ }
+    const rms=Math.sqrt(s/Math.max(1,n))
+    const thr=Math.max(0.02, rms*mult)
+    for(let i=a;i<=b;i+=2) if(Math.abs(x[i])>=thr) return true
+    return false
+  }
+  for(let bar=0; bar<bars; bar++){
+    const barStart=Math.round(bar*barSec*sr)
+    const beat2=barStart+Math.round(1*beatSec*sr)
+    const beat4=barStart+Math.round(3*beatSec*sr)
+    if(!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false
+  }
+  return true
+}
+function validateHihat(buf, bpm, bars){
+  const expected=bars*16
+  const found=countOnsets(buf, 0.07, 0.35)
+  return found >= Math.max(10, Math.round(expected * 0.6))
+}
+
+/* =========================================================
+   Playback indicators + Play button icon
+   ========================================================= */
+// Update the progress indicators for each stem.  Instead of using a single
+// shared phase for all instruments, compute the phase per stem based on its
+// individual loop duration.  This allows stems generated at different tempos
+// to display progress accurately and ensures loops remain independent.
+function updatePlaybackIndicators() {
+  if (!audioContext) return
+  const t = audioContext.currentTime
+  Object.keys(stemConfigs).forEach(st => {
+    const indicator = document.querySelector(`[data-stem-indicator="${st}"]`)
+    const buf = stemLoop[st]
+    if (!indicator || !buf) return
+    const dur = stemLoopDuration[st] || buf.duration
+    if (dur <= 0 || !isFinite(dur)) return
+    const phase = ((t - loopStartTime) % dur) / dur
+    indicator.style.left = `${phase * 100}%`
+    indicator.style.opacity = '1'
+  })
+}
+function updatePlayButtonIcon() {
+  const btn = document.getElementById('playBtn')
+  if (!btn) return
+  const icon = btn.querySelector('[data-lucide]')
+  if (icon) { icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play'); window.lucide?.createIcons() }
+  else { btn.textContent = isPlaying ? 'Pause' : 'Play' }
+}
+
+/* =========================================================
+   Transport
+   ========================================================= */
+function startTransport() {
+  if (isPlaying) return
+  isPlaying = true
+  updatePlayButtonIcon()
+
+  // We no longer compute a global loop duration.  Each stem uses its own
+  // buffer length for looping.  Record the start time of this transport so
+  // that per‑stem phases can be computed relative to a common origin.
+  const t0 = audioContext.currentTime + START_ENV_MS/1000
+  loopStartTime = t0
+
+  Object.keys(stemConfigs).forEach(st => {
+    const indicator = document.querySelector(`[data-stem-indicator="${st}"]`)
+    if (indicator) { indicator.style.left = '0%'; indicator.style.opacity = '1' }
+  })
+
+  Object.keys(stemLoop).forEach(st => {
+    const buf = stemLoop[st]
+    if (!buf) return
+    const nodes = createStemNodes(st, buf)
+    stemNodes[st] = nodes
+    nodes.env.gain.setValueAtTime(0, t0)
+    nodes.env.gain.linearRampToValueAtTime(1, t0 + START_ENV_MS/1000)
+    const vol = (stemControlValues[st]?.volume ?? 80)/100
+    const muted = stemMuteStates[st]
+    const soloedOther = (soloedStem && soloedStem !== st)
+    nodes.gain.gain.setValueAtTime((muted || soloedOther) ? 0 : vol, t0)
+    nodes.source.start(t0)
+  })
+
+  if (transportTicker) clearInterval(transportTicker)
+  transportTicker = setInterval(() => {
+    if (!isPlaying) return
+    updatePlaybackIndicators()
+  }, 25)
+
+  updateAllMixerGlows()
+}
+function stopTransport() {
+  if (!isPlaying) return
+  isPlaying = false
+  updatePlayButtonIcon()
+
+  const stopAt = audioContext.currentTime + 0.005
+  Object.keys(stemConfigs).forEach(st => {
+    const indicator = document.querySelector(`[data-stem-indicator="${st}"]`)
+    if (indicator) { indicator.style.left = '0%'; indicator.style.opacity = '0' }
+  })
+
+  Object.values(stemNodes).forEach(n => {
+    if (!n?.source) return
+    n.env.gain.cancelScheduledValues(audioContext.currentTime)
+    n.env.gain.setValueAtTime(n.env.gain.value, audioContext.currentTime)
+    n.env.gain.linearRampToValueAtTime(0, stopAt)
+    try { n.source.stop(stopAt) } catch {}
+  })
+  Object.keys(stemNodes).forEach(k => delete stemNodes[k])
+  if (transportTicker) clearInterval(transportTicker)
+  transportTicker = null
+
+  updateAllMixerGlows()
+}
+function restartStemNextBoundary(st) {
+  if (!isPlaying) return
+  const buf = stemLoop[st]
+  if (!buf) return
+  const dur = stemLoopDuration[st] || buf.duration
+  if (dur <= 0) return
+  // Compute how far into the current loop we are relative to when playback started.
+  // This allows the new buffer to start at the same phase as the old one.
+  const elapsed = (audioContext.currentTime - loopStartTime) % dur
+  const startAt = audioContext.currentTime
+  const next = createStemNodes(st, buf)
+  const prev = stemNodes[st]
+  stemNodes[st] = next
+
+  const vol = (stemControlValues[st]?.volume ?? 80) / 100
+  const muted = stemMuteStates[st]
+  const soloedOther = (soloedStem && soloedStem !== st)
+  next.gain.gain.setValueAtTime((muted || soloedOther) ? 0 : vol, startAt)
+  next.env.gain.setValueAtTime(1, startAt)
+  try {
+    next.source.start(startAt, elapsed)
+  } catch {}
+  if (prev?.source) {
+    try { prev.source.stop(startAt) } catch {}
+  }
+  updateMixerGlow(st)
+}
+
+/* =========================================================
+   Eleven Music compose (unchanged core)
+   ========================================================= */
+const genControllers = new Map()
+function getNewStemController(st){ const prev=genControllers.get(st); if(prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded','AbortError')); const ctrl=new AbortController(); genControllers.set(st, ctrl); return ctrl }
+function buildCompositionPlan({ tempo, bars }, descriptor){ const ms=Math.round(bars*4*(60/tempo)*1000); return { positive_global_styles:["techno","instrumental","loop"], negative_global_styles:["vocals","fade-in","fade-out","free-time"], sections:[{ section_name:"Loop", positive_local_styles:[descriptor||"modern techno"], negative_local_styles:["rubato","modulation","improv cadenza"], duration_ms: ms, lines: [] }] } }
+async function composeOnce(payload, signal){
+  const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/eleven-music-compose`
+  const tryPayload = (fmt) => ({ ...payload, output_format: fmt, model_id: 'music_v1', respect_sections_durations: true })
+  let lastErr = null
+  for (const fmt of [PRIMARY_OUTPUT_FORMAT, FALLBACK_OUTPUT_FORMAT]) {
+    try {
+      const res = await fetch(functionUrl, {
+        method: 'POST', signal,
+        headers: { 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(tryPayload(fmt))
+      })
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`
+        try {
+          const e = await res.json()
+          if (e.error) msg = e.error
+          if (e.upstream) msg += ` • upstream: ${e.upstream}`
+        } catch { msg += ` • Raw: ${await res.text()}` }
+        if (fmt === PRIMARY_OUTPUT_FORMAT && /only allowed for Pro|PCM/i.test(msg)) { lastErr = new Error(msg); continue }
+        throw new Error(msg)
+      }
+      return res.arrayBuffer()
+    } catch (e) { lastErr = e }
+  }
+  throw lastErr || new Error('composeOnce failed')
+}
+async function composeWithRetries(st, tempo, bars, signal, statusEl){
+  const beats=bars*4
+  const seconds=beats*(60/tempo)
+  let music_length_ms=Math.round(seconds*1000)+GEN_TAIL_PAD_MS
+  music_length_ms=Math.max(10000, Math.min(300000, music_length_ms))
+  const master=getMasterForPrompt()
+  const controls=stemControlValues[st]||{}
+  for(let tier=0;tier<3;tier++){
+    const prompt=(st==='hihat')?buildHihatPrompt(controls, master, tier):buildSnarePrompt(controls, master, tier)
+    if (statusEl) statusEl.textContent=`Creating… (${st}, tier ${tier+1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
+    const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt, music_length_ms }
+    const ab=await composeOnce(body, signal)
+    const buf=await audioContext.decodeAudioData(ab)
+    const ok=(st==='hihat')?validateHihat(buf, tempo, bars):validateSnare(buf, tempo, bars)
+    if(ok) return { buffer: buf, usedPrompt: prompt, tier }
+  }
+  const finalPrompt=(st==='hihat')?buildHihatPrompt(controls, master, 2):buildSnarePrompt(controls, master, 2)
+  const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt: finalPrompt, music_length_ms }
+  const ab=await composeOnce(body, signal)
+  const buf=await audioContext.decodeAudioData(ab)
+  return { buffer: buf, usedPrompt: finalPrompt, tier: 2, failedValidation: true }
+}
+async function generateStem(st) {
+  await ensureAudioContext()
+  const ctrl = getNewStemController(st)
+  const { signal } = ctrl
+
+  // The create button (opens the settings modal) also acts as the trigger for generation.  Select
+  // the button that opens the settings (open-create-settings) so we can show loading state.
+  const button = document.querySelector(`[data-stem="${st}"] [data-action="open-create-settings"]`)
+  const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
+  const card = document.querySelector(`[data-stem="${st}"]`)
+
+  try {
+    if (button) {
+      button.disabled = true
+      const icon = button.querySelector('[data-lucide]')
+      if (icon) { icon.setAttribute('data-lucide', 'loader-2'); icon.classList.add('loading-spin'); window.lucide?.createIcons() }
+    }
+    if (card) card.classList.add('is-generating')
+    if (statusEl) statusEl.textContent = `Creating… (Eleven Music v1)`
+
+    const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
+    const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
+
+    // Attempt to generate the stem via the Supabase edge function
+    // `generate-techno-stem`.  This function builds the prompt, calls
+    // the ElevenLabs API and trims the loop server-side.  On success
+    // it returns a base64 encoded WAV along with prompt metadata.
+    let audioBuffer, usedPrompt, tier = 0, validated = true, failedValidation = false
+    try {
+      const payload = {
+        stem: st,
+        controls: stemControlValues[st] || {},
+        master: {
+          tempo,
+          bars,
+          rootBase: stemControlValues.master?.rootBase || 'A',
+          accidental: stemControlValues.master?.accidental || 'natural',
+          mode: stemControlValues.master?.mode || 'Minor'
+        },
+        use_grok: false
+      }
+      const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
+      if (error || !data) {
+        throw new Error(error?.message || 'Supabase invocation failed')
+      }
+      // data should contain audio_b64, usedPrompt, tier, validated
+      const { audio_b64, usedPrompt: up, tier: tt, validated: val } = data
+      usedPrompt = up || ''
+      tier = typeof tt === 'number' ? tt : 0
+      validated = val !== false
+      // Decode the base64 audio string
+      const commaIdx = (audio_b64 || '').indexOf(',')
+      const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
+      const binaryStr = atob(b64 || '')
+      const len = binaryStr.length
+      const bytes = new Uint8Array(len)
+      for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i)
+      audioBuffer = await audioContext.decodeAudioData(bytes.buffer)
+      // Determine head index for record keeping
+      referenceHeadIndex = detectHeadIndex(audioBuffer)
+      referenceStemType = st
+      // Use the returned audio as the strict loop
+      stemRaw[st]  = audioBuffer
+      stemLoop[st] = audioBuffer
+      stemLoopDuration[st] = audioBuffer.duration
+      failedValidation = !validated
+    } catch (supErr) {
+      // Supabase call failed or returned error; fallback to local generation
+      console.error('Supabase request failed', supErr)
+      // Use the old generate logic: call Eleven Labs via the proxy function
+      // (`composeOnce` and `composeWithRetries`) and build a strict loop locally.
+      if (st === 'hihat' || st === 'perc') {
+        const res = await composeWithRetries(st, tempo, bars, signal, statusEl)
+        audioBuffer = res.buffer
+        usedPrompt = res.usedPrompt
+        tier = res.tier
+        failedValidation = !!res.failedValidation
+      } else {
+        const prompt = buildStemPrompt(st).trim()
+        const beats = bars * 4
+        const seconds = beats * (60 / tempo)
+        let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
+        music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
+        const body = USE_COMPOSITION_PLAN
+          ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
+          : { prompt, music_length_ms }
+        const ab = await composeOnce(body, signal)
+        audioBuffer = await audioContext.decodeAudioData(ab)
+        usedPrompt = prompt
+        tier = 0
+        failedValidation = false
+      }
+      // Determine head index and build a strict loop from the raw buffer
+      referenceHeadIndex = detectHeadIndex(audioBuffer)
+      referenceStemType = st
+      const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
+      stemRaw[st]  = audioBuffer
+      stemLoop[st] = strictLoop
+      stemLoopDuration[st] = strictLoop.duration
     }
 
-    /* Keep content clear of player bar */
-    #techno-generator-page { padding-bottom: 7.5rem; }
-
-    /* Enlarge the navigation arrows inside waveform/take selectors */
-    [data-action="prev-take"] i,
-    [data-action="next-take"] i {
-      width: 1.5rem;
-      height: 1.5rem;
+    // Push the new version into history
+    pushStemVersion(st, {
+      id: `${st}_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      prompt: usedPrompt,
+      tempo, bars,
+      sessionTag: SESSION_TAG,
+      headIndex: referenceHeadIndex,
+      raw: stemRaw[st],
+      meta: { tier, validated: !failedValidation }
+    })
+    renderHistoryDrawer(st)
+    // Draw waveform for the new loop
+    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+    if (canvas) {
+      const cfg = stemConfigs[st]
+      drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+    }
+    if (statusEl) {
+      const base = `Ready (${stemLoop[st].duration.toFixed(3)}s, loop-aligned)`
+      statusEl.textContent = failedValidation
+        ? `${base} — warning: validator failed after retries (kept strict take)`
+        : (tier > 0 ? `${base} — strict tier ${tier + 1}` : `${base}`)
     }
 
-    /* Red border when muted */
-    .sg-muted-border { border-color: rgb(239, 68, 68) !important; }
+    if (isPlaying) restartStemNextBoundary(st)
+    updateMixerGlow(st)
+    updateCardNumberColor(st)
+    updateHistoryIndicator(st)
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      console.error(`❌ Generation error (${st}):`, err)
+      if (statusEl) statusEl.textContent = `Error: ${err.message}`
+    } else {
+      if (statusEl) statusEl.textContent = 'Generation cancelled'
+    }
+  } finally {
+    if (genControllers.get(st) === ctrl) genControllers.delete(st)
+    if (button) {
+      button.disabled = false
+      const icon = button.querySelector('[data-lucide]')
+      if (icon) { icon.setAttribute('data-lucide', 'wand-2'); icon.classList.remove('loading-spin'); window.lucide?.createIcons() }
+    }
+    if (card) card.classList.remove('is-generating')
+  }
+}
 
-    /* On small screens, reduce the height of waveforms and general font sizes to keep cards compact */
-    @media (max-width: 640px) {
-      .waveform-canvas {
-        height: 2.5rem !important;
+/* =========================================================
+   Downloads (unchanged)
+   ========================================================= */
+function encodeWAV(audioBuffer){
+  const srcCh=audioBuffer.numberOfChannels
+  const len=audioBuffer.length
+  const sr=audioBuffer.sampleRate
+  const bps=2
+  const chans=Array.from({ length: srcCh }, (_, c) => audioBuffer.getChannelData(c))
+  const interleaved=new Float32Array(len*srcCh)
+  let o=0; for(let i=0;i<len;i++) for(let c=0;c<srcCh;c++) interleaved[o++]=chans[c][i]
+  const blockAlign=srcCh*bps, byteRate=sr*blockAlign, dataSize=interleaved.length*bps
+  const buffer=new ArrayBuffer(44+dataSize); const view=new DataView(buffer)
+  writeAscii(view,0,'RIFF'); view.setUint32(4,36+dataSize,true); writeAscii(view,8,'WAVE')
+  writeAscii(view,12,'fmt '); view.setUint32(16,16,true); view.setUint16(20,1,true)
+  writeAscii(view,22,String.fromCharCode(srcCh)); view.setUint16(22,srcCh,true)
+  view.setUint32(24,sr,true); view.setUint32(28,byteRate,true)
+  view.setUint16(32,blockAlign,true); view.setUint16(34,16,true)
+  writeAscii(view,36,'data'); view.setUint32(40,dataSize,true)
+  let off=44
+  for(let i=0;i<interleaved.length;i++,off+=2){ let s=Math.max(-1,Math.min(1, interleaved[i])); s=s<0?s*0x8000:s*0x7FFF; view.setInt16(off,s,true) }
+  return new Blob([view], { type: 'audio/wav' })
+  function writeAscii(v,o,s){ for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)) }
+}
+function downloadStem(st){
+  const buf=stemLoop[st]
+  if(!buf){ alert(`No audio for ${stemConfigs[st]?.name || st}. Create first.`); return }
+  const wav=encodeWAV(buf)
+  const url=URL.createObjectURL(wav)
+  const a=document.createElement('a')
+  a.href=url; a.download=`techno_${st}_${Date.now()}.wav`
+  document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+/* =========================================================
+   UI rendering (per card) — with black generate btn, wider sliders, click‑overlay for toggles
+   ========================================================= */
+function knobToDb(val){
+  const v=Math.max(0, Math.min(100, Number(val)||0))
+  // Shift the 0 dB point to 75% of the slider to mirror professional DAW faders.
+  const pivot = 75
+  if (v <= pivot) return EQ_MIN_DB + (v / pivot) * (0 - EQ_MIN_DB)
+  return ((v - pivot) / (100 - pivot)) * EQ_MAX_DB
+}
+function formatDb(db){
+  if (db <= EQ_MIN_DB + 0.5) return 'CUT'
+  if (Math.abs(db) < 0.05) return '0 dB'
+  return `${db.toFixed(1)} dB`
+}
+function knobAngle(val){ return -135 + (val/100)*270 }
+function applyEqValuesToNodes(eqNodes, vals){
+  if (!eqNodes || !audioContext) return
+  const now=audioContext.currentTime
+  eqNodes.low.gain.setTargetAtTime(knobToDb(vals.low), now, EQ_SMOOTH_TC)
+  eqNodes.mid.gain.setTargetAtTime(knobToDb(vals.mid), now, EQ_SMOOTH_TC)
+  eqNodes.high.gain.setTargetAtTime(knobToDb(vals.high), now, EQ_SMOOTH_TC)
+}
+function applyFilterValuesToNode(filterNode, vals){
+  if (!filterNode || !audioContext) return
+  const now=audioContext.currentTime
+  filterNode.type=vals.mode
+  filterNode.Q.setTargetAtTime(FILTER_Q, now, FILTER_SMOOTH_TC)
+  filterNode.frequency.setTargetAtTime(knobToFreq(vals.cutoff), now, FILTER_SMOOTH_TC)
+}
+function updateEqKnobVisual(knobEl, val){
+  if(!knobEl) return
+  knobEl.dataset.value=String(val)
+  const ptr=knobEl.querySelector('[data-eq-pointer]')
+  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
+}
+function updateEqReadout(st, band){
+  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
+  const db=knobToDb(v)
+  const ro=document.querySelector(`[data-eq-readout="${st}:${band}"]`)
+  if (ro) ro.textContent=formatDb(db)
+}
+
+/* ---------- Filter UI ---------- */
+function updateFilterKnobVisual(knobEl, val){
+  if(!knobEl) return
+  knobEl.dataset.value=String(val)
+  const ptr=knobEl.querySelector('[data-filter-pointer]')
+  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
+}
+function updateFilterReadout(st){
+  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const hz=knobToFreq(v)
+  const ro=document.querySelector(`[data-filter-readout="${st}"]`)
+  if (ro) ro.textContent = hz >= 1000 ? `${(hz/1000).toFixed(hz>=10000?0:1)} kHz` : `${Math.round(hz)} Hz`
+}
+function updateFilterModeButton(st){
+  const btn=document.querySelector(`[data-filter-mode="${st}"]`)
+  if(!btn) return
+  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
+  btn.textContent = mode === 'lowpass' ? 'LP' : 'HP'
+}
+
+/* ---------- Per-card HTML ---------- */
+function eqKnobHTML(st, band, label){
+  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
+  const ang=knobAngle(v)
+  return `\n        <div class="flex flex-col items-center select-none">\n          <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n               data-eq-knob data-stem="${st}" data-band="${band}" data-value="${v}" title="${label}: drag to adjust">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                 data-eq-pointer\n                 style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] tracking-wider text-white/80">${label.toUpperCase()}</div>\n          <div class="text-[10px] text-white/60" data-eq-readout="${st}:${band}">${formatDb(knobToDb(v))}</div>\n        </div>\n      `
+}
+function filterKnobHTML(st){
+  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const ang=knobAngle(v)
+  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
+  return `\n        <div class="flex items-center gap-2">\n          <div class="flex flex-col items-center select-none">\n            <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n                 data-filter-knob data-stem="${st}" data-value="${v}" title="Filter Cutoff: drag to adjust">\n              <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n              <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                   data-filter-pointer\n                   style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n            </div>\n            <div class="mt-1 text-[10px] tracking-wider text-white/80">CUTOFF</div>\n            <div class="text-[10px] text-white/60" data-filter-readout="${st}"></div>\n          </div>\n          <button class="h-6 px-2 rounded-md border border-white/15 bg-white/80 text-black text-[10px] font-semibold tracking-wider hover:bg-white active:translate-y-[1px] transition"\n                  data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}" title="Toggle LP/HP">\n            ${mode === 'lowpass' ? 'LP' : 'HP'}\n          </button>\n        </div>\n      `
+}
+// Original header action buttons helper (no longer used).  Renamed to avoid redeclaration with custom override.
+function _unusedHeaderActionButtonsHTML(st){
+  return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `
+}
+
+// Mobile version of header action buttons.  On small screens the action icons
+// appear below the card title at 25% smaller size and reduced spacing.  This
+// helper is used in the card header markup to display a second row of
+// buttons on mobile only (hidden on sm and larger).
+// Original mobile header action buttons helper (no longer used).  Renamed to avoid redeclaration with custom override.
+function _unusedHeaderActionButtonsMobileHTML(st) {
+  return `\n        <div class="flex items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `
+}
+function createBuilderStemCard(st, cfg){
+  const card = document.createElement('div')
+  // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
+  card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
+  card.setAttribute('data-stem', st)
+
+  const idx = STEM_ORDER.indexOf(st) + 1
+
+  // Build header markup.  On mobile (below sm), action buttons appear on a second row beneath
+  // the title and number.  On sm and above, the action buttons appear inline to the right of
+  // the title.  We wrap the desktop actions in a hidden container on mobile and include a
+  // separate mobile action row using headerActionButtonsMobileHTML.
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2 w-full">\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30 ml-auto">${idx}</span>\n          </div>\n          <div class="hidden sm:block">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
+
+  // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
+  const eqFilterHTML = ''
+
+  // Remove per-stem volume control from the card; volume is now controlled in the mixer
+  let volumeHTML = ''
+
+  // Waveform display: remove takes/tempo indicators/open button and add left/right arrow zones occupying 25% of the width each.
+  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Left and right arrow zones: occupy 25% width each with black background -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+
+  // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
+  let slidersRowsHTML = ''
+  let togglesMenuHTML = ''
+
+  // Generate panel: player-surface look, black Generate button, click-to-toggle overlay above sliders
+  const genPanelHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-3 relative">\n          <div class="flex items-start gap-4">\n            <div class="relative flex-1">\n              <div class="grid grid-cols-1 gap-2">${slidersRowsHTML}</div>\n              <div class="absolute left-0 right-0 -top-2 z-20 hidden" data-options-panel="${st}">\n                <div class="bg-black border-2 border-white/80 rounded-xl p-3 shadow-xl">\n                  ${togglesMenuHTML || '<div class="text-xs text-white/60">No options</div>'}\n                </div>\n              </div>\n            </div>\n            <div class="flex flex-col items-end">\n              <button class="w-9 h-9 rounded-lg border border-white/30 flex items-center justify-center hover:bg-white/10"\n                      data-action="toggle-stem-options" data-stem="${st}" aria-pressed="false" title="Stem options">\n                <i data-lucide="sliders" class="w-4 h-4"></i>\n              </button>\n            </div>\n          </div>\n          <button class="mt-3 w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="generate" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `
+
+  // Define a generate button fragment.  The sliders and toggles are shown in a popup instead of on the card.
+  const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
+
+  // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
+  // a modal for configuring generation settings when clicked.
+  const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
+  // Use our custom create button HTML instead of the default generate button.  Update status line text accordingly.
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
+  // The span within the create button becomes the label, and the icon gets a special class so
+  // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
+  // the DOM after insertion.
+  {
+    const labelSpan = card.querySelector('[data-action="open-create-settings"] span')
+    if (labelSpan) labelSpan.classList.add('create-label')
+    const iconEl = card.querySelector('[data-action="open-create-settings"] i')
+    if (iconEl) iconEl.classList.add('create-icon')
+
+    // Apply responsive sizing for the create button's label and icon: make them 30% smaller on mobile.
+    if (labelSpan) labelSpan.classList.add('text-xs', 'sm:text-sm')
+    if (iconEl) iconEl.classList.add('w-3', 'h-3', 'sm:w-4', 'sm:h-4')
+    // Adjust arrow button padding to bring icons closer to the edges.  Remove px-2/py-1 and use p-1 instead.
+    const prevBtn = card.querySelector('[data-action="prev-take"]')
+    const nextBtn = card.querySelector('[data-action="next-take"]')
+    ;[prevBtn, nextBtn].forEach(btn => {
+      if (btn) {
+        btn.classList.remove('px-2', 'py-1')
+        btn.classList.add('p-1')
       }
-      /* Reduce default font sizes inside the stem cards */
-      .stem-index {
-        font-size: 0.6rem !important;
-      }
-      #stem-container h3 {
-        font-size: 0.75rem !important;
-      }
-      /* Shrink the create button label and icon on mobile.  The base font size
-         is reduced to approximately 70% and the icon is scaled down to
-         0.75rem (12px).  These classes are assigned dynamically in JS. */
-      .create-label {
-        /* On mobile, shrink the create button text to roughly 70% of the default size. */
-        font-size: 0.7rem !important;
-      }
-      .create-icon {
-        /* On mobile, shrink the create button icon proportionally. */
-        width: 0.7rem !important;
-        height: 0.7rem !important;
+    })
+
+    // Remove the "Previous takes" label from the history drawer.  We leave only the close button.
+    const historySpan = card.querySelector(`[data-history-drawer="${st}"] span`)
+    if (historySpan) {
+      historySpan.remove()
+    }
+  }
+
+  updateHistoryBadge(st)
+  updateFilterReadout(st)
+  return card
+}
+
+/* =========================================================
+   Master controls, Mixer (Docked), events
+   ========================================================= */
+function initializeStemControlValues() {
+  stemControlValues = {
+    master: { tempo: DEFAULT_TEMPO, bars: DEFAULT_BARS, rootBase: 'A', accidental: 'natural', mode: 'Minor' }
+  }
+  stemMuteStates = {}
+  const defCutKnob = freqToKnob(FILTER_DEFAULT_HZ)
+  Object.entries(stemConfigs).forEach(([st, cfg]) => {
+    stemControlValues[st] = {}
+    stemMuteStates[st] = false
+    if (!stemEqValues[st]) stemEqValues[st] = { low: 75, mid: 75, high: 75 }
+    if (!stemFilterValues[st]) stemFilterValues[st] = { mode: 'lowpass', cutoff: defCutKnob }
+    if (cfg.controls) {
+      Object.entries(cfg.controls).forEach(([k, c]) => {
+        // Initialise controls with provided defaults
+        stemControlValues[st][k] = c.default
+      })
+      // Override volume default to 75 (toward the right) so all channels start at 0 dB with the new mapping
+      if ('volume' in cfg.controls) {
+        stemControlValues[st].volume = 75
       }
     }
-  </style>
-</head>
-<body class="bg-zinc-900 text-white font-geist overflow-x-hidden">
-<canvas id="aurora-canvas"></canvas>
+  })
+}
 
-<!-- Thin header with Library + Credits:100 + Account -->
-<header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
-  <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between">
-    <div class="text-sm text-white/70">AI Music Studio</div>
-    <nav class="flex items-center gap-2">
-      <!-- Help button to open usage info -->
-      <button id="helpBtn" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
-        <i data-lucide="help-circle" class="w-4 h-4"></i>
-      </button>
-      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Credits: 100</button>
-      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Library</button>
-      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Account</button>
-    </nav>
-  </div>
-</header>
+/* ---------- Mixer glow ---------- */
+function isStemActuallyPlaying(st){ return isPlaying && !!stemNodes[st]?.source && !stemMuteStates[st] && (!soloedStem || soloedStem === st) }
+function updateMixerGlow(st){ const card=document.querySelector(`[data-mix-card="${st}"]`); if(!card) return; card.classList.toggle('sg-glow', isStemActuallyPlaying(st)) }
+function updateAllMixerGlows(){ Object.keys(stemConfigs).forEach(updateMixerGlow) }
 
-<!-- Login Page -->
-<div id="login-page" class="min-h-[calc(100vh-40px)] flex items-center justify-center p-4">
-  <div class="text-center">
-    <h1 class="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
-      343 Labs AI Music Studio
-    </h1>
-    <p class="text-xl text-white/60 mb-8">
-      Create professional-quality stems with AI-powered music generation
-    </p>
-    <button id="loginBtn" class="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-xl text-lg font-medium transition-all duration-300 hover:scale-105 shadow-lg">
-      Enter Studio
-    </button>
-  </div>
-</div>
+/* ---------- Toggle visuals (Mute/Solo) ---------- */
+function setToggleVisual(el, active){ if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
+function reflectMuteSoloButtons(st){
+  const muted=!!stemMuteStates[st]
+  const soloed=(soloedStem===st)
+  setToggleVisual(document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"]`), muted)
+  setToggleVisual(document.querySelector(`[data-stem="${st}"] [data-action="solo-stem"]`), soloed)
+  setToggleVisual(document.querySelector(`[data-action="mix-mute"][data-stem="${st}"]`), muted)
+  setToggleVisual(document.querySelector(`[data-action="mix-solo"][data-stem="${st}"]`), soloed)
+}
 
-<!-- Generator Selection Page -->
-<div id="selection-page" class="min-h-[calc(100vh-40px)] flex items-center justify-center p-4 hidden">
-  <div class="max-w-6xl mx-auto">
-    <div class="text-center mb-12">
-      <h1 class="text-4xl font-bold mb-4">Choose Your Genre</h1>
-      <p class="text-xl text-white/60">Select a music generator to start creating</p>
-    </div>
-    
-    <div class="grid md:grid-cols-3 gap-8">
-      <!-- Techno Generator Card -->
-      <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
-        <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center">
-          <i data-lucide="zap" class="w-10 h-10"></i>
-        </div>
-        <h3 class="text-2xl font-bold mb-4">Techno Generator</h3>
-        <p class="text-white/60 mb-6">Create deep, driving techno stems with industrial precision</p>
-        <ul class="text-sm text-white/40 mb-8 space-y-1">
-          <li>• 110-140 BPM range</li>
-          <li>• Industrial sounds</li>
-          <li>• Hypnotic loops</li>
-        </ul>
-        <button id="launchTechno" class="w-full px-6 py-3 bg-red-500/80 hover:bg-red-500 border border-red-500 rounded-lg transition text-sm font-medium">
-          Launch Techno Studio
-        </button>
+/* ---------- Volume link ---------- */
+function setVolumeUnified(st, newVal){
+  const v=Math.max(0, Math.min(100, Math.round(Number(newVal)||0)))
+  stemControlValues[st].volume=v
+
+  // Update legacy card volume slider if present
+  const cardSlider=document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
+  if (cardSlider) {
+    cardSlider.value=v
+    const display=cardSlider.parentElement?.querySelector('span:last-child')
+    const cfg=stemConfigs[st]?.controls?.volume
+    if (display && cfg) display.textContent=`${v}${cfg.unit}`
+  }
+  // Update new mixer volume slider if present; value display is handled via tooltip
+  const mixSlider=document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
+  if (mixSlider) {
+    mixSlider.value=String(v)
+  }
+
+  if (isPlaying && stemNodes[st]?.gain) {
+    const vol=v/100
+    const muted=stemMuteStates[st]
+    const blocked=(soloedStem && soloedStem !== st)
+    if (!muted && !blocked) {
+      const p=stemNodes[st].gain.gain, t=audioContext.currentTime
+      p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(vol, t + 0.01)
+    }
+  }
+}
+
+/* ---------- Master state helpers ---------- */
+function getRootText(){
+  const base=stemControlValues.master?.rootBase || 'A'
+  const acc =stemControlValues.master?.accidental || 'natural'
+  return acc==='sharp'?`${base}#` : acc==='flat'?`${base}b` : base
+}
+function getMasterForPrompt(){
+  return {
+    tempo: clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO),
+    bars:  stemControlValues.master?.bars ?? DEFAULT_BARS,
+    root:  getRootText(),
+    mode:  stemControlValues.master?.mode || 'Minor'
+  }
+}
+
+/* ---------- Mixer (Docked tray) ---------- */
+function volumeKnobHTML(st){
+  const v=stemControlValues[st]?.volume ?? 80
+  const label=stemConfigs[st]?.name || st
+  const ang=knobAngle(v)
+  const idx = STEM_ORDER.indexOf(st) + 1
+  return `\n        <div class="sg-mix-card relative flex flex-col items-center justify-center rounded-xl border border-white/15 bg-white/10 p-2 aspect-square select-none"\n             data-mix-card="${st}">\n          <span data-mix-number="${st}" class="absolute left-1 top-1 flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>\n          <div class="text-[10px] mb-1 text-white/85">${label}</div>\n          <div class="relative w-12 h-12 rounded-full border border-white/25 bg-white/10 shadow-inner cursor-[ns-resize]"\n               data-mix-knob data-stem="${st}" data-value="${v}" title="${label} Volume">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-4 bg-white/90 rounded pointer-events-none"\n                 data-mix-pointer style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] text-white/80"><span data-mix-readout="${st}">${v}</span>%</div>\n          <div class="mt-1 flex gap-1">\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>\n          </div>\n        </div>\n      `
+}
+
+// Build a mixer channel row with sliders for volume, EQ and filter.  Each
+// row spans the full width of the mixer panel on desktop.  EQ
+// sliders control low, mid and high bands.  The filter slider
+// controls cutoff frequency.  Mute and Solo buttons are included
+// along with the channel number.  Use data attributes to attach
+// event handlers.
+function mixChannelRowHTML(st){
+  const name = stemConfigs[st]?.name || st
+  const idx  = STEM_ORDER.indexOf(st) + 1
+  // Retrieve current state values; initialise to defaults (50 => 0 dB) if undefined
+  const volVal = stemControlValues[st]?.volume ?? 50
+  const eq = stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
+  const filt = stemFilterValues[st] || { cutoff: freqToKnob(FILTER_DEFAULT_HZ), mode: 'lowpass' }
+  const modeLabel = (filt.mode === 'lowpass') ? 'LP' : 'HP'
+  return `
+    <div class="sg-mix-row flex flex-col border border-white/15 bg-white/5 backdrop-blur-lg rounded-lg p-3 gap-2" data-mix-card="${st}">
+      <!-- Header: channel number and name -->
+      <div class="flex items-center gap-2">
+        <span data-mix-number="${st}" class="inline-flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>
+        <span class="text-xs font-medium">${name}</span>
       </div>
-
-      <!-- Hip-Hop Generator Card -->
-      <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300 opacity-50">
-        <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-yellow-500 to-orange-600 rounded-full flex items-center justify-center">
-          <i data-lucide="mic" class="w-10 h-10"></i>
-        </div>
-        <h3 class="text-2xl font-bold mb-4">Hip-Hop Generator</h3>
-        <p class="text-white/60 mb-6">Generate boom-bap beats and modern trap elements</p>
-        <ul class="text-sm text-white/40 mb-8 space-y-1">
-          <li>• 80-100 BPM range</li>
-          <li>• 808 drums & bass</li>
-          <li>• Classic samples</li>
-        </ul>
-        <button id="launchHipHop" class="w-full px-6 py-3 bg-yellow-500/30 border border-yellow-500/30 rounded-lg text-sm font-medium cursor-not-allowed" disabled>
-          Coming Soon
-        </button>
+      <!-- Volume slider (0–100 mapped to dB) -->
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-12">Vol</span>
+        <!-- Make the dB slider the same length as the shortest slider (cutoff) -->
+        <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
-
-      <!-- House Generator Card -->
-      <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300 opacity-50">
-        <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
-          <i data-lucide="home" class="w-10 h-10"></i>
-        </div>
-        <h3 class="text-2xl font-bold mb-4">House Generator</h3>
-        <p class="text-white/60 mb-6">Create groovy four-on-the-floor house music</p>
-        <ul class="text-sm text-white/40 mb-8 space-y-1">
-          <li>• 118-130 BPM range</li>
-          <li>• Classic house groove</li>
-          <li>• Uplifting energy</li>
-        </ul>
-        <button id="launchHouse" class="w-full px-6 py-3 bg-green-500/30 border border-green-500/30 rounded-lg text-sm font-medium cursor-not-allowed" disabled>
-          Coming Soon
-        </button>
+      <!-- EQ sliders: Low/Mid/High -->
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-12">Low</span>
+        <input type="range" data-mix-eq="low" data-stem="${st}" min="0" max="100" value="${eq.low}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- Techno Generator Page -->
-<div id="techno-generator-page" class="hidden">
-  <!-- Session setup modal; displayed once when the Techno page loads -->
-  <div id="sessionSetupModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
-    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="sessionSetupOverlay"></div>
-    <div class="relative w-full max-w-md max-h-[85vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-      <h2 class="text-xl font-medium text-white mb-4">Set your session settings</h2>
-      <p class="text-xs text-white/60 mb-4">Choose the tempo, number of bars and key before starting. These values cannot be changed later in the session.</p>
-      <div class="space-y-4">
-        <!-- Tempo selection -->
-        <div class="flex items-center gap-3">
-          <span class="text-xs text-white/60 w-16">Tempo</span>
-          <input id="setupTempoSlider" type="range" min="110" max="140" value="130" class="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
-          <span id="setupTempoValue" class="text-sm w-10 text-right">130</span>
-        </div>
-        <!-- Bars selection -->
-        <div class="flex items-center gap-3">
-          <span class="text-xs text-white/60 w-16">Bars</span>
-          <select id="setupBarsSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
-            <option value="4" selected>4</option>
-            <option value="8">8</option>
-          </select>
-        </div>
-        <!-- Key selection -->
-        <div class="flex items-center gap-3">
-          <span class="text-xs text-white/60 w-16">Key</span>
-          <select id="setupRootSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm w-14">
-            <option value="C">C</option>
-            <option value="C#">C♯</option>
-            <option value="D">D</option>
-            <option value="D#">D♯</option>
-            <option value="E">E</option>
-            <option value="F">F</option>
-            <option value="F#">F♯</option>
-            <option value="G">G</option>
-            <option value="G#">G♯</option>
-            <option value="A" selected>A</option>
-            <option value="A#">A♯</option>
-            <option value="B">B</option>
-          </select>
-          <select id="setupAccidentalSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
-            <option value="natural">♮</option>
-            <option value="sharp">♯</option>
-            <option value="flat">♭</option>
-          </select>
-          <select id="setupModeSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
-            <option value="Minor" selected>Minor</option>
-            <option value="Major">Major</option>
-          </select>
-        </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-12">Mid</span>
+        <input type="range" data-mix-eq="mid" data-stem="${st}" min="0" max="100" value="${eq.mid}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
-      <div class="flex justify-end gap-3 mt-6">
-        <button id="setupCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
-        <button id="setupSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Start Session</button>
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-12">High</span>
+        <input type="range" data-mix-eq="high" data-stem="${st}" min="0" max="100" value="${eq.high}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
+      </div>
+      <!-- Filter cutoff and mode toggle -->
+      <div class="flex items-center gap-2">
+        <span class="text-[10px] w-12">Cutoff</span>
+        <!-- Shorter slider for cutoff so the LP/HP button remains visible -->
+        <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}"
+               class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
+        <button class="px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"
+                data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}">${modeLabel}</button>
+      </div>
+      <!-- Bottom bar: Mute/Solo buttons -->
+      <div class="flex justify-between mt-2">
+        <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>
+        <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10" data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>
       </div>
     </div>
-  </div>
+  `
+}
+function buildFloatingMixerPanel(){
+  const tray=document.getElementById('mixerTray')
+  if (!tray) return
+  let grid = tray.querySelector('#mixerGrid')
+  // Create the grid element if it doesn't exist
+  if (!grid) {
+    grid = document.createElement('div')
+    grid.id = 'mixerGrid'
+    tray.querySelector('.mixer-inner')?.appendChild(grid)
+  }
+  // Always apply responsive classes: single column on extra small screens and two columns on small screens and above
+  // On desktop (sm and up) this results in two channels per row; on very small screens there is one channel per row
+  // Use two columns for the mixer on all screen sizes; maintain gap scaling on larger screens
+  // Use two columns on small screens and three columns on medium and larger screens for the mixer layout
+  // Display three channels per row on all screen sizes for consistency.
+  grid.className = 'grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 md:grid-cols-3'
+  // Populate with full-width channel rows
+  grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
+  // Update mixer glow and card number colours
+  STEM_ORDER.forEach(updateMixerGlow)
+  STEM_ORDER.forEach(updateCardNumberColor)
+}
+function setMixerOpen(open){
+  const tray=document.getElementById('mixerTray')
+  if (!tray) return
+  // Expand the mixer to full viewport height when open; collapse to zero when closed
+  tray.style.maxHeight = open ? '100vh' : '0px'
+  tray.dataset.open = open ? '1' : '0'
+  // Update player toggle button label + ARIA
+  const toggleBtn = document.getElementById('mixerToggleBtn')
+  if (toggleBtn) {
+    toggleBtn.textContent = open ? 'close mixer' : 'open mixer'
+    toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
+  }
 
-  <!-- Generate settings modal: appears when the user taps Generate on a stem card -->
-  <div id="generateSettingsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
-    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="generateSettingsOverlay"></div>
-    <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-      <h2 class="text-xl font-medium text-white mb-4">Stem Settings</h2>
-      <div id="generateSettingsContent" class="space-y-3 overflow-y-auto max-h-[60vh]"><!-- filled dynamically --></div>
-      <div class="flex justify-end gap-3 mt-6">
-        <button id="generateSettingsCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
-        <button id="generateSettingsStartBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Start</button>
-      </div>
-    </div>
-  </div>
-  <!-- Stem Cards -->
-  <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
-  <!-- Stem container: always 3 columns, with smaller gaps on mobile to reduce overall width. -->
-  <main id="stem-container" class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-3 gap-2 sm:gap-4 select-none cursor-default">
-    <!-- Cards injected by app.js -->
-  </main>
-</div>
+  // When the mixer is open on mobile, prevent the page from scrolling or panning.
+  // Disable body overflow so touch interactions are confined to the mixer.
+  if (open) {
+    // Hide page scrolling and prevent gestures from propagating outside the mixer
+    document.body.style.overflow = 'hidden'
+    // When the mixer is open, disable touch-action on the tray so that horizontal drags are consumed by sliders and not by the page
+    tray.style.touchAction = 'none'
+  } else {
+    document.body.style.overflow = ''
+    tray.style.touchAction = ''
+  }
+}
+function toggleMixerOpen(){
+  const tray=document.getElementById('mixerTray')
+  if (!tray) return
+  const open = tray.dataset.open === '1'
+  setMixerOpen(!open)
+}
 
-<!-- Instructions Modal (unchanged structure) -->
-<div id="instructionModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
-  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="modalOverlay"></div>
-  <div class="relative w-full max-w-2xl max-h-[80vh] glass card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-    <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-medium text-white">Instructions</h2>
-      <button id="modalCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
-        <i data-lucide="x" class="w-5 h-5"></i>
-      </button>
-    </div>
-    <div class="mb-6">
-      <label class="block text-sm text-white/60 mb-3">Describe the sound you want to generate:</label>
-      <textarea id="instructionTextarea" class="w-full h-40 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white/90 leading-relaxed resize-none focus:border-white/20 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition" placeholder="Enter detailed instructions for the AI music generation..."></textarea>
-    </div>
-    <div class="flex gap-3 justify-end">
-      <button id="modalCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
-      <button id="modalSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Save Instructions</button>
-    </div>
-  </div>
-</div>
+/* ---------- Hotkey helpers ---------- */
+function toggleMute(st){
+  stemMuteStates[st] = !stemMuteStates[st]
+  const vol = (stemControlValues[st]?.volume ?? 80)/100
+  const target = stemMuteStates[st] ? 0 : vol
+  if (stemNodes[st]?.gain) {
+    const p = stemNodes[st].gain.gain, t = audioContext.currentTime
+    p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
+  }
+  const icon = document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"] [data-lucide]`)
+  if (icon) { icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2'); window.lucide?.createIcons() }
+  reflectMuteSoloButtons(st); updateMixerGlow(st)
+  updateCardNumberColor(st)
+  updateMutedBorder(st)
+}
 
-<!-- Help & Tips Modal -->
-<div id="helpModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
-  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="helpModalOverlay"></div>
-  <div class="relative w-full max-w-md max-h-[80vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-xl font-medium text-white">Help &amp; Tips</h2>
-      <button id="helpModalCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
-        <i data-lucide="x" class="w-5 h-5"></i>
-      </button>
-    </div>
-    <div class="text-sm text-white/80 space-y-3 overflow-y-auto max-h-[60vh]">
-      <p>Press the spacebar to play or pause the loop.</p>
-      <p>Use number keys 1–9 to mute or unmute the corresponding instruments.</p>
-      <p>If the number circles are red, it means either the stem has not been generated yet or the channel is muted.</p>
-      <p>A red border around a card indicates that the instrument or channel is muted.</p>
-      <p>Generations are not 100% predictable due to the nature of AI – experiment and generate multiple versions to find your favorite take.</p>
-    </div>
-  </div>
-</div>
+/* ---------- Events ---------- */
+// Removed: getTempoValueEl and updateTempoReadout are no longer needed because
+// the app no longer exposes a master tempo slider or readout.
 
-<!-- Floating bottom player bar with mixer toggle -->
-<div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 select-none cursor-default hidden">
-  <div class="mx-auto max-w-5xl px-4 py-3">
-    <div class="flex items-center gap-3 flex-wrap">
-      <!-- Play/Pause -->
-      <!-- Make the play button wider on all screens without enlarging the icon -->
-      <button id="playBtn" class="flex items-center justify-center w-24 h-10 rounded-lg hover:bg-white/10 transition"
-              data-action="play-pause" title="Play / Pause">
-        <i data-lucide="play" class="stroke-current w-5 h-5"></i>
-      </button>
+// new helper functions for card numbers and history indicators
+function updateHistoryIndicator(st){
+  ensureStemHistory(st)
+  const count = stemHistory[st]?.length || 0
+  const active = (stemActiveIndex[st] != null && stemActiveIndex[st] >= 0) ? (stemActiveIndex[st] + 1) : 0
+  const countEl = document.querySelector(`[data-history-count="${st}"]`)
+  const activeEl = document.querySelector(`[data-active-index="${st}"]`)
+  if (countEl) countEl.textContent = String(count)
+  if (activeEl) activeEl.textContent = active > 0 ? String(active) : '0'
+  updateTempoIndicator(st)
+}
+// Update the tempo indicator on waveform card
+function updateTempoIndicator(st) {
+  const el = document.querySelector(`[data-tempo-indicator="${st}"]`)
+  if (!el) return
+  ensureStemHistory(st)
+  const activeIdx = stemActiveIndex[st]
+  let tempo = stemControlValues.master?.tempo ?? DEFAULT_TEMPO
+  if (activeIdx != null && activeIdx >= 0 && stemHistory[st] && stemHistory[st][activeIdx]) {
+    tempo = stemHistory[st][activeIdx].tempo
+  }
+  el.textContent = `tempo: ${tempo}`
+}
+function updateCardNumberColor(st){
+  const nTakes = (stemHistory[st]?.length || 0)
+  const muted = stemMuteStates[st]
+  const color = (nTakes === 0 || muted) ? '#ef4444' : '#ffffff'
+  const cardNumEl = document.querySelector(`[data-card-number="${st}"]`)
+  if (cardNumEl) {
+    cardNumEl.style.color = color
+    cardNumEl.style.borderColor = color
+  }
+  const mixNumEl = document.querySelector(`[data-mix-number="${st}"]`)
+  if (mixNumEl) {
+    mixNumEl.style.color = color
+    mixNumEl.style.borderColor = color
+  }
+}
+function updateMutedBorder(st){
+  const card = document.querySelector(`[data-stem="${st}"]`)
+  if (card) {
+    if (stemMuteStates[st]) card.classList.add('sg-muted-border')
+    else card.classList.remove('sg-muted-border')
+  }
+  const mixCard=document.querySelector(`[data-mix-card="${st}"]`)
+  if (mixCard) {
+    if (stemMuteStates[st]) mixCard.classList.add('sg-muted-border')
+    else mixCard.classList.remove('sg-muted-border')
+  }
+}
 
+function setupEventListeners() {
+  // Player Play/Pause
+  const playBtn = document.getElementById('playBtn')
+  if (playBtn) playBtn.addEventListener('click', async () => {
+    await ensureAudioContext()
+    if (isPlaying) stopTransport()
+    else {
+      // Do not rebuild loops when starting transport.  Each stem retains its own
+      // loop duration and tempo.
+      startTransport()
+    }
+  })
 
+  // Mixer toggle inside player
+  const mixerToggleBtn = document.getElementById('mixerToggleBtn')
+  if (mixerToggleBtn) mixerToggleBtn.addEventListener('click', () => toggleMixerOpen())
 
-      <!-- Volume slider -->
-      <!-- On mobile the volume control should sit to the right of the play button and expand to fill available space. Use flex-1 on the container and w-full on the slider, but restrict width on larger screens. -->
-      <div class="flex items-center gap-2 flex-1 sm:flex-none">
-        <span class="text-xs text-white/60">Volume</span>
-        <input id="masterVolumeSlider" type="range" min="0" max="100" value="90"
-               class="w-full sm:w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
-        <span id="masterVolumeValue" class="text-sm w-12 text-right">90%</span>
-      </div>
+  // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
+  const genCancelBtn = document.getElementById('generateSettingsCancelBtn')
+  const genStartBtn  = document.getElementById('generateSettingsStartBtn')
+  const genOverlay   = document.getElementById('generateSettingsOverlay')
+  if (genCancelBtn) genCancelBtn.addEventListener('click', () => hideGenerateSettingsModal())
+  if (genOverlay) genOverlay.addEventListener('click', () => hideGenerateSettingsModal())
+  if (genStartBtn) genStartBtn.addEventListener('click', () => { applyGenerateSettingsAndStart() })
 
-      <!-- Session info card -->
-      <div id="sessionInfoCard" class="flex items-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80">
-        <span id="sessionInfoText">--</span>
-      </div>
+  // Live update the value labels in the create settings modal.  When the user moves a slider, update
+  // the adjacent span to reflect the new value and unit.
+  const genSettingsContent = document.getElementById('generateSettingsContent')
+  if (genSettingsContent) {
+    genSettingsContent.addEventListener('input', (e) => {
+      const target = e.target
+      if (!target || !target.getAttribute) return
+      const control = target.getAttribute('data-gen-control')
+      if (control && target.type === 'range') {
+        const unit = target.getAttribute('data-unit') || ''
+        // The span displaying the value is the last child of the parent container
+        const container = target.parentElement
+        if (container) {
+          const spans = container.getElementsByTagName('span')
+          if (spans && spans.length) {
+            const display = spans[spans.length - 1]
+            display.textContent = `${target.value}${unit}`
+          }
+        }
+      }
+    })
+  }
 
-      <!-- Push mixer toggle to the right -->
-      <div class="ml-auto"></div>
+  // (Space) toggle playback; (1–9) mute/unmute; ignore while editing
+  document.addEventListener('keydown', async (e) => {
+    const ae = document.activeElement
+    const tag = (ae && ae.tagName) || ''
+    const editing = (ae && (ae.isContentEditable || ['INPUT','TEXTAREA','SELECT'].includes(tag)))
+    if (editing) return
 
-      <!-- Mixer toggle inside player -->
-      <button id="mixerToggleBtn"
-              class="px-4 py-2 rounded-full border border-white/20 player-surface text-sm tracking-wide hover:bg-white/10 transition"
-              aria-pressed="false">
-        open mixer
-      </button>
-    </div>
-  </div>
+    // Space: toggle transport
+    if (e.code === 'Space' || e.key === ' ') {
+      e.preventDefault()
+      await ensureAudioContext()
+      if (isPlaying) stopTransport()
+      else {
+        // Do not rebuild loops on playback toggle.  Use existing per‑stem loops.
+        startTransport()
+      }
+      return
+    }
 
-  <!-- Docked Mixer Tray (expands upward) — same surface -->
-  <div id="mixerTray" class="player-surface max-h-0 overflow-hidden transition-[max-height] duration-200 ease-out border-t border-white/10">
-    <!-- The inner container scrolls only vertically when the mixer is open.  We hide horizontal overflow to prevent accidental sideways scrolling on mobile. Use full width on all screens to avoid zoom issues. -->
-    <div class="mixer-inner max-w-full mx-auto px-4 py-3 overflow-y-auto overflow-x-hidden">
-      <div class="text-xs text-white/70 mb-2">Mixer</div>
-      <!-- Mixer grid is built dynamically in app.js.  The initial element is empty so the script can set the correct classes depending on screen size. -->
-      <div id="mixerGrid"><!-- filled by app.js --></div>
-    </div>
-  </div>
-</div>
+    // Digits/Numpad 1..9 → mute/unmute mapped stems
+    const code = e.code || ''
+    let num = null
+    if (code.startsWith('Digit')) num = Number(code.slice(5))
+    else if (code.startsWith('Numpad')) {
+      const d = code.slice(6)
+      if (/^[1-9]$/.test(d)) num = Number(d)
+    }
+    if (num && num >= 1 && num <= 9) {
+      const st = STEM_ORDER[num - 1]
+      if (st) toggleMute(st)
+    }
+  })
 
-<script type="module" src="/src/main.js"></script>
-</body>
-</html>
+  // Tempo slider: controls the generation tempo only.  Adjusting this value
+  // does not affect the playback speed of already‑generated stems.
+  const tempoSlider = document.getElementById('tempoSlider')
+  const tempoValueEl = document.getElementById('tempoValue')
+  if (tempoSlider) {
+    // Initialize the slider with the current master tempo
+    tempoSlider.value = stemControlValues.master.tempo || DEFAULT_TEMPO
+    if (tempoValueEl) tempoValueEl.textContent = String(stemControlValues.master.tempo || DEFAULT_TEMPO)
+    tempoSlider.addEventListener('input', e => {
+      // Do not update master tempo if the session has been locked
+      if (sessionSetupDone) return
+      const value = clampTempo(e.target.value)
+      e.target.value = value
+      stemControlValues.master.tempo = value
+      // Update readout
+      if (tempoValueEl) tempoValueEl.textContent = String(value)
+    })
+  }
+
+  // Bars
+  const barsSelector = document.getElementById('barsSelector')
+  if (barsSelector) {
+    barsSelector.value = String(stemControlValues.master.bars)
+    barsSelector.addEventListener('change', e => {
+      if (sessionSetupDone) return
+      stemControlValues.master.bars = parseInt(e.target.value, 10)
+      STEM_ORDER.forEach(st => {
+        const drawer = document.querySelector(`[data-history-drawer="${st}"]`)
+        if (drawer?.classList.contains('open')) renderHistoryDrawer(st)
+      })
+    })
+  }
+
+  // Master Volume: controls the global output gain.  Updates the text display and ramps the master gain.
+  const masterVolSlider = document.getElementById('masterVolumeSlider')
+  const masterVolValue  = document.getElementById('masterVolumeValue')
+  if (masterVolSlider) {
+    // Initialize the slider display based on the current masterGain value, if available
+    if (masterVolValue && typeof masterGain?.gain?.value === 'number') {
+      const initVal = Math.round((masterGain.gain.value || 0) * 100)
+      masterVolSlider.value = String(initVal)
+      masterVolValue.textContent = `${initVal}%`
+    }
+    masterVolSlider.addEventListener('input', async e => {
+      const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0)))
+      // Update displayed percentage
+      if (masterVolValue) masterVolValue.textContent = `${v}%`
+      // Ensure the audio context exists and update the gain
+      await ensureAudioContext()
+      if (masterGain) {
+        const now = audioContext.currentTime
+        // Ramp smoothly to new gain value
+        masterGain.gain.cancelScheduledValues(now)
+        masterGain.gain.setValueAtTime(masterGain.gain.value, now)
+        masterGain.gain.linearRampToValueAtTime(v / 100, now + 0.02)
+      }
+    })
+  }
+
+  // Key: root + accidental + mode
+  const rootSelector = document.getElementById('rootSelector')
+  const modeSelector = document.getElementById('modeSelector')
+  const accidentalSelector = document.getElementById('accidentalSelector')
+  if (rootSelector) {
+    const v = String(rootSelector.value || 'A')
+    const m = v.match(/^[A-G]/i)
+    if (m) stemControlValues.master.rootBase = m[0].toUpperCase()
+    if (/#/i.test(v)) stemControlValues.master.accidental = 'sharp'
+    else if (/b/i.test(v)) stemControlValues.master.accidental = 'flat'
+    if (accidentalSelector) accidentalSelector.value = stemControlValues.master.accidental
+    rootSelector.addEventListener('change', e => {
+      if (sessionSetupDone) return
+      const vv = String(e.target.value || 'A')
+      const mm = vv.match(/^[A-G]/i)
+      if (mm) stemControlValues.master.rootBase = mm[0].toUpperCase()
+    })
+  }
+  if (accidentalSelector) accidentalSelector.addEventListener('change', e => {
+    if (sessionSetupDone) return
+    stemControlValues.master.accidental = e.target.value
+  })
+  if (modeSelector) {
+    modeSelector.value = stemControlValues.master.mode
+    modeSelector.addEventListener('change', e => {
+      if (sessionSetupDone) return
+      stemControlValues.master.mode = e.target.value
+    })
+  }
+
+  // Hide "Format" selector if present
+  const fmt = document.getElementById('outputFormatSelector')
+  if (fmt && fmt.parentElement) fmt.parentElement.style.display = 'none'
+
+  // Card inputs (live + gen)
+  document.addEventListener('input', e => {
+    const target = e.target
+    const st = target.dataset.stem
+    // Mixer volume slider
+    if (target.dataset.mixSlider === 'volume' && st) {
+      const v = Math.max(0, Math.min(100, Math.round(Number(target.value) || 0)))
+      stemControlValues[st].volume = v
+      // update readout element (next sibling)
+      const ro = target.nextElementSibling
+      if (ro) ro.textContent = `${v}%`
+      // update audio gain if playing
+      if (stemNodes[st]?.gain) {
+        const g = stemNodes[st].gain.gain
+        const now = audioContext.currentTime
+        g.cancelScheduledValues(now)
+        g.setValueAtTime(g.value, now)
+        const muted = stemMuteStates[st]
+        const soloedOther = (soloedStem && soloedStem !== st)
+        const val = (muted || soloedOther) ? 0 : (v/100)
+        g.linearRampToValueAtTime(val, now + 0.01)
+      }
+      return
+    }
+    // Mixer EQ sliders
+    if (target.dataset.mixEq && st) {
+      const band = target.dataset.mixEq
+      const v = Math.max(0, Math.min(100, Math.round(Number(target.value) || 0)))
+      // update state
+      stemEqValues[st] = { ...(stemEqValues[st] || {}), [band]: v }
+      // apply to audio nodes if playing
+      const eqNodes = stemNodes[st]?.eq
+      if (eqNodes) applyEqValuesToNodes(eqNodes, stemEqValues[st])
+      return
+    }
+    // Mixer filter slider
+    if (target.dataset.mixFilter === 'cutoff' && st) {
+      const v = Math.max(0, Math.min(100, Math.round(Number(target.value) || 0)))
+      stemFilterValues[st] = { ...(stemFilterValues[st] || {}), cutoff: v }
+      // apply to audio nodes if playing
+      const filterNode = stemNodes[st]?.filter
+      if (filterNode) applyFilterValuesToNode(filterNode, stemFilterValues[st])
+      return
+    }
+    // Card control sliders/toggles
+    if (target.dataset.stem && target.dataset.control) {
+      const key = target.dataset.control
+      const val = target.type === 'checkbox' ? target.checked : parseInt(target.value, 10)
+      stemControlValues[st][key] = val
+      if (target.type === 'range') {
+        const display = target.parentElement.querySelector('span:last-child')
+        const cfg = stemConfigs[st]?.controls[key]
+        if (display) display.textContent = `${val}${cfg?.unit || ''}`
+      }
+      if (key === 'volume') setVolumeUnified(st, val)
+    }
+  })
+
+  // Slider tooltip handling for mixer sliders.  Display a small popup showing dB or Hz while adjusting.
+  let activeSlider = null
+  // Helper to update tooltip content and position
+  function updateSliderTooltip(sliderEl, pageX, pageY) {
+    if (!sliderTooltipEl) return
+    const val = Number(sliderEl.value) || 0
+    let text = ''
+    // Determine the type of slider and compute display value
+    if (sliderEl.dataset.mixSlider === 'volume' || sliderEl.dataset.mixEq) {
+      // Use knobToDb conversion for volume and EQ
+      const db = knobToDb(val)
+      // Format with sign and one decimal place
+      const dbStr = db >= 0 ? `+${db.toFixed(1)}` : db.toFixed(1)
+      text = `${dbStr} dB`
+    } else if (sliderEl.dataset.mixFilter === 'cutoff') {
+      // Show frequency
+      const hz = knobToFreq(val)
+      text = hz >= 1000 ? `${(hz/1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
+    }
+    sliderTooltipEl.textContent = text
+    // Position tooltip relative to pointer
+    const offsetX = 8
+    const offsetY = 24
+    sliderTooltipEl.style.left = `${pageX + offsetX}px`
+    sliderTooltipEl.style.top = `${pageY - offsetY}px`
+  }
+  // Show tooltip on pointerdown if target is a mixer slider
+  document.addEventListener('pointerdown', e => {
+    const t = e.target
+    if (t && (t.matches('input[data-mix-slider="volume"]') || t.matches('input[data-mix-eq]') || t.matches('input[data-mix-filter="cutoff"]'))) {
+      activeSlider = t
+      updateSliderTooltip(t, e.pageX, e.pageY)
+      if (sliderTooltipEl) sliderTooltipEl.style.opacity = '1'
+    }
+  })
+  // Update tooltip position/value while dragging
+  document.addEventListener('pointermove', e => {
+    if (activeSlider) {
+      updateSliderTooltip(activeSlider, e.pageX, e.pageY)
+    }
+  })
+  // Hide tooltip on pointerup/cancel
+  document.addEventListener('pointerup', () => {
+    if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
+    activeSlider = null
+  })
+  document.addEventListener('pointercancel', () => {
+    if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
+    activeSlider = null
+  })
+
+  // EQ knob gestures
+  let activeEqKnob = null, startX = 0, startY = 0, startVal = 0
+  function onEqMove(e){ if(!activeEqKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,startVal+delta*0.5)); setEqValue(activeEqKnob.stem, activeEqKnob.band, v) }
+  function onEqUp(){ activeEqKnob=null; window.removeEventListener('pointermove',onEqMove); window.removeEventListener('pointerup',onEqUp) }
+  document.addEventListener('pointerdown', e => {
+    const k = e.target.closest('[data-eq-knob]'); if (!k) return
+    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); const val=Number(k.getAttribute('data-value'))||EQ_DEFAULT
+    if (e.shiftKey) { setEqValue(st, band, 0); return }
+    activeEqKnob={stem:st, band}; startX=e.clientX??0; startY=e.clientY??0; startVal=val
+    window.addEventListener('pointermove', onEqMove); window.addEventListener('pointerup', onEqUp)
+  })
+  document.addEventListener('dblclick', e => {
+    const k = e.target.closest('[data-eq-knob]'); if (!k) return
+    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); setEqValue(st, band, EQ_DEFAULT)
+  })
+
+  // Filter knob gestures
+  let activeFilterKnob = null, fStartVal = 0
+  function onFilterMove(e){ if(!activeFilterKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,fStartVal+delta*0.5)); setFilterCutoff(activeFilterKnob.stem, v) }
+  function onFilterUp(){ activeFilterKnob=null; window.removeEventListener('pointermove',onFilterMove); window.removeEventListener('pointerup',onFilterUp) }
+  document.addEventListener('pointerdown', e => {
+    const k = e.target.closest('[data-filter-knob]'); if (!k) return
+    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value'))||freqToKnob(FILTER_DEFAULT_HZ)
+    if (e.shiftKey) { setFilterCutoff(st, freqToKnob(FILTER_DEFAULT_HZ)); return }
+    activeFilterKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; fStartVal=val
+    window.addEventListener('pointermove', onFilterMove); window.addEventListener('pointerup', onFilterUp)
+  })
+  document.addEventListener('dblclick', e => {
+    const k = e.target.closest('[data-filter-knob]'); if (!k) return
+    const st = k.getAttribute('data-stem'); setFilterCutoff(st, freqToKnob(FILTER_DEFAULT_HZ))
+  })
+
+  // Mixer knobs
+  let activeMixKnob = null, mStartVal = 0
+  function onMixMove(e){ if(!activeMixKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,mStartVal+delta*0.5)); setVolumeUnified(activeMixKnob.stem, v) }
+  function onMixUp(){ activeMixKnob=null; window.removeEventListener('pointermove',onMixMove); window.removeEventListener('pointerup',onMixUp) }
+  document.addEventListener('pointerdown', e => {
+    const k = e.target.closest('[data-mix-knob]'); if (!k) return
+    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value')) || (stemControlValues[st]?.volume ?? 80)
+    if (e.shiftKey) { setVolumeUnified(st, 0); return }
+    activeMixKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; mStartVal=val
+    window.addEventListener('pointermove', onMixMove); window.addEventListener('pointerup', onMixUp)
+  })
+  document.addEventListener('dblclick', e => {
+    const k = e.target.closest('[data-mix-knob]'); if (!k) return
+    const st = k.getAttribute('data-stem'); setVolumeUnified(st, stemConfigs[st]?.controls?.volume?.default ?? 80)
+  })
+
+  // Click actions (Generate / Download / Filter mode / options overlay / history / waveform navigation)
+  document.addEventListener('click', async e => {
+    // Toggle mute/unmute when clicking on an instrument card outside of interactive elements.
+    {
+      const cardEl = e.target.closest('[data-stem]')
+      if (cardEl) {
+        // Do not toggle if the click is on a button, a link or other interactive element
+        const isButton = e.target.closest('button, [data-action], input, label, select, textarea')
+        const isWaveform = e.target.closest('.waveform-canvas')
+        if (!isButton && !isWaveform) {
+          const st = cardEl.getAttribute('data-stem')
+          if (st) {
+            toggleMute(st)
+            return
+          }
+        }
+      }
+    }
+
+    // Toggle mute/unmute when clicking on a mixer channel outside of interactive elements.
+    {
+      const mixCardEl = e.target.closest('[data-mix-card]')
+      if (mixCardEl) {
+        // Prevent toggling if the click is on a slider, button or other interactive element
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea')
+        if (!isInteractive) {
+          const st = mixCardEl.getAttribute('data-mix-card')
+          if (st) {
+            toggleMute(st)
+            return
+          }
+        }
+      }
+    }
+    const btn = e.target.closest('[data-action]')
+    if (btn) {
+      const action = btn.dataset.action
+      const st = btn.dataset.stem
+      if (action === 'generate' && st) { await generateStem(st); return }
+      // When clicking the new generate button, open the settings modal instead of generating immediately
+      if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
+      if (action === 'download-stem' && st) { downloadStem(st); return }
+      if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
+      // Open the takes browser via the "open" button
+      if (action === 'open-takes' && st) { toggleHistoryDrawer(st, null); return }
+      // Cycle to previous take; wraps around
+      if (action === 'prev-take' && st) {
+        ensureStemHistory(st)
+        const takes = stemHistory[st] || []
+        if (takes.length > 0) {
+          const current = stemActiveIndex[st] ?? -1
+          // move left: if nothing selected, select last; else decrement and wrap
+          let nextIdx = (current <= 0) ? (takes.length - 1) : (current - 1)
+          selectStemVersion(st, nextIdx)
+        }
+        return
+      }
+      // Cycle to next take; wraps around
+      if (action === 'next-take' && st) {
+        ensureStemHistory(st)
+        const takes = stemHistory[st] || []
+        if (takes.length > 0) {
+          const current = stemActiveIndex[st] ?? -1
+          // move right: if nothing selected, select first; else increment and wrap
+          let nextIdx = (current >= takes.length - 1 || current < 0) ? 0 : (current + 1)
+          selectStemVersion(st, nextIdx)
+        }
+        return
+      }
+      if (action === 'toggle-stem-options' && st) {
+        const panel = document.querySelector(`[data-options-panel="${st}"]`)
+        const open = !(panel?.classList.contains('hidden') === false)
+        if (panel) panel.classList.toggle('hidden', !open)
+        btn.setAttribute('aria-pressed', open ? 'true' : 'false')
+        return
+      }
+      if (action === 'close-history' && st) { toggleHistoryDrawer(st, false); return }
+      if (action === 'mix-mute' || action === 'mute-stem') { toggleMute(st); return }
+      if (action === 'mix-solo' || action === 'solo-stem') {
+        const already = soloedStem === st
+        soloedStem = already ? null : st
+        STEM_ORDER.forEach(name => {
+          const n = stemNodes[name]; if (!n?.gain) return
+          const vol = (stemControlValues[name]?.volume ?? 80)/100
+          const target = (soloedStem && name !== soloedStem) ? 0 : (stemMuteStates[name] ? 0 : vol)
+          const p = n.gain.gain, t = audioContext.currentTime
+          p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
+          reflectMuteSoloButtons(name); updateMixerGlow(name)
+        })
+        return
+      }
+      // New actions: open-takes, prev-take, next-take
+      if (action === 'open-takes' && st) {
+        toggleHistoryDrawer(st, true)
+        return
+      }
+      if (action === 'prev-take' && st) {
+        ensureStemHistory(st)
+        const list = stemHistory[st]
+        if (list && list.length > 0) {
+          const cur = stemActiveIndex[st]
+          const count = list.length
+          const newIndex = cur <= 0 ? count - 1 : cur - 1
+          selectStemVersion(st, newIndex)
+          updateHistoryIndicator(st)
+          updateCardNumberColor(st)
+        }
+        return
+      }
+      if (action === 'next-take' && st) {
+        ensureStemHistory(st)
+        const list = stemHistory[st]
+        if (list && list.length > 0) {
+          const cur = stemActiveIndex[st]
+          const count = list.length
+          const newIndex = cur < count - 1 ? cur + 1 : 0
+          selectStemVersion(st, newIndex)
+          updateHistoryIndicator(st)
+          updateCardNumberColor(st)
+        }
+        return
+      }
+    } else {
+      const cw = e.target.closest('.waveform-canvas'); 
+      if (cw?.dataset.stem) { toggleHistoryDrawer(cw.dataset.stem, null); return }
+      const takeBtn = e.target.closest('[data-take-index]'); 
+      if (takeBtn) {
+        const st = takeBtn.getAttribute('data-stem'); const idx = parseInt(takeBtn.getAttribute('data-take-index'),10)
+        selectStemVersion(st, idx); updateMixerGlow(st); return
+      }
+    }
+  })
+
+  // Takes tray wheel→horizontal
+  document.addEventListener('wheel', (e) => {
+    const list = e.target.closest('[data-history-list]')
+    if (!list) return
+    const absY = Math.abs(e.deltaY), absX = Math.abs(e.deltaX)
+    if (absY >= absX) { list.scrollLeft += e.deltaY; e.preventDefault() }
+  }, { passive: false })
+}
+
+/* ---------- EQ/Filter setters ---------- */
+function setEqValue(st, band, newVal){
+  const v=Math.max(0, Math.min(100, Math.round(newVal)))
+  stemEqValues[st] = { ...(stemEqValues[st] || {}), [band]: v }
+  const knob=document.querySelector(`[data-eq-knob][data-stem="${st}"][data-band="${band}"]`)
+  if (knob) updateEqKnobVisual(knob, v)
+  updateEqReadout(st, band)
+  const eq=stemNodes[st]?.eq
+  if (eq) applyEqValuesToNodes(eq, stemEqValues[st])
+}
+function setFilterCutoff(st, newVal){
+  const v=Math.max(0, Math.min(100, Math.round(newVal)))
+  stemFilterValues[st] = { ...(stemFilterValues[st] || {}), cutoff: v }
+  const knob=document.querySelector(`[data-filter-knob][data-stem="${st}"]`)
+  if (knob) updateFilterKnobVisual(knob, v)
+  updateFilterReadout(st)
+  const filter=stemNodes[st]?.filter
+  if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
+}
+function toggleFilterMode(st){
+  const current=(stemFilterValues[st]||{}).mode || 'lowpass'
+  const next=current==='lowpass' ? 'highpass' : 'lowpass'
+  stemFilterValues[st] = { ...(stemFilterValues[st] || {}), mode: next }
+  updateFilterModeButton(st)
+  const filter=stemNodes[st]?.filter
+  if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
+}
+
+/* =========================================================
+   History UI
+   ========================================================= */
+function updateHistoryBadge(st){
+  const badgeEls=document.querySelectorAll(`[data-history-count="${st}"]`)
+  const n=stemHistory[st]?.length || 0
+  badgeEls.forEach(badge => { badge.textContent=n; badge.style.opacity = n > 0 ? '1' : '0.4' })
+  updateHistoryIndicator(st)
+  updateCardNumberColor(st)
+}
+function toggleHistoryDrawer(st, forceOpen=null){
+  const drawer=document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
+  const isOpen=drawer.classList.contains('open')
+  const open=forceOpen===null ? !isOpen : !!forceOpen
+  drawer.classList.toggle('open', open)
+  drawer.style.maxHeight = open ? '160px' : '0px'
+  if (open) renderHistoryDrawer(st)
+}
+function renderHistoryDrawer(st){
+  const list=document.querySelector(`[data-history-list="${st}"]`); if (!list) return
+  ensureStemHistory(st)
+  list.innerHTML=''
+  const takes=stemHistory[st]
+  if (!takes.length) { list.innerHTML = `<div class="text-xs text-white/60 px-2 py-6">No takes yet. Create some!</div>`; return }
+  const active=stemActiveIndex[st]
+  takes.forEach((take, i) => {
+    const item=document.createElement('button')
+    item.className=`relative shrink-0 w-28 h-16 rounded-md border ${i===active?'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]':'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
+    item.setAttribute('data-take-index', i)
+    item.setAttribute('data-stem', st)
+    item.title=`v${i+1} • ${take.tempo} BPM • ${take.bars} bars`
+
+    const c=document.createElement('canvas'); c.width=112; c.height=64; c.className='w-full h-full rounded-md'
+    item.appendChild(c)
+
+    const meta=document.createElement('div')
+    meta.className='absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
+    meta.textContent=`v${i+1} • ${take.tempo} • ${take.bars}b`
+    item.appendChild(meta)
+
+    list.appendChild(item)
+
+    // Draw a preview of the raw take without trimming or stretching.  This
+    // avoids squeezing the waveform when the generation tempo differs from
+    // the current master tempo.
+    drawTinyWaveform(c, take.raw)
+  })
+}
+function selectStemVersion(st, index){
+  ensureStemHistory(st)
+  const takes=stemHistory[st]; if (!takes || index<0 || index>=takes.length) return
+  stemActiveIndex[st]=index
+  const take=takes[index]
+  // Use the stored tempo and bar count from the take itself to build a
+  // loop that matches the original generation.  Do not reference the current
+  // master tempo, as each stem may have been generated at a different BPM.
+  const tempo  = take.tempo
+  const bars   = take.bars
+  stemRaw[st]  = take.raw
+  // Loop directly from the raw audio; do not rebuild loop based on tempo
+  stemLoop[st] = take.raw
+  // Record the loop duration for this stem
+  stemLoopDuration[st] = take.raw.duration
+  const canvas=document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  if (canvas) {
+    const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+  }
+  const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
+  if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${bars} bars)`
+  renderHistoryDrawer(st)
+  if (isPlaying) restartStemNextBoundary(st)
+  updateHistoryIndicator(st)
+  updateCardNumberColor(st)
+  updateTempoIndicator(st)
+}
+
+/* =========================================================
+   App init + navigation
+   ========================================================= */
+function showPage(pageId){
+  const pages=['login-page', 'selection-page', 'techno-generator-page']
+  pages.forEach(id => { const page=document.getElementById(id); if (page) page.classList.add('hidden') })
+  const targetPage=document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
+
+  // Show bottom player only on Studio page
+  const playerBar=document.getElementById('playerBar')
+  const showDock = pageId === 'techno-generator-page'
+  if (playerBar) playerBar.classList.toggle('hidden', !showDock)
+  if (!showDock) setMixerOpen(false)
+}
+function setupNavigationListeners(){
+  const loginBtn = document.getElementById('loginBtn')
+  if (loginBtn) loginBtn.addEventListener('click', () => { showPage('selection-page') })
+  const launchTechno = document.getElementById('launchTechno')
+  if (launchTechno) launchTechno.addEventListener('click', () => { showPage('techno-generator-page'); initTechnoGenerator() })
+  const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => {})
+  const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => {})
+}
+function initTechnoGenerator(){
+  console.log('🎛️ Initializing Techno Generator…')
+  injectGlobalStyles()
+  initializeStemControlValues()
+
+  // Build cards
+  const container = document.getElementById('stem-container')
+  if (container && PROMPTS_MODE === 'builder') {
+    container.innerHTML = ''
+    STEM_ORDER.forEach(st => container.appendChild(createBuilderStemCard(st, stemConfigs[st])))
+  }
+
+  setupEventListeners()
+  window.lucide?.createIcons()
+
+  // Build docked mixer
+  buildFloatingMixerPanel()
+  setMixerOpen(false) // hidden by default
+
+  // Create tooltip element for mixer sliders if it does not already exist
+  if (!sliderTooltipEl) {
+    sliderTooltipEl = document.createElement('div')
+    sliderTooltipEl.id = 'sliderTooltip'
+    sliderTooltipEl.className = 'fixed z-50 px-2 py-0.5 rounded bg-black/80 text-white text-[10px] pointer-events-none opacity-0 transition-opacity duration-75'
+    document.body.appendChild(sliderTooltipEl)
+  }
+
+  if (typeof window !== 'undefined') {
+    window.debugAudio = {
+      getRaw: () => stemRaw,
+      getLoop: () => stemLoop,
+      getRefHead: () => referenceHeadIndex,
+      getHistory: () => stemHistory,
+      select: selectStemVersion,
+      getEqValues: () => stemEqValues,
+      getFilterValues: () => stemFilterValues
+    }
+  }
+  // Initialise card numbers and indicators
+  STEM_ORDER.forEach(st => {
+    updateHistoryIndicator(st)
+    updateCardNumberColor(st)
+    updateMutedBorder(st)
+    updateTempoIndicator(st)
+  })
+  // Present the session setup modal if settings have not been chosen
+  // yet.  This ensures the user sets the master tempo, bars and key
+  // before generating any stems.  The modal will only appear once
+  // per session.
+  showSessionSetupModal()
+  console.log('✅ App ready (session ' + SESSION_TAG + ')')
+}
+
+export async function initApp(){
+  console.log('🎬 Initializing App Navigation System…')
+  setupNavigationListeners()
+  showPage('login-page')
+  window.lucide?.createIcons()
+  setupHelpModal()
+  console.log('✅ Navigation system ready')
+}
+
+// -----------------------------------------------------------------------------
+// UI Overrides
+// These overrides adjust the behaviour and appearance of certain controls.
+// 1) headerActionButtonsHTML: replace the solo icon with a simple 'S' label.
+// 2) headerActionButtonsMobileHTML: on small screens, action buttons fill the card's width
+//    and the solo button uses 'S'.
+
+function customHeaderActionButtonsHTML(st) {
+  return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-sm">S</span>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `;
+}
+
+function customHeaderActionButtonsMobileHTML(st) {
+  return `\n        <div class="flex w-full items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-[10px]">S</span>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `;
+}
+
+/* =========================================================
+   Global styles
+   ========================================================= */
+function injectGlobalStyles(){
+  if (document.getElementById('sg-global-styles')) return
+  const style=document.createElement('style')
+  style.id='sg-global-styles'
+  style.textContent=
+    `@keyframes soft-pulse-glow {\n      0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.28), 0 0 16px rgba(255,255,255,0.12); transform: translateY(0) scale(1); }\n      50%      { box-shadow: 0 0 0 12px rgba(255,255,255,0), 0 0 22px rgba(255,255,255,0.22); transform: translateY(-0.5px) scale(1.012); }\n    }\n    #playBtn { animation: soft-pulse-glow 2.6s ease-in-out infinite; transition: transform 160ms ease, box-shadow 160ms ease; will-change: transform, box-shadow; }\n    #playBtn:hover { transform: translateY(-1px) scale(1.02); }\n    #playBtn:active { transform: translateY(0); }\n    .sg-mix-card.sg-glow { animation: soft-pulse-glow 2.6s ease-in-out infinite; }\n    .sg-toggle-active { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); }`;
+  document.head.appendChild(style)
+}
+
+/* =========================================================
+   Help Modal setup
+   ========================================================= */
+function setupHelpModal(){
+  const helpBtn = document.getElementById('helpBtn')
+  const helpModal = document.getElementById('helpModal')
+  const overlay = document.getElementById('helpModalOverlay')
+  const closeBtn = document.getElementById('helpModalCloseBtn')
+  if (!helpModal) return
+  function openModal(){
+    helpModal.classList.remove('hidden')
+    requestAnimationFrame(() => {
+      helpModal.style.opacity = '1'
+    })
+    // Disable body scroll while help modal is open
+    document.body.style.overflow = 'hidden'
+  }
+  function closeModal(){
+    helpModal.style.opacity = '0'
+    setTimeout(() => {
+      helpModal.classList.add('hidden')
+      // Restore body scroll when help modal is closed
+      document.body.style.overflow = ''
+    }, 300)
+  }
+  if (helpBtn) helpBtn.addEventListener('click', openModal)
+  if (overlay) overlay.addEventListener('click', closeModal)
+  if (closeBtn) closeBtn.addEventListener('click', closeModal)
+}
+
+// -----------------------------------------------------------------------------
+// Note: The default headerActionButtonsMobileHTML defined earlier is retained.
+// Custom layouts are implemented via customHeaderActionButtonsMobileHTML and used
+// directly in createBuilderStemCard.  Duplicate overrides were removed to
+// prevent redeclaration errors.
+
+// Assign the default header action button helpers to our custom implementations.
+// This ensures any call sites referencing headerActionButtonsHTML or
+// headerActionButtonsMobileHTML will use the versions that replace the
+// headphone icon with a plain "S" label and provide full-width buttons on mobile.
+headerActionButtonsHTML = customHeaderActionButtonsHTML;
+headerActionButtonsMobileHTML = customHeaderActionButtonsMobileHTML;
+
+/* =========================================================
+   Generate settings modal helpers
+   When the user taps the Generate button on a stem card, we show a popup
+   with all control sliders and toggles for that stem.  After the user
+   clicks Start, we update stemControlValues and trigger generation.
+   ========================================================= */
+
+// Build the inner HTML for the generate settings modal.  Each control
+// defined on the stem config (except volume) becomes a slider or checkbox.
+function buildGenerateSettingsContent(st) {
+  let html = ''
+  const cfg = stemConfigs[st] || {}
+  const controls = cfg.controls || {}
+  const values = stemControlValues[st] || {}
+  for (const [key, c] of Object.entries(controls)) {
+    if (key === 'volume') continue // volume is controlled in the mixer
+    const val = values[key] ?? c.default
+    if (c.type === 'knob') {
+      // Use a taller track for mobile (h-3) and add touch-action-none to prevent page scrolling while dragging.
+      html += `<div class="flex items-center gap-2">\n` +
+              `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
+              // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
+              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
+              `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
+              `</div>`
+    } else if (c.type === 'toggle') {
+      const checked = val ? 'checked' : ''
+      html += `<label class="flex items-center gap-2 text-xs text-white/90">\n` +
+              `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
+              `  <span>${c.label}</span>\n` +
+              `</label>`
+    }
+  }
+  return html
+}
+
+// Show the generate settings modal for the given stem
+function showGenerateSettingsModal(st) {
+  currentGenerateStem = st
+  const modal = document.getElementById('generateSettingsModal')
+  const content = document.getElementById('generateSettingsContent')
+  if (modal && content) {
+    content.innerHTML = buildGenerateSettingsContent(st)
+    modal.classList.remove('hidden')
+    requestAnimationFrame(() => { modal.style.opacity = '1' })
+
+    // Reset start and cancel buttons to their default state whenever the modal is shown.
+    const startBtn = document.getElementById('generateSettingsStartBtn')
+    const cancelBtn = document.getElementById('generateSettingsCancelBtn')
+    if (startBtn) {
+      startBtn.disabled = false
+      // Restore the original label if stored, else default to "Start"
+      const orig = startBtn.dataset.originalLabel
+      startBtn.innerHTML = orig || 'Start'
+    }
+    if (cancelBtn) {
+      cancelBtn.disabled = false
+    }
+    // Disable body scrolling while any generate settings modal is open
+    document.body.style.overflow = 'hidden'
+  }
+}
+
+// Hide the generate settings modal
+function hideGenerateSettingsModal() {
+  const modal = document.getElementById('generateSettingsModal')
+  if (modal) {
+    modal.style.opacity = '0'
+    setTimeout(() => {
+      modal.classList.add('hidden')
+    }, 200)
+  }
+  currentGenerateStem = null
+  // Re-enable body scrolling when the generate settings modal is hidden
+  document.body.style.overflow = ''
+}
+
+// Apply the settings from the modal to the current stem and trigger generation
+async function applyGenerateSettingsAndStart() {
+  const st = currentGenerateStem
+  if (!st) return
+  const content = document.getElementById('generateSettingsContent')
+  if (content) {
+    const inputs = content.querySelectorAll('[data-gen-control]')
+    inputs.forEach(input => {
+      const key = input.getAttribute('data-gen-control')
+      if (!key) return
+      if (input.type === 'range') {
+        const val = parseInt(input.value, 10)
+        stemControlValues[st][key] = val
+      } else if (input.type === 'checkbox') {
+        stemControlValues[st][key] = input.checked
+      }
+    })
+  }
+  // Provide feedback on the start and cancel buttons while generation is being scheduled.  Disable
+  // both buttons and show a spinner on the start button.
+  const startBtn = document.getElementById('generateSettingsStartBtn')
+  const cancelBtn = document.getElementById('generateSettingsCancelBtn')
+  if (startBtn) {
+    startBtn.disabled = true
+    // Preserve original label so we can restore it later if needed
+    if (!startBtn.dataset.originalLabel) {
+      startBtn.dataset.originalLabel = startBtn.innerHTML
+    }
+    startBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 loading-spin"></i>`
+    window.lucide?.createIcons()
+  }
+  if (cancelBtn) {
+    cancelBtn.disabled = true
+  }
+  hideGenerateSettingsModal()
+  // Trigger generation for this stem
+  await generateStem(st)
+}
+
+/* =========================================================
+   Session Setup Modal
+   ========================================================= */
+// Display the session setup modal on page load.  If session settings have
+// already been chosen (sessionSetupDone === true), the modal will not
+// appear.  When the user confirms their selections, the values are
+// stored in stemControlValues.master and the bottom controls are
+// disabled accordingly.  The selected values persist for the
+// remainder of the session.
+function showSessionSetupModal() {
+  if (sessionSetupDone) return
+  const modal = document.getElementById('sessionSetupModal')
+  if (!modal) return
+  const overlay = document.getElementById('sessionSetupOverlay')
+  const tempoSlider = document.getElementById('setupTempoSlider')
+  const tempoValue = document.getElementById('setupTempoValue')
+  const barsSelector = document.getElementById('setupBarsSelector')
+  const rootSelector = document.getElementById('setupRootSelector')
+  const accidentalSelector = document.getElementById('setupAccidentalSelector')
+  const modeSelector = document.getElementById('setupModeSelector')
+  const cancelBtn = document.getElementById('setupCancelBtn')
+  const saveBtn = document.getElementById('setupSaveBtn')
+  if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !cancelBtn || !saveBtn) return
+  // Update displayed tempo when slider moves
+  tempoSlider.addEventListener('input', e => {
+    const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
+    tempoValue.textContent = String(val)
+  })
+  // Cancel button closes modal without locking settings
+  cancelBtn.addEventListener('click', () => {
+    modal.style.opacity = '0'
+    setTimeout(() => { modal.classList.add('hidden') }, 300)
+    // Restore page scrolling when the session setup modal is closed
+    document.body.style.overflow = ''
+  })
+  // Save button applies settings and locks them
+  saveBtn.addEventListener('click', () => {
+    const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
+    const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
+    const rootText = String(rootSelector.value || 'A')
+    // Determine base letter and accidental from the root selection
+    let rootBase = rootText.replace(/[♯♭]/g, '').toUpperCase()
+    const selectedAccidental = accidentalSelector.value
+    const modeVal = String(modeSelector.value || 'Minor')
+    // Set master values
+    stemControlValues.master.tempo = tempoVal
+    stemControlValues.master.bars = barsVal
+    stemControlValues.master.rootBase = rootBase
+    stemControlValues.master.accidental = selectedAccidental
+    stemControlValues.master.mode = modeVal
+    sessionSetupDone = true
+    applySessionSettingsToUI()
+    // Hide modal
+    modal.style.opacity = '0'
+    setTimeout(() => { modal.classList.add('hidden') }, 300)
+    // Restore page scrolling when the session setup modal is closed
+    document.body.style.overflow = ''
+  })
+  // Show the modal
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+  })
+  // Disable page scrolling while the session setup modal is visible
+  document.body.style.overflow = 'hidden'
+}
+
+// Apply the session settings to the UI: update the bottom controls
+// with the locked values and disable them so the user cannot modify
+// them mid-session.  Also refresh the tempo indicators on the
+// waveform cards and update the history drawer where needed.
+function applySessionSettingsToUI() {
+  const master = stemControlValues.master
+  // If any of the old master controls exist (tempo, bars, key selectors), disable them and set their values.
+  // This keeps compatibility in case those elements are still present in the DOM for other generators.
+  const tempoSlider = document.getElementById('tempoSlider')
+  const tempoValueEl = document.getElementById('tempoValue')
+  if (tempoSlider) {
+    tempoSlider.value = String(master.tempo)
+    tempoSlider.disabled = true
+  }
+  if (tempoValueEl) {
+    tempoValueEl.textContent = String(master.tempo)
+  }
+  const barsSelector = document.getElementById('barsSelector')
+  if (barsSelector) {
+    barsSelector.value = String(master.bars)
+    barsSelector.disabled = true
+  }
+  const rootSelector = document.getElementById('rootSelector')
+  const accidentalSelector = document.getElementById('accidentalSelector')
+  const modeSelector = document.getElementById('modeSelector')
+  if (rootSelector) {
+    let rootDisplay = master.rootBase
+    if (master.accidental === 'sharp') rootDisplay += '#'
+    else if (master.accidental === 'flat') rootDisplay += 'b'
+    rootSelector.value = rootDisplay
+    rootSelector.disabled = true
+  }
+  if (accidentalSelector) {
+    accidentalSelector.value = master.accidental
+    accidentalSelector.disabled = true
+  }
+  if (modeSelector) {
+    modeSelector.value = master.mode
+    modeSelector.disabled = true
+  }
+  // Update the session info card in the player bar.
+  const infoEl = document.getElementById('sessionInfoText')
+  if (infoEl) {
+    const rootName = getRootText()
+    infoEl.textContent = `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
+  }
+  // Refresh tempo indicators on all cards
+  STEM_ORDER.forEach(st => {
+    updateTempoIndicator(st)
+  })
+}
