@@ -289,10 +289,11 @@
 
 
       <!-- Volume slider -->
-      <div class="flex items-center gap-2">
+      <!-- On mobile the volume control should sit to the right of the play button and expand to fill available space. Use flex-1 on the container and w-full on the slider, but restrict width on larger screens. -->
+      <div class="flex items-center gap-2 flex-1 sm:flex-none">
         <span class="text-xs text-white/60">Volume</span>
         <input id="masterVolumeSlider" type="range" min="0" max="100" value="90"
-               class="w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
+               class="w-full sm:w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
         <span id="masterVolumeValue" class="text-sm w-12 text-right">90%</span>
       </div>
 
@@ -324,6 +325,7 @@
   </div>
 </div>
 
-<script type="module" src="/src/main.js"></script>
+<!-- Load the application script. Reference /app.js directly since the src folder does not exist in this environment. -->
+<script type="module" src="/app.js"></script>
 </body>
 </html>
