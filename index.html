@@ -48,11 +48,13 @@
          is reduced to approximately 70% and the icon is scaled down to
          0.75rem (12px).  These classes are assigned dynamically in JS. */
       .create-label {
-        font-size: 0.75rem !important;
+        /* On mobile, shrink the create button text to roughly 70% of the default size. */
+        font-size: 0.7rem !important;
       }
       .create-icon {
-        width: 0.75rem !important;
-        height: 0.75rem !important;
+        /* On mobile, shrink the create button icon proportionally. */
+        width: 0.7rem !important;
+        height: 0.7rem !important;
       }
     }
   </style>
