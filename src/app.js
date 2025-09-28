@@ -83,6 +83,18 @@ let soloedStem = null
 const stemEqValues = {}
 const stemFilterValues = {}
 
+// Per‑stem UI state for waveform editing.  When true for a given stem, the
+// take navigation arrows on that waveform are hidden and the horizontal
+// dial overlay for adjusting volume and the endpoint is shown.  Use
+// toggleWaveformControls() to change this state.
+const waveformEditingState = {}
+
+// Endpoint stretch factors per stem.  A factor of 1.0 means the loop
+// plays at its original rate.  Values below 1.0 compress the sound
+// (it finishes sooner within the loop), while values above 1.0 stretch
+// it (the sound plays back slower) without changing the loop duration.
+const endpointFactors = {}
+
 let loopStartTime  = 0
 let loopDuration   = 0
 let transportTicker = null
@@ -743,6 +755,150 @@ function updatePlayButtonIcon() {
   else { btn.textContent = isPlaying ? 'Pause' : 'Play' }
 }
 
+// ----- Waveform dial controls -----
+//
+// The following helpers manage the horizontal dials that appear on each
+// waveform when the user clicks on it.  These dials allow per‑stem
+// adjustments of volume and the endpoint stretch factor.  When a
+// waveform enters editing mode, the take navigation arrows are hidden
+// and the overlay becomes interactive.  The corresponding functions
+// handle showing/hiding this overlay, updating the volume both in
+// the UI and the audio graph, and rebuilding the stem's loop buffer
+// according to the selected endpoint factor.
+
+/**
+ * Toggle the visibility of the horizontal dial overlay on a waveform and
+ * hide or show the take navigation arrows accordingly.  When
+ * activated, the overlay becomes interactive (pointer events
+ * enabled) and the arrow zones are hidden.  When deactivated, the
+ * overlay is hidden and the arrows become usable again.
+ *
+ * @param {string} st The stem identifier.
+ */
+function toggleWaveformControls(st) {
+  const cardEl = document.querySelector(`[data-stem="${st}"]`)
+  if (!cardEl) return
+  const overlay = cardEl.querySelector(`[data-stem-controls="${st}"]`)
+  const prevZoneBtn = cardEl.querySelector(`[data-action="prev-take"]`)
+  const nextZoneBtn = cardEl.querySelector(`[data-action="next-take"]`)
+  const prevZone = prevZoneBtn ? prevZoneBtn.closest('div') : null
+  const nextZone = nextZoneBtn ? nextZoneBtn.closest('div') : null
+  if (!overlay || !prevZone || !nextZone) return
+  const currentlyHidden = overlay.classList.contains('hidden')
+  if (currentlyHidden) {
+    overlay.classList.remove('hidden')
+    overlay.classList.remove('pointer-events-none')
+    overlay.classList.add('pointer-events-auto')
+    prevZone.classList.add('hidden')
+    nextZone.classList.add('hidden')
+    waveformEditingState[st] = true
+  } else {
+    overlay.classList.add('hidden')
+    overlay.classList.add('pointer-events-none')
+    overlay.classList.remove('pointer-events-auto')
+    prevZone.classList.remove('hidden')
+    nextZone.classList.remove('hidden')
+    waveformEditingState[st] = false
+  }
+}
+
+/**
+ * Handle updates from the volume dial slider.  Adjusts the unified
+ * volume value for the stem, updates the waveform's vertical scale to
+ * visualise the change, and reflects the change in the audio output.
+ *
+ * @param {string} st The stem identifier.
+ * @param {number} val The new slider value (0–100).
+ */
+function handleVolumeSlider(st, val) {
+  if (!st) return
+  const v = Math.max(0, Math.min(100, Math.round(Number(val) || 0)))
+  // Update the unified volume state and audio gain
+  setVolumeUnified(st, v)
+  // Scale the waveform vertically to reflect volume
+  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  if (canvas) {
+    const scale = v / 100
+    canvas.style.transform = `scaleY(${scale})`
+  }
+}
+
+/**
+ * Handle updates from the endpoint dial slider.  Computes a stretch
+ * factor from the slider value and rebuilds the loop buffer for the
+ * stem accordingly.  The loop length remains the same, but the audio
+ * content is compressed or expanded within that length.  After
+ * rebuilding, the waveform display is updated and the stem restarts at
+ * the next loop boundary if playback is active.
+ *
+ * @param {string} st The stem identifier.
+ * @param {number} val The new slider value (50–150).
+ */
+function handleEndpointSlider(st, val) {
+  if (!st) return
+  const rawVal = Number(val) || 100
+  // Map slider range 50–150 to a factor 0.5–1.5.  Clamp between 0.1 and 3.0 for safety.
+  const factor = Math.max(0.1, Math.min(rawVal / 100, 3))
+  endpointFactors[st] = factor
+  adjustEndpoint(st, factor)
+}
+
+/**
+ * Rebuild a stem's loop buffer based on a stretch/compression factor.  A
+ * factor of 1.0 leaves the audio unchanged.  Values below 1.0 compress
+ * the raw audio (it finishes sooner within the loop) and values above
+ * 1.0 stretch the audio (it takes longer to reach the end) while
+ * preserving the overall loop duration.  The algorithm performs a
+ * simple resampling with wrap‑around, followed by applying the usual
+ * edge ramps and seam crossfade to maintain loop smoothness.
+ *
+ * @param {string} st The stem identifier.
+ * @param {number} factor The stretch factor (>0).
+ */
+function adjustEndpoint(st, factor) {
+  const raw = stemRaw[st] || stemLoop[st]
+  if (!raw) return
+  const existing = stemLoop[st]
+  // Use the existing loop length in frames if available; otherwise fall back to the raw length
+  const length = existing ? existing.length : raw.length
+  const sr = raw.sampleRate
+  const channels = raw.numberOfChannels
+  const out = new AudioBuffer({ length, numberOfChannels: channels, sampleRate: sr })
+  for (let c = 0; c < channels; c++) {
+    const src = raw.getChannelData(c)
+    const dst = out.getChannelData(c)
+    const srcLen = src.length
+    for (let i = 0; i < length; i++) {
+      const idx = i * factor
+      const floor = Math.floor(idx)
+      const frac = idx - floor
+      const i0 = ((floor % srcLen) + srcLen) % srcLen
+      const i1 = (i0 + 1) % srcLen
+      const v0 = src[i0]
+      const v1 = src[i1]
+      dst[i] = v0 + (v1 - v0) * frac
+    }
+  }
+  // Apply edge ramps and seam crossfade to smooth the loop
+  applyEdgeRamps(out, EDGE_RAMP_MS)
+  applySeamCrossfade(out, LOOP_XFADE_MS)
+  // Update loop buffer and duration
+  stemLoop[st] = out
+  stemLoopDuration[st] = out.duration
+  // Redraw waveform
+  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  if (canvas) {
+    const cfg = stemConfigs[st]
+    drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
+    const vol = stemControlValues[st]?.volume ?? 80
+    canvas.style.transform = `scaleY(${vol / 100})`
+  }
+  // Restart playback of this stem on the next boundary if currently playing
+  if (isPlaying) {
+    restartStemNextBoundary(st)
+  }
+}
+
 /* =========================================================
    Transport
    ========================================================= */
@@ -986,9 +1142,16 @@ async function generateStem(st) {
       referenceHeadIndex = detectHeadIndex(audioBuffer)
       referenceStemType = st
       const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
+      // Store the newly generated raw buffer and strict loop.  We explicitly
+      // assign the raw to stemRaw so that endpoint adjustments can be
+      // constructed from the unmodified audio later.  The strict loop is
+      // stored in stemLoop to be used for playback.  Reset the
+      // endpoint stretch factor to its default (1.0) for a fresh take so
+      // that subsequent adjustments start from an unmodified loop.
       stemRaw[st]  = audioBuffer
       stemLoop[st] = strictLoop
       stemLoopDuration[st] = strictLoop.duration
+      endpointFactors[st] = 1
     }
 
     // Push the new version into history
@@ -1008,6 +1171,24 @@ async function generateStem(st) {
     if (canvas) {
       const cfg = stemConfigs[st]
       drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+    }
+    // After drawing the waveform, update the overlay controls to reflect
+    // the current per‑stem volume and the reset endpoint factor.  Also
+    // scale the waveform vertically according to the volume.  This
+    // ensures that newly generated takes show the correct slider
+    // positions and waveform height when the overlay is toggled.
+    {
+      const overlay = document.querySelector(`[data-stem-controls="${st}"]`)
+      if (overlay) {
+        const volInput = overlay.querySelector('[data-action="adjust-volume"]')
+        if (volInput) volInput.value = String(stemControlValues[st]?.volume ?? 80)
+        const endInput = overlay.querySelector('[data-action="adjust-endpoint"]')
+        if (endInput) endInput.value = '100'
+      }
+      if (canvas) {
+        const volVal = stemControlValues[st]?.volume ?? 80
+        canvas.style.transform = `scaleY(${volVal / 100})`
+      }
     }
     if (statusEl) {
       const base = `Ready (${stemLoop[st].duration.toFixed(3)}s, loop-aligned)`
@@ -1180,7 +1361,11 @@ function createBuilderStemCard(st, cfg){
   let volumeHTML = ''
 
   // Waveform display: remove takes/tempo indicators/open button and add left/right arrow zones occupying 25% of the width each.
-  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to browse takes"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Left and right arrow zones: occupy 25% width each with black background -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  // In addition, include a hidden overlay that contains horizontal dial controls for
+  // adjusting the volume and endpoint of the current take.  Clicking the
+  // waveform toggles this overlay.  When the overlay is visible the arrows
+  // are hidden to prevent take navigation, and vice versa.
+  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to adjust volume or endpoint"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Overlay with horizontal dials for volume and endpoint adjustment -->\n            <div class="absolute inset-0 flex flex-col justify-between p-2 hidden pointer-events-none z-10" data-stem-controls="${st}">\n              <div class="flex items-center gap-2 pointer-events-auto">\n                <span class="text-[10px] w-8 flex-shrink-0">Vol</span>\n                <input type="range" min="0" max="100" value="100" class="sg-slider-range flex-1" data-action="adjust-volume" data-stem="${st}" />\n              </div>\n              <div class="flex items-center gap-2 pointer-events-auto mt-1">\n                <span class="text-[10px] w-8 flex-shrink-0">End</span>\n                <input type="range" min="50" max="150" value="100" class="sg-slider-range flex-1" data-action="adjust-endpoint" data-stem="${st}" />\n              </div>\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each with black background -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -1225,6 +1410,25 @@ function createBuilderStemCard(st, cfg){
     if (historySpan) {
       historySpan.remove()
     }
+
+    // Initialise dial values for the waveform overlay.  Set the volume slider
+    // to the current per‑stem volume (or default) and the endpoint slider
+    // to the stored stretch factor (converted to a percentage).  Also
+    // scale the waveform vertically to reflect the initial volume.
+    {
+      const controlsEl = card.querySelector(`[data-stem-controls="${st}"]`)
+      if (controlsEl) {
+        const volInput = controlsEl.querySelector('[data-action="adjust-volume"]')
+        if (volInput) volInput.value = String(stemControlValues[st]?.volume ?? 80)
+        const endInput = controlsEl.querySelector('[data-action="adjust-endpoint"]')
+        if (endInput) endInput.value = String((endpointFactors[st] ?? 1) * 100)
+      }
+      const canvasEl = card.querySelector('.waveform-canvas')
+      if (canvasEl) {
+        const volVal = stemControlValues[st]?.volume ?? 80
+        canvasEl.style.transform = `scaleY(${volVal / 100})`
+      }
+    }
   }
 
   updateHistoryBadge(st)
@@ -1244,6 +1448,8 @@ function initializeStemControlValues() {
   Object.entries(stemConfigs).forEach(([st, cfg]) => {
     stemControlValues[st] = {}
     stemMuteStates[st] = false
+      // Initialise endpoint stretch factor for each stem (1.0 = no stretch)
+      endpointFactors[st] = 1
     if (!stemEqValues[st]) stemEqValues[st] = { low: 75, mid: 75, high: 75 }
     if (!stemFilterValues[st]) stemFilterValues[st] = { mode: 'lowpass', cutoff: defCutKnob }
     if (cfg.controls) {
@@ -1969,13 +2175,37 @@ function setupEventListeners() {
         return
       }
     } else {
-      const cw = e.target.closest('.waveform-canvas'); 
-      if (cw?.dataset.stem) { toggleHistoryDrawer(cw.dataset.stem, null); return }
-      const takeBtn = e.target.closest('[data-take-index]'); 
-      if (takeBtn) {
-        const st = takeBtn.getAttribute('data-stem'); const idx = parseInt(takeBtn.getAttribute('data-take-index'),10)
-        selectStemVersion(st, idx); updateMixerGlow(st); return
+      const cw = e.target.closest('.waveform-canvas');
+      if (cw?.dataset.stem) {
+        // Toggle waveform editing controls instead of opening the history drawer.
+        toggleWaveformControls(cw.dataset.stem)
+        return
       }
+      const takeBtn = e.target.closest('[data-take-index]');
+      if (takeBtn) {
+        const st = takeBtn.getAttribute('data-stem');
+        const idx = parseInt(takeBtn.getAttribute('data-take-index'), 10)
+        selectStemVersion(st, idx)
+        updateMixerGlow(st)
+        return
+      }
+    }
+  })
+
+  // Handle input events on waveform dial sliders (volume and endpoint).  When the
+  // user interacts with these range inputs, adjust the corresponding stem
+  // parameters and update the visuals/audio.  We use a single listener on
+  // the document to catch changes on dynamically created sliders.
+  document.addEventListener('input', e => {
+    const target = e.target
+    if (!target || !target.getAttribute) return
+    const action = target.getAttribute('data-action')
+    const st     = target.getAttribute('data-stem')
+    if (!st || !action) return
+    if (action === 'adjust-volume') {
+      handleVolumeSlider(st, target.value)
+    } else if (action === 'adjust-endpoint') {
+      handleEndpointSlider(st, target.value)
     }
   })
 
@@ -2086,6 +2316,22 @@ function selectStemVersion(st, index){
   const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
   if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${bars} bars)`
   renderHistoryDrawer(st)
+  // Reset endpoint factor to default (1.0) when selecting a different take and update the dial inputs.
+  endpointFactors[st] = 1
+  {
+    const overlay = document.querySelector(`[data-stem-controls="${st}"]`)
+    if (overlay) {
+      const endInput = overlay.querySelector('[data-action="adjust-endpoint"]')
+      if (endInput) endInput.value = '100'
+      const volInput = overlay.querySelector('[data-action="adjust-volume"]')
+      if (volInput) volInput.value = String(stemControlValues[st]?.volume ?? 80)
+    }
+    const canvasEl = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+    if (canvasEl) {
+      const volVal = stemControlValues[st]?.volume ?? 80
+      canvasEl.style.transform = `scaleY(${volVal / 100})`
+    }
+  }
   if (isPlaying) restartStemNextBoundary(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
