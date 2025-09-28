@@ -57,6 +57,69 @@
         height: 0.7rem !important;
       }
     }
+
+    /* ------------------------------------------------------------------
+       Custom styles for waveform editing controls
+
+       The waveform canvases need a fixed transform origin so that
+       vertical scaling (used to visualise volume changes) scales
+       around the centre rather than from the top.  A transition makes
+       the scaling animation smooth.  The sg-slider-range class defines
+       a horizontal dial style for the volume and endpoint sliders
+       displayed when clicking on a waveform.  It is responsive for
+       both pointer and touch devices.
+    ------------------------------------------------------------------ */
+
+    /* Ensure waveform vertical scaling happens around its centre */
+    .waveform-canvas {
+      transform-origin: center center;
+      transition: transform 0.2s ease;
+    }
+
+    /* Base styles for horizontal dial sliders used in the waveform overlay */
+    .sg-slider-range {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 1rem;
+      background: transparent;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .sg-slider-range:focus {
+      outline: none;
+    }
+    /* Track styling for WebKit browsers */
+    .sg-slider-range::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 0.5rem;
+      background: rgba(255, 255, 255, 0.25);
+      border-radius: 9999px;
+    }
+    /* Thumb styling for WebKit browsers */
+    .sg-slider-range::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 1.25rem;
+      width: 1.25rem;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      border: 2px solid rgba(0, 0, 0, 0.4);
+      margin-top: -0.375rem; /* vertically center thumb on track */
+    }
+    /* Track styling for Firefox */
+    .sg-slider-range::-moz-range-track {
+      width: 100%;
+      height: 0.5rem;
+      background: rgba(255, 255, 255, 0.25);
+      border-radius: 9999px;
+    }
+    /* Thumb styling for Firefox */
+    .sg-slider-range::-moz-range-thumb {
+      height: 1.25rem;
+      width: 1.25rem;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      border: 2px solid rgba(0, 0, 0, 0.4);
+    }
   </style>
 </head>
 <body class="bg-zinc-900 text-white font-geist overflow-x-hidden">
