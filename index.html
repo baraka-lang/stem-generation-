@@ -120,6 +120,30 @@
       background: rgba(255, 255, 255, 0.85);
       border: 2px solid rgba(0, 0, 0, 0.4);
     }
+
+    /* Highlight solo buttons when active: red border and subtle red background */
+    .sg-toggle-active[data-action="mix-solo"],
+    .sg-toggle-active[data-action="solo-stem"] {
+      border-color: rgb(239, 68, 68) !important;
+      background-color: rgba(239, 68, 68, 0.2) !important;
+      color: rgb(239, 68, 68) !important;
+    }
+
+    /* Mobile-specific adjustments */
+    @media (max-width: 640px) {
+      /* Prevent bottom player controls from wrapping so play and volume stay on the same row */
+      #playerBar .flex-wrap {
+        flex-wrap: nowrap !important;
+      }
+      #playerBar .flex-wrap > * {
+        flex-shrink: 0;
+      }
+      /* Reduce vertical padding on the Create button to make it less tall */
+      [data-action="open-create-settings"] {
+        padding-top: 0.4rem !important;
+        padding-bottom: 0.4rem !important;
+      }
+    }
   </style>
 </head>
 <body class="bg-zinc-900 text-white font-geist overflow-x-hidden">
@@ -141,8 +165,8 @@
   </div>
 </header>
 
-<!-- Login Page -->
-<div id="login-page" class="min-h-[calc(100vh-40px)] flex items-center justify-center p-4">
+<!-- Login Page (hidden by default; we start on the selection page) -->
+<div id="login-page" class="hidden min-h-[calc(100vh-40px)] flex items-center justify-center p-4">
   <div class="text-center">
     <h1 class="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
       343 Labs AI Music Studio
@@ -157,7 +181,7 @@
 </div>
 
 <!-- Generator Selection Page -->
-<div id="selection-page" class="min-h-[calc(100vh-40px)] flex items-center justify-center p-4 hidden">
+<div id="selection-page" class="min-h-[calc(100vh-40px)] flex items-center justify-center p-4">
   <div class="max-w-6xl mx-auto">
     <div class="text-center mb-12">
       <h1 class="text-4xl font-bold mb-4">Choose Your Genre</h1>
@@ -334,6 +358,31 @@
       <p>If the number circles are red, it means either the stem has not been generated yet or the channel is muted.</p>
       <p>A red border around a card indicates that the instrument or channel is muted.</p>
       <p>Generations are not 100% predictable due to the nature of AI – experiment and generate multiple versions to find your favorite take.</p>
+    </div>
+  </div>
+</div>
+
+<!-- Waveform Edit Modal: allows adjusting volume and endpoint for a take -->
+<div id="waveformEditModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="waveformEditOverlay"></div>
+  <div class="relative w-full max-w-md max-h-[85vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <h2 class="text-xl font-medium text-white mb-4">Edit Take</h2>
+    <!-- Waveform preview; resized dynamically when adjusting volume -->
+    <canvas id="waveformEditCanvas" class="w-full h-20 bg-white/5 rounded-md border border-white/10 mb-4"></canvas>
+    <!-- Volume control -->
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-[10px] w-8 flex-shrink-0">Vol</span>
+      <input id="waveformEditVolume" type="range" min="0" max="100" value="100" class="sg-slider-range flex-1" />
+    </div>
+    <!-- Endpoint control -->
+    <div class="flex items-center gap-2 mb-4">
+      <span class="text-[10px] w-8 flex-shrink-0">End</span>
+      <input id="waveformEditEndpoint" type="range" min="50" max="150" value="100" class="sg-slider-range flex-1" />
+    </div>
+    <!-- Action buttons -->
+    <div class="flex justify-end gap-3 mt-2">
+      <button id="editDiscardBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-sm">Discard</button>
+      <button id="editSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-md text-sm font-medium">Save</button>
     </div>
   </div>
 </div>
