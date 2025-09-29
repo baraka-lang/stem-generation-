@@ -29,8 +29,11 @@ const DEFAULT_TEMPO = 130
 const DEFAULT_BARS  = 4
 
 const START_ENV_MS   = 5
-const EDGE_RAMP_MS   = 5
-const LOOP_XFADE_MS  = 12
+// Increase ramp and crossfade durations to minimise audible clicks at loop
+// boundaries.  A longer fade-in/out and crossfade smooths the transition
+// when the loop restarts, reducing the chance of hearing a click.
+const EDGE_RAMP_MS   = 8
+const LOOP_XFADE_MS  = 24
 const ALIGN_SEARCH_MS = 45
 const ZERO_FALLBACK_SAMPLES = 384
 
@@ -94,6 +97,18 @@ const waveformEditingState = {}
 // (it finishes sooner within the loop), while values above 1.0 stretch
 // it (the sound plays back slower) without changing the loop duration.
 const endpointFactors = {}
+
+// State for the waveform edit popup.  When a waveform is tapped, we open
+// a modal with its own controls for volume and endpoint.  We store
+// the stem being edited along with its previous volume and endpoint
+// factor so we can revert if the user discards changes.  When the
+// modal is closed, isOpen becomes false and stem resets to null.
+const waveformEditState = {
+  isOpen: false,
+  stem: null,
+  prevVolume: 0,
+  prevEndpointFactor: 1
+}
 
 let loopStartTime  = 0
 let loopDuration   = 0
@@ -899,6 +914,122 @@ function adjustEndpoint(st, factor) {
   }
 }
 
+/**
+ * Open the waveform edit modal for a specific stem.  This modal
+ * displays a preview of the current loop and provides full‑width
+ * controls for adjusting volume and endpoint stretch.  Changes take
+ * effect immediately (preview and audio), but can be discarded.
+ *
+ * @param {string} st The stem identifier
+ */
+function openWaveformEditModal(st) {
+  if (!st) return
+  const modal = document.getElementById('waveformEditModal')
+  if (!modal) return
+  waveformEditState.isOpen = true
+  waveformEditState.stem = st
+  // Store current values so we can revert on discard
+  waveformEditState.prevVolume = stemControlValues[st]?.volume ?? 80
+  waveformEditState.prevEndpointFactor = endpointFactors[st] ?? 1
+  // Set up sliders with current values
+  const volInput = document.getElementById('waveformEditVolume')
+  const endInput = document.getElementById('waveformEditEndpoint')
+  if (volInput) {
+    volInput.value = String(waveformEditState.prevVolume)
+    // Attach input handler: update volume and preview scaling
+    volInput.oninput = e => {
+      const v = e.target.value
+      handleVolumeSlider(st, v)
+      // Update preview scaling
+      const canvas = document.getElementById('waveformEditCanvas')
+      if (canvas) {
+        const scale = Math.max(0, Math.min(100, Number(v))) / 100
+        canvas.style.transform = `scaleY(${scale})`
+      }
+    }
+  }
+  if (endInput) {
+    endInput.value = String((waveformEditState.prevEndpointFactor || 1) * 100)
+    // Attach input handler: update endpoint and redraw preview
+    endInput.oninput = e => {
+      const v = e.target.value
+      handleEndpointSlider(st, v)
+      // Redraw preview waveform using updated loop
+      const canvas = document.getElementById('waveformEditCanvas')
+      if (canvas) {
+        const cfg = stemConfigs[st]
+        drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+        // Also apply current volume scaling
+        const volVal = stemControlValues[st]?.volume ?? 80
+        canvas.style.transform = `scaleY(${volVal / 100})`
+      }
+    }
+  }
+  // Draw initial preview waveform and apply volume scaling
+  const prevCanvas = document.getElementById('waveformEditCanvas')
+  if (prevCanvas) {
+    const cfg = stemConfigs[st]
+    drawWaveform(prevCanvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+    prevCanvas.style.transform = `scaleY(${(waveformEditState.prevVolume || 80) / 100})`
+  }
+  // Set up action buttons
+  const saveBtn = document.getElementById('editSaveBtn')
+  const discardBtn = document.getElementById('editDiscardBtn')
+  if (saveBtn) {
+    saveBtn.onclick = () => closeWaveformEditModal(true)
+  }
+  if (discardBtn) {
+    discardBtn.onclick = () => closeWaveformEditModal(false)
+  }
+  // Clicking on the semi‑transparent overlay should discard changes and close the modal
+  const overlay = document.getElementById('waveformEditOverlay')
+  if (overlay) {
+    overlay.onclick = () => closeWaveformEditModal(false)
+  }
+  // Show modal
+  modal.classList.remove('hidden')
+  // Trigger transition; using requestAnimationFrame ensures that the class
+  // removal is applied before setting opacity/scale.
+  requestAnimationFrame(() => {
+    modal.classList.remove('opacity-0')
+  })
+}
+
+/**
+ * Close the waveform edit modal.  If save is false, revert the
+ * modifications to the stem's volume and endpoint.  After closing,
+ * the editing state is cleared.
+ *
+ * @param {boolean} save Whether to keep the adjustments
+ */
+function closeWaveformEditModal(save) {
+  if (!waveformEditState.isOpen) return
+  const st = waveformEditState.stem
+  if (!save && st) {
+    // Revert to previous values
+    setVolumeUnified(st, waveformEditState.prevVolume)
+    endpointFactors[st] = waveformEditState.prevEndpointFactor
+    adjustEndpoint(st, waveformEditState.prevEndpointFactor)
+    // Ensure the card's waveform reflects reverted volume
+    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+    if (canvas) {
+      canvas.style.transform = `scaleY(${waveformEditState.prevVolume / 100})`
+    }
+  }
+  // Hide modal
+  const modal = document.getElementById('waveformEditModal')
+  if (modal) {
+    // Start fade out
+    modal.classList.add('opacity-0')
+    // After animation, hide completely
+    setTimeout(() => {
+      modal.classList.add('hidden')
+    }, 200)
+  }
+  waveformEditState.isOpen = false
+  waveformEditState.stem = null
+}
+
 /* =========================================================
    Transport
    ========================================================= */
@@ -1361,11 +1492,11 @@ function createBuilderStemCard(st, cfg){
   let volumeHTML = ''
 
   // Waveform display: remove takes/tempo indicators/open button and add left/right arrow zones occupying 25% of the width each.
-  // In addition, include a hidden overlay that contains horizontal dial controls for
-  // adjusting the volume and endpoint of the current take.  Clicking the
-  // waveform toggles this overlay.  When the overlay is visible the arrows
-  // are hidden to prevent take navigation, and vice versa.
-  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to adjust volume or endpoint"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Overlay with horizontal dials for volume and endpoint adjustment -->\n            <div class="absolute inset-0 flex flex-col justify-between p-2 hidden pointer-events-none z-10" data-stem-controls="${st}">\n              <div class="flex items-center gap-2 pointer-events-auto">\n                <span class="text-[10px] w-8 flex-shrink-0">Vol</span>\n                <input type="range" min="0" max="100" value="100" class="sg-slider-range flex-1" data-action="adjust-volume" data-stem="${st}" />\n              </div>\n              <div class="flex items-center gap-2 pointer-events-auto mt-1">\n                <span class="text-[10px] w-8 flex-shrink-0">End</span>\n                <input type="range" min="50" max="150" value="100" class="sg-slider-range flex-1" data-action="adjust-endpoint" data-stem="${st}" />\n              </div>\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each with black background -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="px-2 py-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  // The overlay controls for volume and endpoint have been moved into a modal
+  // rather than being drawn over the waveform.  Therefore, we no longer
+  // include the overlay markup here.  Clicking on the waveform will open
+  // the dedicated edit modal defined in index.html.
+  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Left and right arrow zones: occupy 25% width each with black background -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="p-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="p-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -1411,18 +1542,8 @@ function createBuilderStemCard(st, cfg){
       historySpan.remove()
     }
 
-    // Initialise dial values for the waveform overlay.  Set the volume slider
-    // to the current per‑stem volume (or default) and the endpoint slider
-    // to the stored stretch factor (converted to a percentage).  Also
-    // scale the waveform vertically to reflect the initial volume.
+    // Scale the waveform vertically to reflect the initial volume
     {
-      const controlsEl = card.querySelector(`[data-stem-controls="${st}"]`)
-      if (controlsEl) {
-        const volInput = controlsEl.querySelector('[data-action="adjust-volume"]')
-        if (volInput) volInput.value = String(stemControlValues[st]?.volume ?? 80)
-        const endInput = controlsEl.querySelector('[data-action="adjust-endpoint"]')
-        if (endInput) endInput.value = String((endpointFactors[st] ?? 1) * 100)
-      }
       const canvasEl = card.querySelector('.waveform-canvas')
       if (canvasEl) {
         const volVal = stemControlValues[st]?.volume ?? 80
@@ -2175,15 +2296,17 @@ function setupEventListeners() {
         return
       }
     } else {
-      const cw = e.target.closest('.waveform-canvas');
+      const cw = e.target.closest('.waveform-canvas')
       if (cw?.dataset.stem) {
-        // Toggle waveform editing controls instead of opening the history drawer.
-        toggleWaveformControls(cw.dataset.stem)
+        // Open the waveform edit modal instead of toggling an overlay or
+        // opening the history drawer.  This modal allows the user to
+        // adjust volume and endpoint with full controls and save/discard.
+        openWaveformEditModal(cw.dataset.stem)
         return
       }
-      const takeBtn = e.target.closest('[data-take-index]');
+      const takeBtn = e.target.closest('[data-take-index]')
       if (takeBtn) {
-        const st = takeBtn.getAttribute('data-stem');
+        const st = takeBtn.getAttribute('data-stem')
         const idx = parseInt(takeBtn.getAttribute('data-take-index'), 10)
         selectStemVersion(st, idx)
         updateMixerGlow(st)
@@ -2416,7 +2539,8 @@ function initTechnoGenerator(){
 export async function initApp(){
   console.log('🎬 Initializing App Navigation System…')
   setupNavigationListeners()
-  showPage('login-page')
+  // Start directly on the genre selection page instead of the login page
+  showPage('selection-page')
   window.lucide?.createIcons()
   setupHelpModal()
   console.log('✅ Navigation system ready')
