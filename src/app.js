@@ -830,12 +830,11 @@ function handleVolumeSlider(st, val) {
   const v = Math.max(0, Math.min(100, Math.round(Number(val) || 0)))
   // Update the unified volume state and audio gain
   setVolumeUnified(st, v)
-  // Scale the waveform vertically to reflect volume
-  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
-  if (canvas) {
-    const scale = v / 100
-    canvas.style.transform = `scaleY(${scale})`
-  }
+  // Do not scale the waveform canvas for the instrument card.  The
+  // waveform should remain the same size regardless of the volume so
+  // that the take remains clickable even when the volume is set to
+  // zero.  Visual feedback for volume is provided only in the edit
+  // popup preview.
 }
 
 /**
@@ -905,8 +904,9 @@ function adjustEndpoint(st, factor) {
   if (canvas) {
     const cfg = stemConfigs[st]
     drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
-    const vol = stemControlValues[st]?.volume ?? 80
-    canvas.style.transform = `scaleY(${vol / 100})`
+    // Do not scale the waveform on the card when adjusting the endpoint.
+    // Keeping the canvas at a consistent height ensures the user can
+    // always click the waveform, even if the volume is very low.
   }
   // Restart playback of this stem on the next boundary if currently playing
   if (isPlaying) {
@@ -1010,11 +1010,8 @@ function closeWaveformEditModal(save) {
     setVolumeUnified(st, waveformEditState.prevVolume)
     endpointFactors[st] = waveformEditState.prevEndpointFactor
     adjustEndpoint(st, waveformEditState.prevEndpointFactor)
-    // Ensure the card's waveform reflects reverted volume
-    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
-    if (canvas) {
-      canvas.style.transform = `scaleY(${waveformEditState.prevVolume / 100})`
-    }
+    // The card's waveform height is no longer scaled for volume, so there is
+    // nothing to revert in terms of the canvas transform.
   }
   // Hide modal
   const modal = document.getElementById('waveformEditModal')
@@ -1316,10 +1313,10 @@ async function generateStem(st) {
         const endInput = overlay.querySelector('[data-action="adjust-endpoint"]')
         if (endInput) endInput.value = '100'
       }
-      if (canvas) {
-        const volVal = stemControlValues[st]?.volume ?? 80
-        canvas.style.transform = `scaleY(${volVal / 100})`
-      }
+      // Do not apply any vertical scaling based on volume here.  The
+      // waveform on the card keeps a constant height regardless of
+      // volume so that the take remains clickable even when the
+      // volume is turned down.
     }
     if (statusEl) {
       const base = `Ready (${stemLoop[st].duration.toFixed(3)}s, loop-aligned)`
@@ -1383,6 +1380,28 @@ function downloadStem(st){
   a.href=url; a.download=`techno_${st}_${Date.now()}.wav`
   document.body.appendChild(a); a.click(); document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+/**
+ * Download all active takes for every stem.  When the user clicks the
+ * "download all" button, iterate over all configured stems and, if a
+ * take has been generated and is currently selected (active), create a
+ * WAV file and trigger a download.  This does nothing for stems
+ * without a generated take.  The file names mirror the single
+ * download button naming scheme and include a timestamp.
+ */
+function downloadAllActiveStems(){
+  // Iterate over the keys of stemConfigs to include all stems defined in
+  // the current session.  For each stem, check whether there is an
+  // active history entry (active index >= 0) and that a loop buffer
+  // exists.  If so, download that buffer.
+  Object.keys(stemConfigs).forEach(st => {
+    const hasActive = (stemActiveIndex[st] ?? -1) >= 0
+    const buf = stemLoop[st]
+    if (hasActive && buf) {
+      downloadStem(st)
+    }
+  })
 }
 
 /* =========================================================
@@ -1496,7 +1515,7 @@ function createBuilderStemCard(st, cfg){
   // rather than being drawn over the waveform.  Therefore, we no longer
   // include the overlay markup here.  Clicking on the waveform will open
   // the dedicated edit modal defined in index.html.
-  const waveformHTML = `\n        <div class="mb-2">\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Left and right arrow zones: occupy 25% width each with black background -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="p-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center pointer-events-auto">\n              <button class="p-1 rounded bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  const waveformHTML = `\n        <div class="mb-2">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit label overlay: appears on hover to invite editing.  Pointer events are disabled so clicks pass through to the canvas. -->\n            <div class="absolute inset-0 flex items-center justify-center pointer-events-none text-white/70 text-[10px] uppercase tracking-wide opacity-0 group-hover:opacity-100 transition">\n              edit take\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each.  Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -1542,14 +1561,10 @@ function createBuilderStemCard(st, cfg){
       historySpan.remove()
     }
 
-    // Scale the waveform vertically to reflect the initial volume
-    {
-      const canvasEl = card.querySelector('.waveform-canvas')
-      if (canvasEl) {
-        const volVal = stemControlValues[st]?.volume ?? 80
-        canvasEl.style.transform = `scaleY(${volVal / 100})`
-      }
-    }
+    // Do not scale the waveform vertically based on volume.  The card's
+    // waveform remains at full height so that the user can always click
+    // the take even when its volume is set to zero.  Visual feedback
+    // for volume changes is provided exclusively in the edit modal.
   }
 
   updateHistoryBadge(st)
@@ -1858,6 +1873,10 @@ function setupEventListeners() {
   // Mixer toggle inside player
   const mixerToggleBtn = document.getElementById('mixerToggleBtn')
   if (mixerToggleBtn) mixerToggleBtn.addEventListener('click', () => toggleMixerOpen())
+
+  // Download all button: save all active stems to WAV files
+  const downloadAllBtn = document.getElementById('downloadAllBtn')
+  if (downloadAllBtn) downloadAllBtn.addEventListener('click', () => downloadAllActiveStems())
 
   // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
   const genCancelBtn = document.getElementById('generateSettingsCancelBtn')
@@ -2449,11 +2468,10 @@ function selectStemVersion(st, index){
       const volInput = overlay.querySelector('[data-action="adjust-volume"]')
       if (volInput) volInput.value = String(stemControlValues[st]?.volume ?? 80)
     }
-    const canvasEl = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
-    if (canvasEl) {
-      const volVal = stemControlValues[st]?.volume ?? 80
-      canvasEl.style.transform = `scaleY(${volVal / 100})`
-    }
+    // Do not adjust the card waveform's height based on volume when
+    // selecting a different take.  The height remains constant so
+    // that the waveform stays clickable even if the volume is set to
+    // zero.
   }
   if (isPlaying) restartStemNextBoundary(st)
   updateHistoryIndicator(st)
