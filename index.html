@@ -411,7 +411,15 @@
     </div>
     <!-- Endpoint infinite dial (horizontal wheel) -->
     <div class="mb-4">
-      <div id="waveformEditEndpointDial" class="infinite-dial" data-dial-type="endpoint" data-stem="" data-offset="0"></div>
+      <!-- Wrap the dial in a flex container with minus/plus buttons.  These buttons use the dial-btn
+           class so JS can attach handlers for continuous adjustments.  The data-dial-type attribute
+           indicates whether they control volume or endpoint.  The data-stem attribute will be
+           populated when the modal opens. -->
+      <div class="flex items-center">
+        <span class="dial-btn text-white/60 text-sm sm:text-xl font-extrabold mr-2" data-dial-type="endpoint" data-dial-step="-1" data-stem="">-</span>
+        <div id="waveformEditEndpointDial" class="flex-1 infinite-dial" data-dial-type="endpoint" data-stem="" data-offset="0"></div>
+        <span class="dial-btn text-white/60 text-sm sm:text-xl font-extrabold ml-2" data-dial-type="endpoint" data-dial-step="1" data-stem="">+</span>
+      </div>
     </div>
     <!-- Action buttons -->
     <div class="flex justify-end gap-3 mt-2">
@@ -428,14 +436,14 @@
     <!-- Use a vertical stack on mobile and a horizontal layout on larger screens -->
       <div class="flex flex-col sm:flex-row items-center gap-3 w-full">
         <!-- Top row: Download, session info (mobile) and mixer toggle.  Align items to the left on all screens. -->
-        <div class="flex items-center gap-3 mb-1 sm:mb-0">
+        <div class="flex items-center mb-1 sm:mb-0 justify-between sm:justify-start gap-0 sm:gap-3 w-full">
           <!-- Download All button -->
           <button id="downloadAllBtn" class="px-4 py-2 rounded-full border border-white/20 player-surface text-sm tracking-wide hover:bg-white/10 transition">
             <span class="hidden sm:inline whitespace-nowrap">download all</span>
             <span class="inline sm:hidden whitespace-nowrap">get all</span>
           </button>
           <!-- Session info on mobile: positioned between the two buttons -->
-          <div id="sessionInfoCardMobile" class="flex items-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 sm:hidden whitespace-nowrap">
+          <div id="sessionInfoCardMobile" class="flex flex-1 items-center justify-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 sm:hidden whitespace-nowrap">
             <span id="sessionInfoTextMobile" class="whitespace-nowrap">--</span>
           </div>
           <!-- Mixer toggle inside player -->
@@ -447,7 +455,7 @@
           </button>
         </div>
         <!-- Bottom row: Play button, volume control and session info (desktop).  This appears beneath the top row on mobile and alongside on larger screens. -->
-        <div class="flex items-center gap-3 flex-wrap sm:flex-nowrap w-full sm:w-auto">
+        <div class="flex items-center flex-wrap sm:flex-nowrap w-full sm:w-auto justify-between sm:justify-start gap-0 sm:gap-3">
           <!-- Play/Pause -->
           <button id="playBtn" class="flex items-center justify-center w-24 h-10 rounded-lg hover:bg-white/10 transition"
                   data-action="play-pause" title="Play / Pause">
@@ -458,7 +466,7 @@
             <span class="text-xs text-white/60">Volume</span>
             <input id="masterVolumeSlider" type="range" min="0" max="100" value="90"
                    class="w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
-            <span id="masterVolumeValue" class="text-sm w-12 text-right">90%</span>
+          <span id="masterVolumeValue" class="text-sm w-12 text-right pr-4">90%</span>
           </div>
           <!-- Session info card (desktop) -->
           <div id="sessionInfoCard" class="hidden sm:flex items-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap">
