@@ -1103,6 +1103,15 @@ function openWaveformEditModal(st) {
     endDial.setAttribute('data-offset', '0')
     endDial.style.backgroundPosition = '0px 50%'
   }
+
+  // Also update any plus/minus buttons associated with the endpoint dial so they know
+  // which stem to adjust.  These buttons have the .dial-btn class and data-dial-type="endpoint".
+  {
+    const endpointBtns = modal.querySelectorAll('.dial-btn[data-dial-type="endpoint"]')
+    endpointBtns.forEach(btn => {
+      btn.setAttribute('data-stem', st)
+    })
+  }
   // Draw initial preview waveform and apply volume scaling
   const prevCanvas = document.getElementById('waveformEditCanvas')
   if (prevCanvas) {
@@ -1714,7 +1723,10 @@ function createBuilderStemCard(st, cfg){
   // sign on the right provide a visual cue for volume down/up.  The dial
   // uses data-dial-type="volume" so the generic handlers adjust the
   // volume for this stem when it is dragged or scrolled.
-  const volumeDialHTML = `\n        <div class="my-2 flex items-center">\n          <span class="text-white/60 text-sm font-bold mr-2">-</span>\n          <div class="flex-1 infinite-dial" data-dial-type="volume" data-stem="${st}" data-offset="0"></div>\n          <span class="text-white/60 text-sm font-bold ml-2">+</span>\n        </div>\n      `
+  // Volume dial displays minus and plus buttons flanking an infinite dial.  On mobile the icons retain
+  // their original size, while on desktop they double in size (via sm:text-xl).  The
+  // .dial-btn class allows us to attach pointer handlers for discrete step adjustments.
+  const volumeDialHTML = `\n        <div class="my-2 flex items-center">\n          <span class="dial-btn text-white/60 text-sm sm:text-xl font-extrabold mr-2" data-dial-type="volume" data-dial-step="-1" data-stem="${st}">-</span>\n          <div class="flex-1 infinite-dial" data-dial-type="volume" data-stem="${st}" data-offset="0"></div>\n          <span class="dial-btn text-white/60 text-sm sm:text-xl font-extrabold ml-2" data-dial-type="volume" data-dial-step="1" data-stem="${st}">+</span>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -1927,7 +1939,8 @@ function mixChannelRowHTML(st){
         <span class="text-xs font-medium">${name}</span>
       </div>
       <!-- Volume slider (0–100 mapped to dB) -->
-      <div class="flex items-center gap-2">
+      <!-- The .mix-vol-row class makes it easy to hide this row on mobile via CSS -->
+      <div class="mix-vol-row flex items-center gap-2">
         <span class="text-[10px] w-12">Vol</span>
         <!-- Make the dB slider the same length as the shortest slider (cutoff) -->
         <input type="range" data-mix-slider="volume" data-stem="${st}" min="0" max="100" value="${volVal}"
@@ -1950,7 +1963,8 @@ function mixChannelRowHTML(st){
                class="w-3/5 h-3 bg-white/10 rounded-lg cursor-pointer" style="touch-action:none;">
       </div>
       <!-- Filter cutoff and mode toggle -->
-      <div class="flex items-center gap-2">
+      <!-- The .mix-cutoff-row class makes it easy to hide this row on mobile via CSS -->
+      <div class="mix-cutoff-row flex items-center gap-2">
         <span class="text-[10px] w-12">Cutoff</span>
         <!-- Shorter slider for cutoff so the LP/HP button remains visible -->
         <input type="range" data-mix-filter="cutoff" data-stem="${st}" min="0" max="100" value="${filt.cutoff}"
@@ -2385,6 +2399,86 @@ function setupEventListeners() {
     if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
     activeSlider = null
   })
+
+  /*
+    -------------------------------------------------------------------------
+    Dial plus/minus button handlers
+
+    The volume and endpoint infinite dials are flanked by "−" and "+" buttons.
+    These buttons allow fine adjustments without dragging the dial.  Holding
+    a button continuously steps the value up or down.  Each button has
+    data-dial-type ("volume" or "endpoint"), data-dial-step ("-1" or "1"),
+    and data-stem attributes (assigned dynamically for the endpoint dial).
+    We register a global listener for pointerdown on these buttons to
+    initiate repeated adjustments via setInterval.  Pointerup/cancel
+    listeners stop the interval.
+  */
+  // Track the active timer for continuous dial adjustments
+  let dialButtonTimer = null
+  // Apply a single adjustment according to the button's attributes
+  function applyDialButtonStep(btn) {
+    if (!btn) return
+    const type = btn.getAttribute('data-dial-type')
+    const st   = btn.getAttribute('data-stem')
+    const stepAttr = btn.getAttribute('data-dial-step')
+    const step = stepAttr ? parseFloat(stepAttr) || 0 : 0
+    if (!type || !st || !step) return
+    if (type === 'volume') {
+      // Adjust volume by 1 unit per step
+      const current = stemControlValues[st]?.volume ?? 80
+      let newVal = current + step
+      newVal = Math.max(0, Math.min(100, newVal))
+      setVolumeUnified(st, newVal)
+    } else if (type === 'endpoint') {
+      // Adjust endpoint factor by a small increment (0.05 per step) to allow fine control
+      const current = endpointFactors[st] ?? 1
+      const delta = 0.05 * step
+      let newVal = current + delta
+      newVal = Math.max(0.1, Math.min(3, newVal))
+      endpointFactors[st] = newVal
+      // Persist this endpoint factor on the active take
+      {
+        const idx = stemActiveIndex[st]
+        if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
+          stemHistory[st][idx].endpointFactor = newVal
+        }
+      }
+      // Rebuild loop and update preview
+      adjustEndpoint(st, newVal)
+      const canvas = document.getElementById('waveformEditCanvas')
+      if (canvas) {
+        const cfg = stemConfigs[st]
+        drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+        // Apply current volume scaling to the preview
+        const vval = stemControlValues[st]?.volume ?? 80
+        canvas.style.transform = `scaleY(${vval / 100})`
+      }
+    }
+  }
+  // Start continuous adjustments for a button
+  function startDialButtonInterval(btn) {
+    applyDialButtonStep(btn)
+    dialButtonTimer = setInterval(() => applyDialButtonStep(btn), 150)
+  }
+  // Stop the continuous adjustment
+  function stopDialButtonInterval() {
+    if (dialButtonTimer) {
+      clearInterval(dialButtonTimer)
+      dialButtonTimer = null
+    }
+  }
+  // Global pointerdown to detect clicks on dial buttons
+  document.addEventListener('pointerdown', e => {
+    const btn = e.target.closest('.dial-btn')
+    if (btn) {
+      // Prevent default to avoid text selection
+      e.preventDefault()
+      startDialButtonInterval(btn)
+    }
+  })
+  // Global pointerup/cancel stops continuous adjustments
+  document.addEventListener('pointerup', () => stopDialButtonInterval())
+  document.addEventListener('pointercancel', () => stopDialButtonInterval())
 
   // EQ knob gestures
   let activeEqKnob = null, startX = 0, startY = 0, startVal = 0
