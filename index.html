@@ -443,8 +443,12 @@
             <span class="inline sm:hidden whitespace-nowrap">get all</span>
           </button>
           <!-- Session info on mobile: positioned between the two buttons -->
-          <div id="sessionInfoCardMobile" class="flex flex-1 items-center justify-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 sm:hidden whitespace-nowrap">
-            <span id="sessionInfoTextMobile" class="whitespace-nowrap">--</span>
+          <!-- Wrap the info card in a flex container that grows to fill the available space.  The inner card
+               itself remains auto-sized so that the background border hugs the text. -->
+          <div class="flex flex-1 justify-center sm:flex-none">
+            <div id="sessionInfoCardMobile" class="flex items-center justify-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 sm:hidden whitespace-nowrap">
+              <span id="sessionInfoTextMobile" class="whitespace-nowrap">--</span>
+            </div>
           </div>
           <!-- Mixer toggle inside player -->
           <button id="mixerToggleBtn"
@@ -463,7 +467,7 @@
           </button>
           <!-- Volume slider -->
           <div class="flex items-center gap-2">
-            <span class="text-xs text-white/60">Volume</span>
+            <span class="text-xs text-white/60">Vol</span>
             <input id="masterVolumeSlider" type="range" min="0" max="100" value="90"
                    class="w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
           <span id="masterVolumeValue" class="text-sm w-12 text-right pr-4">90%</span>
