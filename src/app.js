@@ -2002,12 +2002,18 @@ function buildFloatingMixerPanel(){
   STEM_ORDER.forEach(updateMixerGlow)
   STEM_ORDER.forEach(updateCardNumberColor)
 }
+// Store scroll position when locking body scroll
+let scrollPosition = 0
+
 function setMixerOpen(open){
   const tray=document.getElementById('mixerTray')
   if (!tray) return
+  const backdrop = document.getElementById('mixerBackdrop')
+
   // Expand the mixer to full viewport height when open; collapse to zero when closed
   tray.style.maxHeight = open ? '100vh' : '0px'
   tray.dataset.open = open ? '1' : '0'
+
   // Update player toggle button label + ARIA
   const toggleBtn = document.getElementById('mixerToggleBtn')
   if (toggleBtn) {
@@ -2019,15 +2025,30 @@ function setMixerOpen(open){
     toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
   }
 
-  // When the mixer is open on mobile, prevent the page from scrolling or panning.
-  // Disable body overflow so touch interactions are confined to the mixer.
+  // When the mixer is open, prevent the page from scrolling or interacting with background content
   if (open) {
-    // Hide page scrolling and prevent gestures from propagating outside the mixer
-    document.body.style.overflow = 'hidden'
-    // When the mixer is open, disable touch-action on the tray so that horizontal drags are consumed by sliders and not by the page
-    tray.style.touchAction = 'none'
+    // Store current scroll position before locking
+    scrollPosition = window.pageYOffset || document.documentElement.scrollTop
+
+    // Apply scroll lock to body
+    document.body.classList.add('scroll-locked', 'mixer-open')
+    document.body.style.top = `-${scrollPosition}px`
+
+    // Show backdrop overlay
+    if (backdrop) backdrop.classList.add('active')
+
+    // Prevent touch-action on the tray container but allow vertical scrolling inside
+    tray.style.touchAction = 'pan-y'
   } else {
-    document.body.style.overflow = ''
+    // Remove scroll lock and restore scroll position
+    document.body.classList.remove('scroll-locked', 'mixer-open')
+    document.body.style.top = ''
+    window.scrollTo(0, scrollPosition)
+
+    // Hide backdrop overlay
+    if (backdrop) backdrop.classList.remove('active')
+
+    // Reset touch-action
     tray.style.touchAction = ''
   }
 }
@@ -2125,6 +2146,12 @@ function setupEventListeners() {
   // Mixer toggle inside player
   const mixerToggleBtn = document.getElementById('mixerToggleBtn')
   if (mixerToggleBtn) mixerToggleBtn.addEventListener('click', () => toggleMixerOpen())
+
+  // Backdrop click closes mixer
+  const mixerBackdrop = document.getElementById('mixerBackdrop')
+  if (mixerBackdrop) {
+    mixerBackdrop.addEventListener('click', () => setMixerOpen(false))
+  }
 
   // Download all button: save all active stems to WAV files
   const downloadAllBtn = document.getElementById('downloadAllBtn')
@@ -2382,14 +2409,35 @@ function setupEventListeners() {
       activeSlider = t
       updateSliderTooltip(t, e.pageX, e.pageY)
       if (sliderTooltipEl) sliderTooltipEl.style.opacity = '1'
+      // Prevent page scrolling when interacting with sliders
+      e.preventDefault()
     }
   })
   // Update tooltip position/value while dragging
   document.addEventListener('pointermove', e => {
     if (activeSlider) {
       updateSliderTooltip(activeSlider, e.pageX, e.pageY)
+      // Prevent scrolling while actively dragging a slider
+      e.preventDefault()
     }
   })
+
+  // Add touch event handlers for mixer sliders to prevent page scrolling
+  document.addEventListener('touchstart', e => {
+    const t = e.target
+    if (t && (t.matches('input[data-mix-slider="volume"]') || t.matches('input[data-mix-eq]') || t.matches('input[data-mix-filter="cutoff"]'))) {
+      // Don't prevent default here - let the browser handle touch
+      // The touch-action: none CSS will prevent scrolling
+    }
+  }, { passive: true })
+
+  document.addEventListener('touchmove', e => {
+    const t = e.target
+    if (t && (t.matches('input[data-mix-slider="volume"]') || t.matches('input[data-mix-eq]') || t.matches('input[data-mix-filter="cutoff"]'))) {
+      // Slider is being moved, prevent page scroll
+      e.stopPropagation()
+    }
+  }, { passive: false })
   // Hide tooltip on pointerup/cancel
   document.addEventListener('pointerup', () => {
     if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
@@ -2972,14 +3020,14 @@ function setupHelpModal(){
       helpModal.style.opacity = '1'
     })
     // Disable body scroll while help modal is open
-    document.body.style.overflow = 'hidden'
+    document.body.classList.add('scroll-locked')
   }
   function closeModal(){
     helpModal.style.opacity = '0'
     setTimeout(() => {
       helpModal.classList.add('hidden')
       // Restore body scroll when help modal is closed
-      document.body.style.overflow = ''
+      document.body.classList.remove('scroll-locked')
     }, 300)
   }
   if (helpBtn) helpBtn.addEventListener('click', openModal)
@@ -3059,7 +3107,7 @@ function showGenerateSettingsModal(st) {
       cancelBtn.disabled = false
     }
     // Disable body scrolling while any generate settings modal is open
-    document.body.style.overflow = 'hidden'
+    document.body.classList.add('scroll-locked')
   }
 }
 
@@ -3074,7 +3122,7 @@ function hideGenerateSettingsModal() {
   }
   currentGenerateStem = null
   // Re-enable body scrolling when the generate settings modal is hidden
-  document.body.style.overflow = ''
+  document.body.classList.remove('scroll-locked')
 }
 
 // Apply the settings from the modal to the current stem and trigger generation
@@ -3149,7 +3197,7 @@ function showSessionSetupModal() {
     modal.style.opacity = '0'
     setTimeout(() => { modal.classList.add('hidden') }, 300)
     // Restore page scrolling when the session setup modal is closed
-    document.body.style.overflow = ''
+    document.body.classList.remove('scroll-locked')
   })
   // Save button applies settings and locks them
   saveBtn.addEventListener('click', () => {
@@ -3172,7 +3220,7 @@ function showSessionSetupModal() {
     modal.style.opacity = '0'
     setTimeout(() => { modal.classList.add('hidden') }, 300)
     // Restore page scrolling when the session setup modal is closed
-    document.body.style.overflow = ''
+    document.body.classList.remove('scroll-locked')
   })
   // Show the modal
   modal.classList.remove('hidden')
@@ -3180,7 +3228,7 @@ function showSessionSetupModal() {
     modal.style.opacity = '1'
   })
   // Disable page scrolling while the session setup modal is visible
-  document.body.style.overflow = 'hidden'
+  document.body.classList.add('scroll-locked')
 }
 
 // Apply the session settings to the UI: update the bottom controls
@@ -3305,6 +3353,8 @@ function handleDialPointerDown(e) {
 
 function handleDialPointerMove(e) {
   if (!dialState.active) return
+  // Prevent page scrolling during dial interaction
+  e.preventDefault()
   const dx = e.clientX - dialState.startX
   let newVal = dialState.startVal
   if (dialState.type === 'volume') {
@@ -3412,3 +3462,21 @@ function handleDialWheel(e) {
 // Global listeners for dial interactions
 document.addEventListener('pointerdown', handleDialPointerDown)
 document.addEventListener('wheel', handleDialWheel, { passive: false })
+
+// Add touch event handlers for dials to prevent context menu and long-press behaviors
+document.addEventListener('touchstart', e => {
+  const dial = e.target.closest('.infinite-dial')
+  if (dial) {
+    // Prevent context menu on long press for dials
+    e.target.style.webkitTouchCallout = 'none'
+  }
+}, { passive: true })
+
+document.addEventListener('contextmenu', e => {
+  const dial = e.target.closest('.infinite-dial')
+  const dialBtn = e.target.closest('.dial-btn')
+  if (dial || dialBtn) {
+    // Prevent context menu on dials and dial buttons
+    e.preventDefault()
+  }
+}, { passive: false })
