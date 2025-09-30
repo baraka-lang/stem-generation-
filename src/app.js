@@ -1503,7 +1503,7 @@ function createBuilderStemCard(st, cfg){
   // the title and number.  On sm and above, the action buttons appear inline to the right of
   // the title.  We wrap the desktop actions in a hidden container on mobile and include a
   // separate mobile action row using headerActionButtonsMobileHTML.
-  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-1 sm:mb-2">\n          <!-- Name column -->\n          <div class="flex items-center gap-2 w-full sm:w-auto">\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n          </div>\n          <!-- Action icons centered on desktop -->\n          <div class="hidden sm:flex flex-1 items-center justify-center gap-1.5">${customHeaderActionButtonsHTML(st)}</div>\n          <!-- Number indicator -->\n          <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30 ml-auto">${idx}</span>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-1 sm:mb-2">\n          <!-- First row on mobile: name and number indicator are aligned horizontally. -->\n          <div class="flex items-center justify-between w-full sm:w-auto gap-2">\n            <div class="flex items-center gap-2">\n              <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            </div>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n          </div>\n          <!-- Action icons centered on desktop -->\n          <div class="hidden sm:flex flex-1 items-center justify-center gap-1.5">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -1573,6 +1573,13 @@ function createBuilderStemCard(st, cfg){
     // waveform remains at full height so that the user can always click
     // the take even when its volume is set to zero.  Visual feedback
     // for volume changes is provided exclusively in the edit modal.
+
+      // Ensure the number indicator aligns to the right on desktop.  Adding
+      // the sm:ml-auto class via JavaScript avoids complicated string
+      // interpolation in the template.  On mobile, the number stays next
+      // to the name; on larger screens it will push itself to the right.
+      const numEl = card.querySelector(`[data-card-number="${st}"]`)
+      if (numEl) numEl.classList.add('sm:ml-auto')
   }
 
   updateHistoryBadge(st)
@@ -2206,6 +2213,12 @@ function setupEventListeners() {
 
   // Click actions (Generate / Download / Filter mode / options overlay / history / waveform navigation)
   document.addEventListener('click', async e => {
+    // If a dial drag has just completed, ignore the immediate click to avoid unintended muting.
+    if (dialIgnoreClick) {
+      dialIgnoreClick = false
+      return
+    }
+
     // Toggle mute/unmute when clicking on an instrument card outside of interactive elements.
     {
       const cardEl = e.target.closest('[data-stem]')
@@ -2940,6 +2953,13 @@ const dialState = {
   patternOffset: 0
 }
 
+// When a user drags a dial and releases the pointer, a click event
+// often fires on whatever element the pointer is over at the time of
+// release.  This can cause accidental mute/unmute when the dial is
+// positioned over a card.  Use this flag to ignore the next click
+// after finishing a dial drag.
+let dialIgnoreClick = false
+
 function handleDialPointerDown(e) {
   // Only initiate a dial drag on elements with the .infinite-dial class
   const dial = e.target.closest('.infinite-dial')
@@ -2967,6 +2987,8 @@ function handleDialPointerDown(e) {
   window.addEventListener('pointerup', handleDialPointerUp)
   // Prevent text selection and other default behaviours
   e.preventDefault()
+  // Reset the ignore click flag: starting a drag means any upcoming click should be processed normally
+  dialIgnoreClick = false
 }
 
 function handleDialPointerMove(e) {
@@ -3020,6 +3042,10 @@ function handleDialPointerUp() {
   dialState.active = false
   window.removeEventListener('pointermove', handleDialPointerMove)
   window.removeEventListener('pointerup', handleDialPointerUp)
+
+  // After releasing the dial, ignore the next click event to prevent
+  // accidental mute/unmute when the pointer is over a non-interactive area
+  dialIgnoreClick = true
 }
 
 function handleDialWheel(e) {
