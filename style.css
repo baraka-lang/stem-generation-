@@ -27,3 +27,13 @@ button:hover { border-color: #a855f7; }
 .waveform-canvas { image-rendering: -webkit-optimize-contrast; }
 .loading-spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Hide mixer volume and cutoff rows on mobile.  The mixChannelRowHTML function adds
+   .mix-vol-row and .mix-cutoff-row classes to these sections.  On screens below
+   640px (tailwind sm breakpoint), hide these controls to simplify the UI. */
+@media (max-width: 640px) {
+  .mix-vol-row,
+  .mix-cutoff-row {
+    display: none !important;
+  }
+}
