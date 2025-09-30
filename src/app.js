@@ -83,6 +83,12 @@ let stemControlValues = {}
 let stemMuteStates = {}
 let soloedStem = null
 
+// When a stem is soloed, store its previous mute state here so it can be restored
+// when the solo is released.  Keys are stem IDs; values are booleans indicating
+// whether the stem was muted prior to soloing.  Only the current soloed stem
+// will have an entry in this object.
+const prevSoloMuteStates = {}
+
 const stemEqValues = {}
 const stemFilterValues = {}
 
@@ -1497,7 +1503,7 @@ function createBuilderStemCard(st, cfg){
   // the title and number.  On sm and above, the action buttons appear inline to the right of
   // the title.  We wrap the desktop actions in a hidden container on mobile and include a
   // separate mobile action row using headerActionButtonsMobileHTML.
-  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center justify-between mb-1 sm:mb-2">\n          <div class="flex items-center gap-2 w-full">\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30 ml-auto">${idx}</span>\n          </div>\n          <div class="hidden sm:block">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-1 sm:mb-2">\n          <!-- Name column -->\n          <div class="flex items-center gap-2 w-full sm:w-auto">\n            <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n          </div>\n          <!-- Action icons centered on desktop -->\n          <div class="hidden sm:flex flex-1 items-center justify-center gap-1.5">${customHeaderActionButtonsHTML(st)}</div>\n          <!-- Number indicator -->\n          <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30 ml-auto">${idx}</span>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -1513,11 +1519,11 @@ function createBuilderStemCard(st, cfg){
   const waveformHTML = `\n        <div class="mb-2">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit label overlay: appears on hover to invite editing.  Pointer events are disabled so clicks pass through to the canvas. -->\n            <div class="absolute inset-0 flex items-center justify-center pointer-events-none text-white/70 text-[10px] uppercase tracking-wide opacity-0 group-hover:opacity-100 transition">\n              edit take\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each.  Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Volume dial: an infinite horizontal dial positioned between the
-  // waveform and the create button.  It has no label to keep the UI
-  // clean.  The dial uses data-dial-type="volume" so the generic
-  // handlers adjust the volume for this stem when it is dragged or
-  // scrolled.
-  const volumeDialHTML = `\n        <div class="my-2">\n          <div class="infinite-dial" data-dial-type="volume" data-stem="${st}" data-offset="0"></div>\n        </div>\n      `
+  // waveform and the create button.  A minus sign on the left and a plus
+  // sign on the right provide a visual cue for volume down/up.  The dial
+  // uses data-dial-type="volume" so the generic handlers adjust the
+  // volume for this stem when it is dragged or scrolled.
+  const volumeDialHTML = `\n        <div class="my-2 flex items-center">\n          <span class="text-white/60 text-sm mr-1">-</span>\n          <div class="flex-1 infinite-dial" data-dial-type="volume" data-stem="${st}" data-offset="0"></div>\n          <span class="text-white/60 text-sm ml-1">+</span>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -2204,10 +2210,12 @@ function setupEventListeners() {
     {
       const cardEl = e.target.closest('[data-stem]')
       if (cardEl) {
-        // Do not toggle if the click is on a button, a link or other interactive element
-        const isButton = e.target.closest('button, [data-action], input, label, select, textarea')
+        // Do not toggle if the click is on a button, an element with a data-action,
+        // a form element, or an infinite dial.  This prevents the volume and
+        // endpoint dials from muting/unmuting the stem when clicked.
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
         const isWaveform = e.target.closest('.waveform-canvas')
-        if (!isButton && !isWaveform) {
+        if (!isInteractive && !isWaveform) {
           const st = cardEl.getAttribute('data-stem')
           if (st) {
             toggleMute(st)
@@ -2222,7 +2230,7 @@ function setupEventListeners() {
       const mixCardEl = e.target.closest('[data-mix-card]')
       if (mixCardEl) {
         // Prevent toggling if the click is on a slider, button or other interactive element
-        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea')
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
         if (!isInteractive) {
           const st = mixCardEl.getAttribute('data-mix-card')
           if (st) {
@@ -2277,15 +2285,42 @@ function setupEventListeners() {
       if (action === 'close-history' && st) { toggleHistoryDrawer(st, false); return }
       if (action === 'mix-mute' || action === 'mute-stem') { toggleMute(st); return }
       if (action === 'mix-solo' || action === 'solo-stem') {
-        const already = soloedStem === st
-        soloedStem = already ? null : st
+        // Custom solo logic: if the stem is muted, soloing will unmute it and
+        // remember its previous mute state.  When unsoloing, the previous
+        // mute state is restored.  Only one stem can be soloed at a time.
+        if (soloedStem === st) {
+          // Unsolo: restore previous mute state if stored
+          if (prevSoloMuteStates[st] !== undefined) {
+            stemMuteStates[st] = prevSoloMuteStates[st]
+            delete prevSoloMuteStates[st]
+          }
+          soloedStem = null
+        } else {
+          // Solo a new stem: save its current mute state and unmute
+          prevSoloMuteStates[st] = stemMuteStates[st]
+          stemMuteStates[st] = false
+          soloedStem = st
+        }
+        // Apply volume changes across all stems and update UI
         STEM_ORDER.forEach(name => {
-          const n = stemNodes[name]; if (!n?.gain) return
-          const vol = (stemControlValues[name]?.volume ?? 80)/100
-          const target = (soloedStem && name !== soloedStem) ? 0 : (stemMuteStates[name] ? 0 : vol)
-          const p = n.gain.gain, t = audioContext.currentTime
-          p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
-          reflectMuteSoloButtons(name); updateMixerGlow(name)
+          const vol = (stemControlValues[name]?.volume ?? 80) / 100
+          let target
+          if (soloedStem) {
+            // When soloed, mute all other stems.  The soloed stem respects its mute state.
+            target = (name === soloedStem) ? (stemMuteStates[name] ? 0 : vol) : 0
+          } else {
+            // When no stem is soloed, honour each stem's mute state
+            target = stemMuteStates[name] ? 0 : vol
+          }
+          const n = stemNodes[name]
+          if (n?.gain) {
+            const p = n.gain.gain, t = audioContext.currentTime
+            p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
+          }
+          // Reflect button states even for stems without audio nodes so visual feedback
+          // appears on the instrument cards and mixer.
+          reflectMuteSoloButtons(name)
+          updateMixerGlow(name)
         })
         return
       }
@@ -2865,10 +2900,13 @@ function applySessionSettingsToUI() {
   }
   // Update the session info card in the player bar.
   const infoEl = document.getElementById('sessionInfoText')
-  if (infoEl) {
+  const infoElMob = document.getElementById('sessionInfoTextMobile')
+  const infoString = (() => {
     const rootName = getRootText()
-    infoEl.textContent = `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
-  }
+    return `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
+  })()
+  if (infoEl) infoEl.textContent = infoString
+  if (infoElMob) infoElMob.textContent = infoString
   // Refresh tempo indicators on all cards
   STEM_ORDER.forEach(st => {
     updateTempoIndicator(st)
