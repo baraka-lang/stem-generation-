@@ -238,88 +238,150 @@ function drawTinyWaveform(canvas, audioBuffer) {
 /* =========================================================
    Stem configs (9 cards) — order defines 1–9 hotkeys
    ========================================================= */
+// Expanded stem configuration.  Each instrument now exposes five
+// parametric sliders (knobs) that map to musical descriptors such as
+// attack, body, tone and pattern, plus two toggles for auxiliary
+// processing (e.g. distortion, reverb).  Volume remains a
+// non‑generative control and is therefore excluded from the count of
+// five sliders.  These descriptors draw upon common envelope and
+// timbre terminology suggested in ElevenLabs prompting guidelines and
+// the sound‑effect prompt cheatsheet【250912434198074†L742-L756】.
 const stemConfigs = {
-  kick:  {
-    name: 'Kick', color: 'red', basePrompt: 'deep techno kick drum',
+  kick: {
+    name: 'Kick',
+    color: 'red',
+    basePrompt: 'deep techno kick drum',
     controls: {
-      punch: { type:'knob', min:0, max:100, default:70, unit:'%', label:'Punch' },
-      decay: { type:'knob', min:0, max:100, default:40, unit:'%', label:'Decay' },
-      texture:{ type:'toggle', default:false, label:'Distortion' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      punch:   { type: 'knob', min: 0, max: 100, default: 70, unit: '%', label: 'Punch' },
+      attack:  { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Attack' },
+      decay:   { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
+      body:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Body' },
+      tone:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      distortion: { type: 'toggle', default: false, label: 'Distortion' },
+      rumble:     { type: 'toggle', default: false, label: 'Rumble' },
+      volume:  { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
-  perc:  {
-    name: 'Snare', color: 'cyan', basePrompt: 'industrial techno snare',
+  perc: {
+    name: 'Snare',
+    color: 'cyan',
+    basePrompt: 'industrial techno snare',
     controls: {
-      intensity:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Intensity' },
-      variation:{ type:'knob', min:0, max:100, default:40, unit:'%', label:'Variation' },
-      metallic:{ type:'toggle', default:false, label:'Metallic' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      intensity: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Intensity' },
+      variation: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Variation' },
+      snap:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Snap' },
+      decay:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Decay' },
+      tone:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      metallic: { type: 'toggle', default: false, label: 'Metallic' },
+      reverb:   { type: 'toggle', default: false, label: 'Reverb' },
+      volume:   { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
-  bass:  {
-    name: 'Bass', color: 'yellow', basePrompt: 'dark techno bassline',
+  bass: {
+    name: 'Bass',
+    color: 'yellow',
+    basePrompt: 'dark techno bassline',
     controls: {
-      depth:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Depth' },
-      movement:{ type:'knob', min:0, max:100, default:30, unit:'%', label:'Movement' },
-      filter:{ type:'toggle', default:true, label:'Filter Sweep' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      depth:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Depth' },
+      movement:  { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Movement' },
+      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
+      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      sub:       { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Sub' },
+      filter:    { type: 'toggle', default: true, label: 'Filter Sweep' },
+      distortion:{ type: 'toggle', default: false, label: 'Distortion' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
-  lead:  {
-    name: 'Lead', color: 'green', basePrompt: 'hypnotic techno lead synth',
+  lead: {
+    name: 'Lead',
+    color: 'green',
+    basePrompt: 'hypnotic techno lead synth',
     controls: {
-      brightness:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Brightness' },
-      complexity:{ type:'knob', min:0, max:100, default:40, unit:'%', label:'Complexity' },
-      delay:{ type:'toggle', default:false, label:'Delay' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
+      complexity:{ type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Complexity' },
+      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
+      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
+      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
+      delay:     { type: 'toggle', default: false, label: 'Delay' },
+      chorus:    { type: 'toggle', default: false, label: 'Chorus' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
   hihat: {
-    name: 'Hihat', color: 'orange', basePrompt: 'crisp techno closed hi-hat',
+    name: 'Hihat',
+    color: 'orange',
+    basePrompt: 'crisp techno closed hi-hat',
     controls: {
-      brightness:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Brightness' },
-      pattern:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Pattern' },
-      reverb:{ type:'toggle', default:false, label:'Reverb' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      brightness: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Brightness' },
+      pattern:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Pattern' },
+      decay:      { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
+      texture:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      shuffle:    { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Shuffle' },
+      reverb:     { type: 'toggle', default: false, label: 'Reverb' },
+      chorus:     { type: 'toggle', default: false, label: 'Chorus' },
+      volume:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
-  pad:   {
-    name: 'Pad', color: 'purple', basePrompt: 'ambient techno pad',
+  pad: {
+    name: 'Pad',
+    color: 'purple',
+    basePrompt: 'ambient techno pad',
     controls: {
-      warmth:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Warmth' },
-      evolution:{ type:'knob', min:0, max:100, default:30, unit:'%', label:'Evolution' },
-      chorus:{ type:'toggle', default:true, label:'Chorus' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      warmth:    { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Warmth' },
+      evolution: { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Evolution' },
+      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
+      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
+      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      chorus:    { type: 'toggle', default: true, label: 'Chorus' },
+      reverb:    { type: 'toggle', default: false, label: 'Reverb' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
-  arp:   {
-    name: 'Arp', color: 'blue', basePrompt: 'techno synthesizer arpeggio',
+  arp: {
+    name: 'Arp',
+    color: 'blue',
+    basePrompt: 'techno synthesizer arpeggio',
     controls: {
-      rate:{ type:'knob', min:0, max:100, default:55, unit:'%', label:'Rate' },
-      complexity:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Complexity' },
-      gate:{ type:'toggle', default:false, label:'Long Gate' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      rate:      { type: 'knob', min: 0, max: 100, default: 55, unit: '%', label: 'Rate' },
+      complexity:{ type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Complexity' },
+      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
+      swing:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Swing' },
+      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      gate:      { type: 'toggle', default: false, label: 'Long Gate' },
+      delay:     { type: 'toggle', default: false, label: 'Delay' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
-  fx:    {
-    name: 'FX', color: 'pink', basePrompt: 'techno transition effects and atmos',
+  fx: {
+    name: 'FX',
+    color: 'pink',
+    basePrompt: 'techno transition effects and atmos',
     controls: {
-      intensity:{ type:'knob', min:0, max:100, default:65, unit:'%', label:'Intensity' },
-      movement:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Movement' },
-      reverb:{ type:'toggle', default:true, label:'Small Reverb' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
+      intensity: { type: 'knob', min: 0, max: 100, default: 65, unit: '%', label: 'Intensity' },
+      movement:  { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Movement' },
+      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      sweep:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Sweep' },
+      filter:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Filter' },
+      reverb:    { type: 'toggle', default: true, label: 'Reverb' },
+      delay:     { type: 'toggle', default: false, label: 'Delay' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
   },
   perc2: {
-    name: 'Perc', color: 'orange', basePrompt: 'techno top percussion loop',
+    name: 'Perc',
+    color: 'orange',
+    basePrompt: 'techno top percussion loop',
     controls: {
-      density:{ type:'knob', min:0, max:100, default:60, unit:'%', label:'Density' },
-      groove:{ type:'knob', min:0, max:100, default:50, unit:'%', label:'Groove' },
-      metallic:{ type:'toggle', default:false, label:'Metallic' },
-      volume:{ type:'knob', min:0, max:100, default:80, unit:'%', label:'Volume' }
-    }
-  }
+      density:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Density' },
+      groove:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Groove' },
+      variation:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Variation' },
+      tone:        { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      syncopation:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Syncopation' },
+      metallic:    { type: 'toggle', default: false, label: 'Metallic' },
+      reverb:      { type: 'toggle', default: false, label: 'Reverb' },
+      volume:      { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
 }
 // Fixed hotkey order (1–9)
 const STEM_ORDER = ['kick','perc','bass','lead','hihat','pad','arp','fx','perc2']
@@ -375,21 +437,29 @@ function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
   const brightness = scaleKnob(controls.brightness, 'dark', 'balanced', 'crisp', 'bright', 'very bright')
-  const space = controls.reverb ? 'Space: tiny room; decay < 120ms; gate tails before seam.' : 'Space: dry, minimal.'
+  const patternDesc = scaleKnob(controls.pattern, 'straight 1/16 notes', 'slight 1/16 shuffle', 'moderate syncopation', 'complex syncopation', 'polyrhythmic accents')
+  const lengthDesc = scaleKnob(controls.decay, '30–80ms', '60–120ms', '100–180ms', '150–250ms', '250–400ms')
+  const textureDesc = scaleKnob(controls.texture, 'soft', 'dry', 'balanced', 'crisp', 'metallic')
+  const swingDesc = scaleKnob(controls.shuffle, 'straight', 'light shuffle', 'moderate shuffle', 'noticeable shuffle', 'heavy shuffle')
+  const space = controls.reverb ? 'Space: tiny room; decay < 120 ms; gate tails before seam.' : 'Space: dry/minimal.'
+  const chorus = controls.chorus ? 'Chorus: subtle shimmer; avoid smear across seam.' : 'Chorus: off.'
   const common = [
-    'STEM: HIHAT — solo closed hi-hat only.',
-    'Identity: crisp techno closed hi-hat.',
+    'STEM: HIHAT — solo closed hi‑hat only.',
+    'Identity: crisp techno closed hi‑hat.',
     g,
-    'ROLE: isolated closed hat (no open-hat).',
-    'Pattern: strict 1/16 notes; first hit exactly at bar 1 beat 1; consistent every bar.',
-    `Tone: ${brightness}; unpitched; short decay (40–120ms).`,
+    'ROLE: isolated closed hat (no open‑hat).',
+    `Pattern: ${patternDesc}; first hit exactly at bar 1 beat 1; consistent every bar.`,
+    `Length: ${lengthDesc}.`,
+    `Tone: ${brightness}; Texture: ${textureDesc}.`,
+    `Swing: ${swingDesc}.`,
     space,
+    chorus,
     'Exclude: ride, shaker, clap, snare, kick, toms, crashes; no melodic content, sweeps, or FX.',
-    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
   ]
-  if (strictness === 1) common.push('ABSOLUTE: Only closed-hat hits on a straight 1/16 grid; zero swing.')
+  if (strictness === 1) common.push('ABSOLUTE: Only closed‑hat hits on a straight 1/16 grid; zero swing.')
   else if (strictness >= 2) common.push(
-    'MUST: closed-hat hits on each 1/16 step (16 hits/bar).',
+    'MUST: closed‑hat hits on each 1/16 step (16 hits/bar).',
     'MUST: zero reverb tail at seam; gate hits before bar end.',
     'MUST: exclude open hat, ride, shaker, snare, clap, toms, crashes.'
   )
@@ -398,75 +468,100 @@ function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before
 function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before ... */ 
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const varTxt = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
-  const intensity = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
-  const body = controls.metallic ? 'Timbre: slightly metallic; tight transient; short decay (80–180ms).' : 'Timbre: dry, tight; short decay (80–180ms).'
+  const varTxt     = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
+  const intensity  = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
+  const snap       = scaleKnob(controls.snap, 'soft', 'medium‑soft', 'balanced', 'sharp', 'cracking')
+  const tail       = scaleKnob(controls.decay, 'very short', 'short', 'medium', 'long', 'very long')
+  const toneDesc   = scaleKnob(controls.tone, 'thin', 'dry', 'balanced', 'full', 'deep')
+  const timbreTxt  = controls.metallic ? 'Timbre: slightly metallic; tight transient.' : 'Timbre: organic and dry.'
+  const space      = controls.reverb ? 'Space: tiny room; decay < 150 ms; gate tails before seam.' : 'Space: dry; short decay; no tail.'
   const common = [
     'STEM: SNARE — solo snare only.',
-    'Identity: industrial techno snare; drum-machine style; no clap.',
+    'Identity: industrial techno snare; drum‑machine style; no clap.',
     g,
     'ROLE: isolated electronic snare.',
-    'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
-    `Dynamics: ${intensity}; ${body}`,
-    `Variation: ${varTxt} but positions remain 2 & 4.`,
+    'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
+    `Dynamics: ${intensity}; Snap: ${snap}; Tail: ${tail}.`,
+    `Tone: ${toneDesc}. ${timbreTxt}`,
+    `Variation: ${varTxt} but positions remain 2 & 4.`,
+    space,
     'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam.',
-    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
   ]
-  if (strictness === 1) common.push('ABSOLUTE: only beat 2 and beat 4 per bar; no extra hits.', 'ABSOLUTE: no off-grid timing.')
-  else if (strictness >= 2) common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.')
+  if (strictness === 1) common.push('ABSOLUTE: only beat 2 and beat 4 per bar; no extra hits.', 'ABSOLUTE: no off‑grid timing.')
+  else if (strictness >= 2) common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.')
   return common.join(' ')
 }
 function mapArpRate(v){ const x=Number(v??55); return x<=33?'1/8 notes': x<=66?'1/16 notes':'1/32 notes' }
 function buildArpPrompt(controls, master){ /* ... same as before ... */ 
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const rate = mapArpRate(controls.rate)
-  const complexity = scaleKnob(controls.complexity, 'simple','moderate','interesting','intricate','ornate')
-  const gate = controls.gate ? 'long-ish gate (80–160ms)' : 'short gate (30–80ms)'
+  const rate       = mapArpRate(controls.rate)
+  const complexity = scaleKnob(controls.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')
+  const rangeDesc  = scaleKnob(controls.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')
+  const swingDesc  = scaleKnob(controls.swing, 'straight', 'slight swing', 'moderate swing', 'pronounced swing', 'syncopated')
+  const toneDesc   = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'sparkling')
+  const gate       = controls.gate ? 'long‑ish gate (80–160 ms)' : 'short gate (30–80 ms)'
+  const delay      = controls.delay ? 'Delay: subtle tempo‑synced echoes; cut at bar end.' : 'Delay: off.'
   return [
     'STEM: ARPEGGIATOR — solo synth arpeggio only.',
     `Identity: ${stemConfigs.arp.basePrompt}.`,
     g,
-    'ROLE: isolated arp; strictly diatonic in ${root} ${mode}; no chords.',
-    `Pattern: ${rate}; fully quantized; phrase length must evenly divide ${bars} bars.`,
+    `ROLE: isolated arp; strictly diatonic in ${root} ${mode}; no chords.`,
+    `Pattern: ${rate}; ${swingDesc}; fully quantized; phrase length must evenly divide ${bars} bars.`,
     `Complexity: ${complexity}; consistent motif and octave moves.`,
-    `Envelope: ${gate}; no delay/reverb across seam.`,
+    `Range: ${rangeDesc}; Tone: ${toneDesc}.`,
+    `Envelope: ${gate}.`,
+    delay,
     'Exclude: drums/percussion/bass/pads/leads/vocals.',
-    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
   ].join(' ')
 }
 function buildFXPrompt(controls, master){ /* ... same as before ... */ 
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const intensity = scaleKnob(controls.intensity, 'subtle','moderate','medium','strong','intense')
-  const movement  = scaleKnob(controls.movement, 'static','gentle motion','evolving','animated','dynamic')
-  const space = controls.reverb ? 'Space: tiny room; decay ≤ 150ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
+  const intensity   = scaleKnob(controls.intensity, 'subtle', 'moderate', 'medium', 'strong', 'intense')
+  const movement    = scaleKnob(controls.movement, 'static', 'gentle motion', 'evolving', 'animated', 'dynamic')
+  const textureDesc = scaleKnob(controls.texture, 'smooth', 'grainy', 'noisy', 'metallic', 'chaotic')
+  const sweepDesc   = scaleKnob(controls.sweep, 'short sweep', 'moderate sweep', 'long sweep', 'full‑bar sweep', 'multi‑bar sweep')
+  const filterDesc  = scaleKnob(controls.filter, 'low emphasis', 'mid emphasis', 'balanced', 'high emphasis', 'resonant high‑pass')
+  const space       = controls.reverb ? 'Space: tiny room; decay ≤ 150 ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
+  const delayTxt    = controls.delay ? 'Delay: subtle echo; decay under bar.' : 'Delay: off.'
   return [
     'STEM: FX — solo techno transition effects & atmos only.',
     `Identity: ${stemConfigs.fx.basePrompt}.`,
     g,
-    'ROLE: bar-internal whooshes/sweeps/noise beds that RESET each bar.',
-    `Intensity: ${intensity}. Movement: ${movement}.`,
+    'ROLE: bar‑internal whooshes/sweeps/noise beds that RESET each bar.',
+    `Intensity: ${intensity}. Movement: ${movement}. Texture: ${textureDesc}. Sweep: ${sweepDesc}. Filter: ${filterDesc}.`,
     space,
+    delayTxt,
     'Exclude: pitched melodies/drums/percussion; avoid risers/falls that exceed a single bar.',
-    'Deliver a bar-perfect seamless loop; zero tail beyond the bar.'
+    'Deliver a bar‑perfect seamless loop; zero tail beyond the bar.'
   ].join(' ')
 }
 function buildPercLoopPrompt(controls, master){ /* ... same as before ... */ 
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const density = scaleKnob(controls.density, 'sparse','light','medium','busy','dense')
-  const metallic = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
-  const groove = scaleKnob(controls.groove, 'straight','straight with mild syncopation','syncopated but quantized','complex yet quantized','complex yet quantized')
+  const density     = scaleKnob(controls.density, 'sparse', 'light', 'medium', 'busy', 'dense')
+  const groove      = scaleKnob(controls.groove, 'straight', 'straight with mild syncopation', 'syncopated but quantized', 'complex yet quantized', 'complex yet quantized')
+  const variation   = scaleKnob(controls.variation, 'repetitive', 'subtle', 'moderate', 'intricate', 'wild')
+  const toneDesc    = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'metallic')
+  const syncDesc    = scaleKnob(controls.syncopation, 'straight', 'mild', 'groovy', 'complex', 'polyrhythmic')
+  const metallic    = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
+  const space       = controls.reverb ? 'Space: tiny room; gate before seam.' : 'Space: dry; no reverb.'
   return [
     'STEM: PERCUSSION — solo top percussion only (shakers/blocks/taps); not snare/hat/kick.',
     `Identity: ${stemConfigs.perc2.basePrompt}.`,
     g,
-    `ROLE: quantized on-grid accents; ${groove}; zero swing.`,
+    `ROLE: quantized on‑grid accents; ${groove}; zero swing.`,
     `Density: ${density}; keep consistent across bars.`,
+    `Variation: ${variation}.`,
+    `Tone: ${toneDesc}.`,
+    `Syncopation: ${syncDesc}.`,
     `Timbre: ${metallic}; short releases; zero tails at seam.`,
+    space,
     'Exclude: tonal hits/kick/snare/clap/hat/ride/toms/crashes.',
-    'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
   ].join(' ')
 }
 function roleDirectives(st, c){ /* ... same as before ... */ 
@@ -475,9 +570,15 @@ function roleDirectives(st, c){ /* ... same as before ... */
       'ROLE: single isolated kick only',
       'Pattern: four-on-the-floor; hits on beats 1–4 every bar',
       'Pitch: unpitched; no tonal sub note; no toms',
+      // Envelope and tone descriptors
+      `Attack: ${scaleKnob(c.attack, 'slow','soft','balanced','sharp','instant')}`,
       `Decay: ${scaleKnob(c.decay, 'very short','short','medium','long','very long')}`,
       `Punch: ${scaleKnob(c.punch, 'soft','firm','punchy','very punchy','aggressive')}`,
-      c.texture ? 'Saturation: light; no tail' : 'Saturation: minimal; clean transient',
+      `Body: ${scaleKnob(c.body, 'thin','firm','full','thick','boomy')}`,
+      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','very bright')}`,
+      // Toggle descriptors
+      c.distortion ? 'Distortion: moderate saturation; no excessive clipping' : 'Distortion: none; clean transient',
+      c.rumble ? 'Rumble: deep sub tail under 50 Hz; subtle' : 'Rumble: none',
       'Exclude: fills/intro flam/crashes'
     ].join('. ')
     case 'bass': return [
@@ -485,25 +586,37 @@ function roleDirectives(st, c){ /* ... same as before ... */
       'Harmony: strictly diatonic in project key (no chromatic notes)',
       'Pitch: root + fifth primarily; occasional octave',
       `Movement: ${scaleKnob(c.movement, 'static','simple','groovy','animated','busy')} repeating per bar`,
-      `Depth: ${scaleKnob(c.depth, 'light','medium','deep','deeper','subby')} low-end; controlled release`,
+      `Depth: ${scaleKnob(c.depth, 'light','medium','deep','deeper','subby')} low‑end; controlled release`,
+      `Attack: ${scaleKnob(c.attack, 'soft','moderate','distinct','sharp','percussive')}`,
+      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','acidic')}`,
+      `Sub: ${scaleKnob(c.sub, 'minimal','moderate','full','deep','subsonic')} content`,
       c.filter ? 'Filter: subtle motion within bar; reset each bar' : 'Filter: stable',
-      'Start note on beat 1; no slides across seam'
+      c.distortion ? 'Distortion: mild analog saturation; no heavy clipping' : 'Distortion: none',
+      'Start note on beat 1; no slides across seam'
     ].join('. ')
     case 'lead': return [
       'ROLE: single isolated lead synth only',
       'Melody: strictly diatonic; avoid chromatic passing tones',
       `Phrase length evenly divides ${Math.max(1, stemControlValues?.master?.bars || DEFAULT_BARS)} bar(s)`,
       `Complexity: ${scaleKnob(c.complexity, 'simple','moderate','interesting','intricate','ornate')} (quantized)`,
-      `Brightness: ${scaleKnob(c.brightness,'dark','mellow','balanced','bright','very bright')}`,
-      c.delay ? 'Delay: minimal tempo-synced; cut at bar end' : 'Delay: off',
+      `Brightness: ${scaleKnob(c.brightness, 'dark','mellow','balanced','bright','very bright')}`,
+      `Motion: ${scaleKnob(c.motion, 'static','gentle','flowing','evolving','chaotic')}`,
+      `Attack: ${scaleKnob(c.attack, 'soft','moderate','plucky','sharp','percussive')}`,
+      `Range: ${scaleKnob(c.range, 'narrow','one octave','two octaves','three octaves','wide')}`,
+      c.delay ? 'Delay: minimal tempo‑synced; cut at bar end' : 'Delay: off',
+      c.chorus ? 'Chorus: subtle stereo spread; no detune at seam' : 'Chorus: off',
       'No bends/slides across loop seam'
     ].join('. ')
     case 'pad': return [
       'ROLE: single isolated pad only',
       'Chord: sustained diatonic chord(s); no modulation',
-      `Evolution: ${scaleKnob(c.evolution,'static','gentle','subtle motion','evolving','animated')} but reset every bar`,
-      `Warmth: ${scaleKnob(c.warmth,'cool','neutral','warm','lush','very lush')}`,
+      `Evolution: ${scaleKnob(c.evolution, 'static','gentle','subtle motion','evolving','animated')} but reset every bar`,
+      `Warmth: ${scaleKnob(c.warmth, 'cool','neutral','warm','lush','very lush')}`,
+      `Brightness: ${scaleKnob(c.brightness, 'dark','warm','balanced','bright','shimmering')}`,
+      `Motion: ${scaleKnob(c.motion, 'static','gentle','animated','evolving','shifting')}`,
+      `Texture: ${scaleKnob(c.texture, 'smooth','airy','lush','grainy','noisy')}`,
       c.chorus ? 'Chorus: subtle; no stereo smear at seam' : 'Chorus: off',
+      c.reverb ? 'Reverb: soft ambient; decay under bar; gate at seam' : 'Reverb: off',
       'No long reverb tail; envelope ends before bar boundary'
     ].join('. ')
     default: return 'ROLE: single isolated instrument only'
@@ -879,27 +992,68 @@ function adjustEndpoint(st, factor) {
   const raw = stemRaw[st] || stemLoop[st]
   if (!raw) return
   const existing = stemLoop[st]
-  // Use the existing loop length in frames if available; otherwise fall back to the raw length
+  // Preserve the current loop length if we have one; otherwise use the raw length
   const length = existing ? existing.length : raw.length
   const sr = raw.sampleRate
   const channels = raw.numberOfChannels
   const out = new AudioBuffer({ length, numberOfChannels: channels, sampleRate: sr })
+  /**
+   * Perform a pitch‑preserving time stretch on a single channel using a
+   * simple overlap‑add (OLA) algorithm.  We use a Hann window and
+   * 50% overlap to ensure reasonably smooth reconstruction.  The
+   * hop sizes in the input and output domains are related by the
+   * stretch factor.  When factor > 1, the audio is compressed (we
+   * move further ahead in the input for each output hop).  When
+   * factor < 1, the audio is stretched (we move more slowly through
+   * the input).  The input is treated as circular so that the loop
+   * content wraps naturally.  See: standard OLA/WSOLA techniques in
+   * time‑stretch literature【250912434198074†L742-L756】.
+   *
+   * @param {Float32Array} src The source channel data
+   * @param {number} outLen The desired output length in samples
+   * @param {number} factor The stretch factor (>0)
+   */
+  function timeStretchOLA(src, outLen, factor) {
+    const srcLen = src.length
+    const frameSize = 1024
+    const hopOut = frameSize / 2 // 50% overlap
+    const hopIn = hopOut * factor
+    // Precompute Hann window for smooth crossfades.  With 50% overlap
+    // the sum of overlapping Hann windows is unity, so no explicit
+    // normalisation is required.
+    const window = new Float32Array(frameSize)
+    for (let i = 0; i < frameSize; i++) {
+      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (frameSize - 1)))
+    }
+    const outBuf = new Float32Array(outLen)
+    let posSrc = 0
+    let posDst = 0
+    // Continue until we have filled the output buffer.  We allow the
+    // last window to wrap around at the end of the buffer.
+    while (posDst < outLen + frameSize) {
+      const baseDst = Math.floor(posDst)
+      // For each sample in the frame, add the windowed source sample to the output.
+      for (let i = 0; i < frameSize; i++) {
+        const outIdx = baseDst + i
+        if (outIdx >= outLen) break
+        let srcIdx = Math.floor(posSrc + i)
+        // Wrap around the source index
+        srcIdx = ((srcIdx % srcLen) + srcLen) % srcLen
+        outBuf[outIdx] += src[srcIdx] * window[i]
+      }
+      posSrc += hopIn
+      posDst += hopOut
+    }
+    return outBuf
+  }
   for (let c = 0; c < channels; c++) {
     const src = raw.getChannelData(c)
+    const stretched = timeStretchOLA(src, length, factor)
     const dst = out.getChannelData(c)
-    const srcLen = src.length
-    for (let i = 0; i < length; i++) {
-      const idx = i * factor
-      const floor = Math.floor(idx)
-      const frac = idx - floor
-      const i0 = ((floor % srcLen) + srcLen) % srcLen
-      const i1 = (i0 + 1) % srcLen
-      const v0 = src[i0]
-      const v1 = src[i1]
-      dst[i] = v0 + (v1 - v0) * frac
-    }
+    // Copy stretched data into the AudioBuffer channel
+    dst.set(stretched)
   }
-  // Apply edge ramps and seam crossfade to smooth the loop
+  // Apply longer edge ramps and crossfade for a smooth loop
   applyEdgeRamps(out, EDGE_RAMP_MS)
   applySeamCrossfade(out, LOOP_XFADE_MS)
   // Update loop buffer and duration
