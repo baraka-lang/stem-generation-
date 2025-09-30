@@ -138,3 +138,10 @@ button[aria-disabled="true"] i {
   opacity: 0.3 !important;
   cursor: default !important;
 }
+
+/* Hide cutoff control in mixer on mobile screens */
+@media (max-width: 640px) {
+  .mix-cutoff-row {
+    display: none !important;
+  }
+}
