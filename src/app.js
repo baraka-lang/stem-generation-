@@ -931,39 +931,17 @@ function openWaveformEditModal(st) {
   // Store current values so we can revert on discard
   waveformEditState.prevVolume = stemControlValues[st]?.volume ?? 80
   waveformEditState.prevEndpointFactor = endpointFactors[st] ?? 1
-  // Set up sliders with current values
-  const volInput = document.getElementById('waveformEditVolume')
-  const endInput = document.getElementById('waveformEditEndpoint')
-  if (volInput) {
-    volInput.value = String(waveformEditState.prevVolume)
-    // Attach input handler: update volume and preview scaling
-    volInput.oninput = e => {
-      const v = e.target.value
-      handleVolumeSlider(st, v)
-      // Update preview scaling
-      const canvas = document.getElementById('waveformEditCanvas')
-      if (canvas) {
-        const scale = Math.max(0, Math.min(100, Number(v))) / 100
-        canvas.style.transform = `scaleY(${scale})`
-      }
-    }
-  }
-  if (endInput) {
-    endInput.value = String((waveformEditState.prevEndpointFactor || 1) * 100)
-    // Attach input handler: update endpoint and redraw preview
-    endInput.oninput = e => {
-      const v = e.target.value
-      handleEndpointSlider(st, v)
-      // Redraw preview waveform using updated loop
-      const canvas = document.getElementById('waveformEditCanvas')
-      if (canvas) {
-        const cfg = stemConfigs[st]
-        drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
-        // Also apply current volume scaling
-        const volVal = stemControlValues[st]?.volume ?? 80
-        canvas.style.transform = `scaleY(${volVal / 100})`
-      }
-    }
+  // Configure the new endpoint dial for this stem.  The dial uses
+  // pointer and wheel events to adjust the endpoint factor.  Set the
+  // data-stem attribute so generic dial handlers know which stem to
+  // modify.  Reset its pattern offset to zero for a consistent
+  // starting position when opening the modal.
+  const endDial = document.getElementById('waveformEditEndpointDial')
+  if (endDial) {
+    endDial.setAttribute('data-stem', st)
+    endDial.setAttribute('data-dial-type', 'endpoint')
+    endDial.setAttribute('data-offset', '0')
+    endDial.style.backgroundPosition = '0px 50%'
   }
   // Draw initial preview waveform and apply volume scaling
   const prevCanvas = document.getElementById('waveformEditCanvas')
@@ -971,6 +949,23 @@ function openWaveformEditModal(st) {
     const cfg = stemConfigs[st]
     drawWaveform(prevCanvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
     prevCanvas.style.transform = `scaleY(${(waveformEditState.prevVolume || 80) / 100})`
+  }
+
+  // Draw bar grid lines on the preview.  The grid divides the width
+  // into equal segments corresponding to the number of bars in the loop.
+  const gridContainer = document.getElementById('waveformEditGrid')
+  if (gridContainer) {
+    gridContainer.innerHTML = ''
+    // Determine the number of bars from the master settings (default to 4)
+    const bars = stemControlValues.master?.bars || DEFAULT_BARS
+    for (let i = 0; i < bars; i++) {
+      const seg = document.createElement('div')
+      seg.style.flex = '1'
+      if (i > 0) {
+        seg.style.borderLeft = '1px solid rgba(255,255,255,0.15)'
+      }
+      gridContainer.appendChild(seg)
+    }
   }
   // Set up action buttons
   const saveBtn = document.getElementById('editSaveBtn')
@@ -1517,6 +1512,13 @@ function createBuilderStemCard(st, cfg){
   // the dedicated edit modal defined in index.html.
   const waveformHTML = `\n        <div class="mb-2">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit label overlay: appears on hover to invite editing.  Pointer events are disabled so clicks pass through to the canvas. -->\n            <div class="absolute inset-0 flex items-center justify-center pointer-events-none text-white/70 text-[10px] uppercase tracking-wide opacity-0 group-hover:opacity-100 transition">\n              edit take\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each.  Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
+  // Volume dial: an infinite horizontal dial positioned between the
+  // waveform and the create button.  It has no label to keep the UI
+  // clean.  The dial uses data-dial-type="volume" so the generic
+  // handlers adjust the volume for this stem when it is dragged or
+  // scrolled.
+  const volumeDialHTML = `\n        <div class="my-2">\n          <div class="infinite-dial" data-dial-type="volume" data-stem="${st}" data-offset="0"></div>\n        </div>\n      `
+
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
   let togglesMenuHTML = ''
@@ -1531,7 +1533,7 @@ function createBuilderStemCard(st, cfg){
   // a modal for configuring generation settings when clicked.
   const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
   // Use our custom create button HTML instead of the default generate button.  Update status line text accordingly.
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + volumeDialHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
   // The span within the create button becomes the label, and the icon gets a special class so
   // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
@@ -1960,6 +1962,10 @@ function setupEventListeners() {
       if (tempoValueEl) tempoValueEl.textContent = String(value)
     })
   }
+
+  // Infinite dial: pointerdown event handled globally so that new dials
+  // created dynamically do not require explicit listener registration.
+  // See the dial handlers defined at the bottom of the script.
 
   // Bars
   const barsSelector = document.getElementById('barsSelector')
@@ -2868,3 +2874,157 @@ function applySessionSettingsToUI() {
     updateTempoIndicator(st)
   })
 }
+
+/* =========================================================
+   Infinite Dial Controls
+
+   These handlers implement an infinite horizontal dial for adjusting
+   per-stem parameters such as volume on the card and endpoint
+   stretch in the edit modal.  The dial responds to pointer drags
+   and mouse wheel events.  It displays a repeating tick pattern
+   that scrolls horizontally when the dial is moved, and a central
+   marker to indicate the neutral position.  When the dial is
+   adjusted, the corresponding stem control is updated immediately
+   in the audio engine and any relevant UI.
+========================================================= */
+
+// Internal state for the currently active dial interaction.  When
+// active is true, the pointermove handler computes deltas from the
+// stored start position and value.  patternOffset tracks the
+// horizontal shift of the dial's background pattern in pixels.
+const dialState = {
+  active: false,
+  dial: null,
+  type: '',
+  stem: '',
+  startX: 0,
+  startVal: 0,
+  patternOffset: 0
+}
+
+function handleDialPointerDown(e) {
+  // Only initiate a dial drag on elements with the .infinite-dial class
+  const dial = e.target.closest('.infinite-dial')
+  if (!dial) return
+  const type = dial.getAttribute('data-dial-type')
+  const st   = dial.getAttribute('data-stem')
+  if (!type || !st) return
+  dialState.active = true
+  dialState.dial = dial
+  dialState.type = type
+  dialState.stem = st
+  dialState.startX = e.clientX
+  if (type === 'volume') {
+    dialState.startVal = stemControlValues[st]?.volume ?? 80
+  } else if (type === 'endpoint') {
+    dialState.startVal = endpointFactors[st] ?? 1
+  } else {
+    dialState.startVal = 0
+  }
+  // patternOffset is stored on the dial element; parse or fallback to 0
+  const offAttr = dial.getAttribute('data-offset')
+  dialState.patternOffset = offAttr ? parseFloat(offAttr) || 0 : 0
+  // Capture pointer move/up on the window to continue tracking outside the dial
+  window.addEventListener('pointermove', handleDialPointerMove)
+  window.addEventListener('pointerup', handleDialPointerUp)
+  // Prevent text selection and other default behaviours
+  e.preventDefault()
+}
+
+function handleDialPointerMove(e) {
+  if (!dialState.active) return
+  const dx = e.clientX - dialState.startX
+  let newVal = dialState.startVal
+  if (dialState.type === 'volume') {
+    // Sensitivity factor for volume adjustments.  Smaller values
+    // produce finer control; larger values accelerate the change.
+    const sensitivity = 0.2
+    newVal = dialState.startVal + dx * sensitivity
+    // Clamp between 0 and 100
+    newVal = Math.max(0, Math.min(100, newVal))
+    setVolumeUnified(dialState.stem, newVal)
+  } else if (dialState.type === 'endpoint') {
+    // Finer sensitivity for endpoint adjustments.  A small delta
+    // produces a small change to the stretch factor.
+    const sensitivity = 0.005
+    newVal = dialState.startVal + dx * sensitivity
+    newVal = Math.max(0.1, Math.min(3, newVal))
+    endpointFactors[dialState.stem] = newVal
+    // Rebuild loop for the new factor and redraw the card waveform
+    adjustEndpoint(dialState.stem, newVal)
+    // Update preview waveform in the edit modal
+    const canvas = document.getElementById('waveformEditCanvas')
+    if (canvas) {
+      const cfg = stemConfigs[dialState.stem]
+      drawWaveform(canvas, stemLoop[dialState.stem], `rgb(${getColorRGB(cfg.color)})`)
+      // Apply the current volume scaling to the preview canvas only
+      const volVal = stemControlValues[dialState.stem]?.volume ?? 80
+      canvas.style.transform = `scaleY(${volVal / 100})`
+    }
+  }
+  // Update pattern offset for the tick marks.  To keep the offset
+  // bounded, wrap it by the pattern width (8 px).  This ensures the
+  // background-position stays within a manageable range while still
+  // conveying continuous movement.
+  const patternWidth = 8
+  const newOffset = dialState.patternOffset + dx
+  dialState.patternOffset = ((newOffset % patternWidth) + patternWidth) % patternWidth
+  // Set the dial background position and persist offset on the element
+  dialState.dial.style.backgroundPosition = `${dialState.patternOffset}px 50%`
+  dialState.dial.setAttribute('data-offset', String(dialState.patternOffset))
+  // Prepare for next move: reset the starting point and value
+  dialState.startX = e.clientX
+  dialState.startVal = newVal
+}
+
+function handleDialPointerUp() {
+  if (!dialState.active) return
+  dialState.active = false
+  window.removeEventListener('pointermove', handleDialPointerMove)
+  window.removeEventListener('pointerup', handleDialPointerUp)
+}
+
+function handleDialWheel(e) {
+  // Respond to wheel events on a dial to allow quicker adjustments.
+  const dial = e.target.closest('.infinite-dial')
+  if (!dial) return
+  const type = dial.getAttribute('data-dial-type')
+  const st   = dial.getAttribute('data-stem')
+  if (!type || !st) return
+  let currentVal, newVal
+  if (type === 'volume') {
+    currentVal = stemControlValues[st]?.volume ?? 80
+    // Each wheel step adjusts the volume by a small amount; deltaY is inverted
+    newVal = currentVal - e.deltaY * 0.2
+    newVal = Math.max(0, Math.min(100, newVal))
+    setVolumeUnified(st, newVal)
+  } else if (type === 'endpoint') {
+    currentVal = endpointFactors[st] ?? 1
+    newVal = currentVal - e.deltaY * 0.01
+    newVal = Math.max(0.1, Math.min(3, newVal))
+    endpointFactors[st] = newVal
+    adjustEndpoint(st, newVal)
+    // Update preview waveform if visible
+    const canvas = document.getElementById('waveformEditCanvas')
+    if (canvas) {
+      const cfg = stemConfigs[st]
+      drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+      const volVal = stemControlValues[st]?.volume ?? 80
+      canvas.style.transform = `scaleY(${volVal / 100})`
+    }
+  }
+  // Advance the tick pattern offset so the dial visually moves with the scroll
+  const offAttr = dial.getAttribute('data-offset')
+  let off = offAttr ? parseFloat(offAttr) || 0 : 0
+  off += -e.deltaY
+  const patternWidth = 8
+  off = ((off % patternWidth) + patternWidth) % patternWidth
+  dial.style.backgroundPosition = `${off}px 50%`
+  dial.setAttribute('data-offset', String(off))
+  // Prevent the page from scrolling when interacting with the dial
+  e.preventDefault()
+}
+
+// Global listeners for dial interactions
+document.addEventListener('pointerdown', handleDialPointerDown)
+document.addEventListener('wheel', handleDialWheel, { passive: false })
