@@ -101,9 +101,13 @@ function roleDirectives(st: string, c: Record<string, any>): string {
         'ROLE: single isolated kick only',
         'Pattern: four-on-the-floor; hits on beats 1–4 every bar',
         'Pitch: unpitched; no tonal sub note; no toms',
+        `Attack: ${scaleKnob(c.attack, 'slow', 'soft', 'balanced', 'sharp', 'instant')}`,
         `Decay: ${scaleKnob(c.decay, 'very short', 'short', 'medium', 'long', 'very long')}`,
         `Punch: ${scaleKnob(c.punch, 'soft', 'firm', 'punchy', 'very punchy', 'aggressive')}`,
-        c.texture ? 'Saturation: light; no tail' : 'Saturation: minimal; clean transient',
+        `Body: ${scaleKnob(c.body, 'thin', 'firm', 'full', 'thick', 'boomy')}`,
+        `Tone: ${scaleKnob(c.tone, 'dark', 'warm', 'balanced', 'bright', 'very bright')}`,
+        c.distortion ? 'Distortion: moderate saturation; no excessive clipping' : 'Distortion: none; clean transient',
+        c.rumble ? 'Rumble: deep sub tail under 50 Hz; subtle' : 'Rumble: none',
         'Exclude: fills/intro flam/crashes',
       ].join('. ')
     case 'bass':
@@ -112,9 +116,13 @@ function roleDirectives(st: string, c: Record<string, any>): string {
         'Harmony: strictly diatonic in project key (no chromatic notes)',
         'Pitch: root + fifth primarily; occasional octave',
         `Movement: ${scaleKnob(c.movement, 'static', 'simple', 'groovy', 'animated', 'busy')} repeating per bar`,
-        `Depth: ${scaleKnob(c.depth, 'light', 'medium', 'deep', 'deeper', 'subby')} low-end; controlled release`,
+        `Depth: ${scaleKnob(c.depth, 'light', 'medium', 'deep', 'deeper', 'subby')} low‑end; controlled release`,
+        `Attack: ${scaleKnob(c.attack, 'soft', 'moderate', 'distinct', 'sharp', 'percussive')}`,
+        `Tone: ${scaleKnob(c.tone, 'dark', 'warm', 'balanced', 'bright', 'acidic')}`,
+        `Sub: ${scaleKnob(c.sub, 'minimal', 'moderate', 'full', 'deep', 'subsonic')} content`,
         c.filter ? 'Filter: subtle motion within bar; reset each bar' : 'Filter: stable',
-        'Start note on beat 1; no slides across seam',
+        c.distortion ? 'Distortion: mild analog saturation; no heavy clipping' : 'Distortion: none',
+        'Start note on beat 1; no slides across seam',
       ].join('. ')
     case 'lead':
       return [
@@ -123,7 +131,11 @@ function roleDirectives(st: string, c: Record<string, any>): string {
         `Phrase length evenly divides ${Math.max(1, c.bars || 4)} bar(s)`,
         `Complexity: ${scaleKnob(c.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')} (quantized)`,
         `Brightness: ${scaleKnob(c.brightness, 'dark', 'mellow', 'balanced', 'bright', 'very bright')}`,
-        c.delay ? 'Delay: minimal tempo-synced; cut at bar end' : 'Delay: off',
+        `Motion: ${scaleKnob(c.motion, 'static', 'gentle', 'flowing', 'evolving', 'chaotic')}`,
+        `Attack: ${scaleKnob(c.attack, 'soft', 'moderate', 'plucky', 'sharp', 'percussive')}`,
+        `Range: ${scaleKnob(c.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')}`,
+        c.delay ? 'Delay: minimal tempo‑synced; cut at bar end' : 'Delay: off',
+        c.chorus ? 'Chorus: subtle stereo spread; no detune at seam' : 'Chorus: off',
         'No bends/slides across loop seam',
       ].join('. ')
     case 'pad':
@@ -132,7 +144,11 @@ function roleDirectives(st: string, c: Record<string, any>): string {
         'Chord: sustained diatonic chord(s); no modulation',
         `Evolution: ${scaleKnob(c.evolution, 'static', 'gentle', 'subtle motion', 'evolving', 'animated')} but reset every bar`,
         `Warmth: ${scaleKnob(c.warmth, 'cool', 'neutral', 'warm', 'lush', 'very lush')}`,
+        `Brightness: ${scaleKnob(c.brightness, 'dark', 'warm', 'balanced', 'bright', 'shimmering')}`,
+        `Motion: ${scaleKnob(c.motion, 'static', 'gentle', 'animated', 'evolving', 'shifting')}`,
+        `Texture: ${scaleKnob(c.texture, 'smooth', 'airy', 'lush', 'grainy', 'noisy')}`,
         c.chorus ? 'Chorus: subtle; no stereo smear at seam' : 'Chorus: off',
+        c.reverb ? 'Reverb: soft ambient; decay under bar; gate at seam' : 'Reverb: off',
         'No long reverb tail; envelope ends before bar boundary',
       ].join('. ')
     default:
@@ -173,16 +189,31 @@ function negatives(st: string): string {
 function buildHihatPrompt(controls: Record<string, any>, master: any, strictness = 0): string {
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
+  // Map new hi‑hat controls into descriptive text.  The "pattern" knob
+  // selects between strict straight 16ths and increasingly complex
+  // syncopations.  The "decay" knob adjusts the length of each hat
+  // sample, and "texture" and "shuffle" knobs control timbre and
+  // swing respectively.  Reverb and chorus toggles add spatial
+  // descriptors when enabled.  These descriptors come from the
+  // ElevenLabs sound effect prompt cheatsheet【250912434198074†L742-L756】.
   const brightness = scaleKnob(controls.brightness, 'dark', 'balanced', 'crisp', 'bright', 'very bright')
-  const space = controls.reverb ? 'Space: tiny room; decay < 120ms; gate tails before seam.' : 'Space: dry, minimal.'
+  const patternDesc = scaleKnob(controls.pattern, 'straight 1/16 notes', 'slight 1/16 shuffle', 'moderate syncopation', 'complex syncopation', 'polyrhythmic accents')
+  const lengthDesc = scaleKnob(controls.decay, '30–80ms', '60–120ms', '100–180ms', '150–250ms', '250–400ms')
+  const textureDesc = scaleKnob(controls.texture, 'soft', 'dry', 'balanced', 'crisp', 'metallic')
+  const swingDesc = scaleKnob(controls.shuffle, 'straight', 'light shuffle', 'moderate shuffle', 'noticeable shuffle', 'heavy shuffle')
+  const space = controls.reverb ? 'Space: tiny room; decay < 120 ms; gate tails before seam.' : 'Space: dry/minimal.'
+  const chorus = controls.chorus ? 'Chorus: subtle shimmer; avoid smear across seam.' : 'Chorus: off.'
   const common = [
     'STEM: HIHAT — solo closed hi-hat only.',
     'Identity: crisp techno closed hi-hat.',
     g,
     'ROLE: isolated closed hat (no open-hat).',
-    'Pattern: strict 1/16 notes; first hit exactly at bar 1 beat 1; consistent every bar.',
-    `Tone: ${brightness}; unpitched; short decay (40–120ms).`,
+    `Pattern: ${patternDesc}; first hit exactly at bar 1 beat 1; consistent every bar.`,
+    `Length: ${lengthDesc}.`,
+    `Tone: ${brightness}; Texture: ${textureDesc}.`,
+    `Swing: ${swingDesc}.`,
     space,
+    chorus,
     'Exclude: ride, shaker, clap, snare, kick, toms, crashes; no melodic content, sweeps, or FX.',
     'Deliver a bar-perfect seamless loop aligned to bar boundaries.',
   ]
@@ -199,17 +230,24 @@ function buildHihatPrompt(controls: Record<string, any>, master: any, strictness
 function buildSnarePrompt(controls: Record<string, any>, master: any, strictness = 0): string {
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const varTxt = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
+  // New snare controls: variation, intensity, snap, decay (tail), tone, metallic and reverb toggles.
+  const varTxt    = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
   const intensity = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
-  const body = controls.metallic ? 'Timbre: slightly metallic; tight transient; short decay (80–180ms).' : 'Timbre: dry, tight; short decay (80–180ms).'
+  const snap      = scaleKnob(controls.snap, 'soft', 'medium-soft', 'balanced', 'sharp', 'cracking')
+  const tail      = scaleKnob(controls.decay, 'very short', 'short', 'medium', 'long', 'very long')
+  const toneDesc  = scaleKnob(controls.tone, 'thin', 'dry', 'balanced', 'full', 'deep')
+  const timbreTxt = controls.metallic ? 'Timbre: slightly metallic; tight transient.' : 'Timbre: organic and dry.'
+  const space     = controls.reverb ? 'Space: tiny room; decay < 150ms; gate tails before seam.' : 'Space: dry; short decay; no tail.'
   const common = [
     'STEM: SNARE — solo snare only.',
     'Identity: industrial techno snare; drum-machine style; no clap.',
     g,
     'ROLE: isolated electronic snare.',
     'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
-    `Dynamics: ${intensity}; ${body}`,
+    `Dynamics: ${intensity}; Snap: ${snap}; Tail: ${tail}.`,
+    `Tone: ${toneDesc}. ${timbreTxt}`,
     `Variation: ${varTxt} but positions remain 2 & 4.`,
+    space,
     'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam.',
     'Deliver a bar-perfect seamless loop aligned to bar boundaries.',
   ]
@@ -225,17 +263,23 @@ function buildSnarePrompt(controls: Record<string, any>, master: any, strictness
 function buildArpPrompt(controls: Record<string, any>, master: any): string {
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const rate = mapArpRate(controls.rate)
+  const rate       = mapArpRate(controls.rate)
   const complexity = scaleKnob(controls.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')
-  const gate = controls.gate ? 'long-ish gate (80–160ms)' : 'short gate (30–80ms)'
+  const rangeDesc  = scaleKnob(controls.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')
+  const swingDesc  = scaleKnob(controls.swing, 'straight', 'slight swing', 'moderate swing', 'pronounced swing', 'syncopated')
+  const toneDesc   = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'sparkling')
+  const gate       = controls.gate ? 'long-ish gate (80–160ms)' : 'short gate (30–80ms)'
+  const delayTxt   = controls.delay ? 'Delay: subtle tempo-synced echoes; cut at bar end.' : 'Delay: off.'
   return [
     'STEM: ARPEGGIATOR — solo synth arpeggio only.',
     `Identity: ${stemConfigs.arp.basePrompt}.`,
     g,
     `ROLE: isolated arp; strictly diatonic in ${root} ${mode}; no chords.`,
-    `Pattern: ${rate}; fully quantized; phrase length must evenly divide ${bars} bars.`,
+    `Pattern: ${rate}; ${swingDesc}; fully quantized; phrase length must evenly divide ${bars} bars.`,
     `Complexity: ${complexity}; consistent motif and octave moves.`,
-    `Envelope: ${gate}; no delay/reverb across seam.`,
+    `Range: ${rangeDesc}; Tone: ${toneDesc}.`,
+    `Envelope: ${gate}.`,
+    delayTxt,
     'Exclude: drums/percussion/bass/pads/leads/vocals.',
     'Deliver a bar-perfect seamless loop aligned to bar boundaries.',
   ].join(' ')
@@ -245,16 +289,21 @@ function buildArpPrompt(controls: Record<string, any>, master: any): string {
 function buildFXPrompt(controls: Record<string, any>, master: any): string {
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const intensity = scaleKnob(controls.intensity, 'subtle', 'moderate', 'medium', 'strong', 'intense')
-  const movement = scaleKnob(controls.movement, 'static', 'gentle motion', 'evolving', 'animated', 'dynamic')
-  const space = controls.reverb ? 'Space: tiny room; decay ≤ 150ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
+  const intensity   = scaleKnob(controls.intensity, 'subtle', 'moderate', 'medium', 'strong', 'intense')
+  const movement    = scaleKnob(controls.movement, 'static', 'gentle motion', 'evolving', 'animated', 'dynamic')
+  const textureDesc = scaleKnob(controls.texture, 'smooth', 'grainy', 'noisy', 'metallic', 'chaotic')
+  const sweepDesc   = scaleKnob(controls.sweep, 'short sweep', 'moderate sweep', 'long sweep', 'full-bar sweep', 'multi-bar sweep')
+  const filterDesc  = scaleKnob(controls.filter, 'low emphasis', 'mid emphasis', 'balanced', 'high emphasis', 'resonant high-pass')
+  const space       = controls.reverb ? 'Space: tiny room; decay ≤ 150ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
+  const delayTxt    = controls.delay ? 'Delay: subtle echo; decay under bar.' : 'Delay: off.'
   return [
     'STEM: FX — solo techno transition effects & atmos only.',
     `Identity: ${stemConfigs.fx.basePrompt}.`,
     g,
     'ROLE: bar-internal whooshes/sweeps/noise beds that RESET each bar.',
-    `Intensity: ${intensity}. Movement: ${movement}.`,
+    `Intensity: ${intensity}. Movement: ${movement}. Texture: ${textureDesc}. Sweep: ${sweepDesc}. Filter: ${filterDesc}.`,
     space,
+    delayTxt,
     'Exclude: pitched melodies/drums/percussion; avoid risers/falls that exceed a single bar.',
     'Deliver a bar-perfect seamless loop; zero tail beyond the bar.',
   ].join(' ')
@@ -264,16 +313,24 @@ function buildFXPrompt(controls: Record<string, any>, master: any): string {
 function buildPercLoopPrompt(controls: Record<string, any>, master: any): string {
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const density = scaleKnob(controls.density, 'sparse', 'light', 'medium', 'busy', 'dense')
-  const metallic = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
-  const groove = scaleKnob(controls.groove, 'straight', 'straight with mild syncopation', 'syncopated but quantized', 'complex yet quantized', 'complex yet quantized')
+  const density   = scaleKnob(controls.density, 'sparse', 'light', 'medium', 'busy', 'dense')
+  const groove    = scaleKnob(controls.groove, 'straight', 'straight with mild syncopation', 'syncopated but quantized', 'complex yet quantized', 'complex yet quantized')
+  const variation = scaleKnob(controls.variation, 'repetitive', 'subtle', 'moderate', 'intricate', 'wild')
+  const toneDesc  = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'metallic')
+  const syncDesc  = scaleKnob(controls.syncopation, 'straight', 'mild', 'groovy', 'complex', 'polyrhythmic')
+  const metallic  = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
+  const space     = controls.reverb ? 'Space: tiny room; gate before seam.' : 'Space: dry; no reverb.'
   return [
     'STEM: PERCUSSION — solo top percussion only (shakers/blocks/taps); not snare/hat/kick.',
     `Identity: ${stemConfigs.perc2.basePrompt}.`,
     g,
     `ROLE: quantized on-grid accents; ${groove}; zero swing.`,
     `Density: ${density}; keep consistent across bars.`,
+    `Variation: ${variation}.`,
+    `Tone: ${toneDesc}.`,
+    `Syncopation: ${syncDesc}.`,
     `Timbre: ${metallic}; short releases; zero tails at seam.`,
+    space,
     'Exclude: tonal hits/kick/snare/clap/hat/ride/toms/crashes.',
     'Deliver a bar-perfect seamless loop aligned to bar boundaries.',
   ].join(' ')
@@ -453,7 +510,10 @@ function detectHeadIndexArray(data: Float32Array, sr: number): number {
 
 function findBestSeamOffsetArray(data: Float32Array, startIdx: number, targetLen: number, xfadeN: number, sr: number): number {
   const n = data.length
-  const search = Math.max(0, Math.round((45 / 1000) * sr))
+  // Enlarge seam search window to ~60 ms.  A wider search helps locate
+  // more phase‑coherent loop points, reducing clicks and misaligned
+  // kicks when trimming the loop.
+  const search = Math.max(0, Math.round((60 / 1000) * sr))
   const step = Math.max(1, Math.round(sr / 12000))
   let bestOff = 0
   let bestScore = Number.POSITIVE_INFINITY
@@ -647,13 +707,15 @@ Deno.serve(async (req: Request) => {
     // Compute trimming parameters
     const targetFrames = Math.round((bars * 4) * (60 / tempo) * sampleRate)
     const headIdx = detectHeadIndexArray(pcm.data[0], sampleRate)
-    const xfadeMs = 12
+    // Use a longer crossfade (24 ms) to reduce clicks at the seam.
+    const xfadeMs = 24
     const xfadeN = Math.max(2, Math.round((xfadeMs / 1000) * sampleRate))
     const bestOff = findBestSeamOffsetArray(pcm.data[0], headIdx, targetFrames, xfadeN, sampleRate)
     const start = mod(headIdx + bestOff, pcm.length)
     const trimmed = sliceWrapArray(pcm.data, start, targetFrames)
     // Apply ramps and crossfade
-    applyEdgeRampsArray(trimmed, sampleRate, 5)
+    // Apply slightly longer edge ramps (8 ms) and crossfade.
+    applyEdgeRampsArray(trimmed, sampleRate, 8)
     applySeamCrossfadeArray(trimmed, sampleRate, xfadeMs)
     const outBytes = makeWavFromPCM16(trimmed, sampleRate)
     // Encode to base64
