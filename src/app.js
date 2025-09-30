@@ -976,11 +976,39 @@ function openWaveformEditModal(st) {
   // Set up action buttons
   const saveBtn = document.getElementById('editSaveBtn')
   const discardBtn = document.getElementById('editDiscardBtn')
+  const defaultBtn = document.getElementById('editDefaultBtn')
   if (saveBtn) {
     saveBtn.onclick = () => closeWaveformEditModal(true)
   }
   if (discardBtn) {
     discardBtn.onclick = () => closeWaveformEditModal(false)
+  }
+  if (defaultBtn) {
+    defaultBtn.onclick = () => {
+      // Reset endpoint factor to original (1.0) for this take
+      endpointFactors[st] = 1
+      // Persist the reset factor on the active take
+      const idx = stemActiveIndex[st]
+      if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
+        stemHistory[st][idx].endpointFactor = 1
+      }
+      // Rebuild the loop and update waveform
+      adjustEndpoint(st, 1)
+      // Reset dial pattern offset to neutral position
+      const endDialEl = document.getElementById('waveformEditEndpointDial')
+      if (endDialEl) {
+        endDialEl.setAttribute('data-offset', '0')
+        endDialEl.style.backgroundPosition = '0px 50%'
+      }
+      // Redraw preview waveform with current volume scaling
+      const prevCanvas2 = document.getElementById('waveformEditCanvas')
+      if (prevCanvas2) {
+        const cfg2 = stemConfigs[st]
+        drawWaveform(prevCanvas2, stemLoop[st], `rgb(${getColorRGB(cfg2.color)})`)
+        const volVal2 = stemControlValues[st]?.volume ?? 80
+        prevCanvas2.style.transform = `scaleY(${volVal2 / 100})`
+      }
+    }
   }
   // Clicking on the semi‑transparent overlay should discard changes and close the modal
   const overlay = document.getElementById('waveformEditOverlay')
@@ -1294,6 +1322,15 @@ async function generateStem(st) {
       raw: stemRaw[st],
       meta: { tier, validated: !failedValidation }
     })
+    // Store the current endpoint factor on the newly created history entry so it can be restored when selecting the take.
+    {
+      ensureStemHistory(st)
+      const list = stemHistory[st]
+      if (list && list.length > 0) {
+        const last = list[list.length - 1]
+        last.endpointFactor = endpointFactors[st] ?? 1
+      }
+    }
     renderHistoryDrawer(st)
     // Draw waveform for the new loop
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
@@ -1586,8 +1623,25 @@ function createBuilderStemCard(st, cfg){
       const desktopNum = document.createElement('span')
       desktopNum.setAttribute('data-card-number-desktop', st)
       desktopNum.textContent = String(idx)
-      desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2'
+      // Position with extra padding on desktop (sm:top-5 sm:right-5) so the number indicator isn't flush
+      // against the edges. Hidden on mobile (sm:hidden applied on the header indicator instead).
+      desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2 sm:top-5 sm:right-5'
       card.appendChild(desktopNum)
+
+      // Adjust the edit label overlay within the waveform container.  Always show it (remove hover-based
+      // opacity) and scale its size responsively.  On mobile the text is smaller; on desktop it is
+      // larger and bold white.  Remove the default fade classes to avoid relying on hover state.
+      {
+        const overlayEl = card.querySelector('.relative .pointer-events-none')
+        if (overlayEl) {
+          // Remove fade and original size classes
+          overlayEl.classList.remove('opacity-0', 'group-hover:opacity-100', 'text-white/70', 'text-[10px]')
+          // Always fully visible
+          overlayEl.classList.add('opacity-100')
+          // Use smaller text on mobile (approx 25% smaller) and larger bold text on desktop
+          overlayEl.classList.add('text-white/70', 'text-[8px]', 'sm:text-[20px]', 'sm:font-bold', 'sm:text-white')
+        }
+      }
   }
 
   updateHistoryBadge(st)
@@ -1789,7 +1843,11 @@ function setMixerOpen(open){
   // Update player toggle button label + ARIA
   const toggleBtn = document.getElementById('mixerToggleBtn')
   if (toggleBtn) {
-    toggleBtn.textContent = open ? 'close mixer' : 'open mixer'
+    // Update the desktop label only.  The mobile label remains 'mixer' regardless of state.
+    const desktopSpan = toggleBtn.querySelector('span.hidden.sm\\:inline')
+    const mobileSpan  = toggleBtn.querySelector('span.inline.sm\\:hidden')
+    if (desktopSpan) desktopSpan.textContent = open ? 'close mixer' : 'open mixer'
+    // Do not modify the mobile label (mobileSpan) so it stays 'mixer'
     toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
   }
 
@@ -2523,21 +2581,16 @@ function selectStemVersion(st, index){
   const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
   if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${bars} bars)`
   renderHistoryDrawer(st)
-  // Reset endpoint factor to default (1.0) when selecting a different take and update the dial inputs.
-  endpointFactors[st] = 1
+  // Restore the saved endpoint factor for this take (if present).  If not present, default to 1.
   {
-    const overlay = document.querySelector(`[data-stem-controls="${st}"]`)
-    if (overlay) {
-      const endInput = overlay.querySelector('[data-action="adjust-endpoint"]')
-      if (endInput) endInput.value = '100'
-      const volInput = overlay.querySelector('[data-action="adjust-volume"]')
-      if (volInput) volInput.value = String(stemControlValues[st]?.volume ?? 80)
-    }
-    // Do not adjust the card waveform's height based on volume when
-    // selecting a different take.  The height remains constant so
-    // that the waveform stays clickable even if the volume is set to
-    // zero.
+    const takes = stemHistory[st] || []
+    const entry = takes[index]
+    const factor = entry?.endpointFactor ?? 1
+    endpointFactors[st] = factor
+    // Rebuild the loop with the stored factor
+    adjustEndpoint(st, factor)
   }
+  // No need to reset or update obsolete overlay slider inputs, since endpoint control is now via infinite dial.
   if (isPlaying) restartStemNextBoundary(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
@@ -3021,6 +3074,14 @@ function handleDialPointerMove(e) {
     newVal = dialState.startVal + dx * sensitivity
     newVal = Math.max(0.1, Math.min(3, newVal))
     endpointFactors[dialState.stem] = newVal
+    // Persist this endpoint factor on the active take so switching takes remembers the adjustment
+    {
+      const stName = dialState.stem
+      const idx = stemActiveIndex[stName]
+      if (idx != null && idx >= 0 && stemHistory[stName] && stemHistory[stName][idx]) {
+        stemHistory[stName][idx].endpointFactor = newVal
+      }
+    }
     // Rebuild loop for the new factor and redraw the card waveform
     adjustEndpoint(dialState.stem, newVal)
     // Update preview waveform in the edit modal
