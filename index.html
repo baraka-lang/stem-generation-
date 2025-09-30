@@ -166,65 +166,6 @@
       transform: translateX(-50%);
     }
 
-    /* Body scroll lock when mixer or modals are open */
-    body.scroll-locked {
-      overflow: hidden !important;
-      position: fixed;
-      width: 100%;
-      height: 100%;
-    }
-
-    /* Backdrop overlay for mixer on mobile */
-    #mixerBackdrop {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0, 0, 0, 0.3);
-      z-index: 35;
-      backdrop-filter: blur(2px);
-    }
-    #mixerBackdrop.active {
-      display: block;
-    }
-
-    /* Prevent interactions with background content when mixer is open */
-    body.mixer-open #techno-generator-page,
-    body.mixer-open #stem-container {
-      pointer-events: none;
-      user-select: none;
-    }
-
-    /* Ensure mixer and player bar remain interactive */
-    body.mixer-open #playerBar,
-    body.mixer-open #mixerTray {
-      pointer-events: auto;
-    }
-
-    /* Enhanced touch targets for infinite dials */
-    .infinite-dial {
-      touch-action: none;
-      -webkit-user-select: none;
-      user-select: none;
-      -webkit-touch-callout: none;
-    }
-
-    /* Prevent context menu on long press for dials */
-    .infinite-dial,
-    .dial-btn {
-      -webkit-touch-callout: none;
-      -webkit-user-select: none;
-      user-select: none;
-    }
-
-    /* Mixer tray scroll behavior */
-    #mixerTray .mixer-inner {
-      touch-action: pan-y;
-      -webkit-overflow-scrolling: touch;
-    }
-
     /* Mobile-specific adjustments */
     @media (max-width: 640px) {
       /* Prevent bottom player controls from wrapping so play and volume stay on the same row */
@@ -238,65 +179,6 @@
       [data-action="open-create-settings"] {
         padding-top: 0.4rem !important;
         padding-bottom: 0.4rem !important;
-      }
-
-      /* Larger sliders on mobile for easier touch interaction */
-      input[type="range"][data-mix-slider],
-      input[type="range"][data-mix-eq],
-      input[type="range"][data-mix-filter] {
-        height: 1.5rem !important;
-        min-height: 44px;
-        padding: 0.5rem 0;
-        cursor: pointer;
-        touch-action: none;
-      }
-
-      /* Larger thumb for mobile sliders */
-      input[type="range"][data-mix-slider]::-webkit-slider-thumb,
-      input[type="range"][data-mix-eq]::-webkit-slider-thumb,
-      input[type="range"][data-mix-filter]::-webkit-slider-thumb {
-        height: 2rem;
-        width: 2rem;
-        margin-top: -0.625rem;
-      }
-
-      input[type="range"][data-mix-slider]::-moz-range-thumb,
-      input[type="range"][data-mix-eq]::-moz-range-thumb,
-      input[type="range"][data-mix-filter]::-moz-range-thumb {
-        height: 2rem;
-        width: 2rem;
-      }
-
-      /* Larger track on mobile */
-      input[type="range"][data-mix-slider]::-webkit-slider-runnable-track,
-      input[type="range"][data-mix-eq]::-webkit-slider-runnable-track,
-      input[type="range"][data-mix-filter]::-webkit-slider-runnable-track {
-        height: 0.75rem;
-      }
-
-      input[type="range"][data-mix-slider]::-moz-range-track,
-      input[type="range"][data-mix-eq]::-moz-range-track,
-      input[type="range"][data-mix-filter]::-moz-range-track {
-        height: 0.75rem;
-      }
-
-      /* Increase padding in mixer cards on mobile */
-      .sg-mix-row {
-        padding: 1rem !important;
-        gap: 1rem !important;
-      }
-
-      /* Ensure minimum tap target for mixer buttons */
-      .sg-mix-row button {
-        min-height: 44px;
-        min-width: 44px;
-        padding: 0.75rem 1rem !important;
-      }
-
-      /* Make infinite dials taller and easier to grab on mobile */
-      .infinite-dial {
-        height: 2.5rem;
-        min-height: 44px;
       }
     }
   </style>
@@ -547,9 +429,6 @@
     </div>
   </div>
 </div>
-
-<!-- Backdrop overlay for mixer (appears behind mixer when open on mobile) -->
-<div id="mixerBackdrop"></div>
 
 <!-- Floating bottom player bar with mixer toggle -->
 <div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 select-none cursor-default hidden">
