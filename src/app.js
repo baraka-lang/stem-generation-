@@ -1523,7 +1523,7 @@ function createBuilderStemCard(st, cfg){
   // sign on the right provide a visual cue for volume down/up.  The dial
   // uses data-dial-type="volume" so the generic handlers adjust the
   // volume for this stem when it is dragged or scrolled.
-  const volumeDialHTML = `\n        <div class="my-2 flex items-center">\n          <span class="text-white/60 text-sm mr-1">-</span>\n          <div class="flex-1 infinite-dial" data-dial-type="volume" data-stem="${st}" data-offset="0"></div>\n          <span class="text-white/60 text-sm ml-1">+</span>\n        </div>\n      `
+  const volumeDialHTML = `\n        <div class="my-2 flex items-center">\n          <span class="text-white/60 text-sm font-bold mr-2">-</span>\n          <div class="flex-1 infinite-dial" data-dial-type="volume" data-stem="${st}" data-offset="0"></div>\n          <span class="text-white/60 text-sm font-bold ml-2">+</span>\n        </div>\n      `
 
   // Sliders and toggles are now moved into a popup.  Keep empty strings here to avoid including them on the card.
   let slidersRowsHTML = ''
@@ -1574,12 +1574,20 @@ function createBuilderStemCard(st, cfg){
     // the take even when its volume is set to zero.  Visual feedback
     // for volume changes is provided exclusively in the edit modal.
 
-      // Ensure the number indicator aligns to the right on desktop.  Adding
-      // the sm:ml-auto class via JavaScript avoids complicated string
-      // interpolation in the template.  On mobile, the number stays next
-      // to the name; on larger screens it will push itself to the right.
+      // On small screens, show the number indicator within the header row; hide it on
+      // desktop so that it can be shown in the top-right corner of the card.
       const numEl = card.querySelector(`[data-card-number="${st}"]`)
-      if (numEl) numEl.classList.add('sm:ml-auto')
+      if (numEl) numEl.classList.add('sm:hidden')
+
+      // Make the card relative so absolute positioning inside works for desktop indicators
+      card.classList.add('relative')
+
+      // Create a desktop-only number indicator positioned at the top right of the card.
+      const desktopNum = document.createElement('span')
+      desktopNum.setAttribute('data-card-number-desktop', st)
+      desktopNum.textContent = String(idx)
+      desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2'
+      card.appendChild(desktopNum)
   }
 
   updateHistoryBadge(st)
@@ -1624,12 +1632,15 @@ function updateAllMixerGlows(){ Object.keys(stemConfigs).forEach(updateMixerGlow
 /* ---------- Toggle visuals (Mute/Solo) ---------- */
 function setToggleVisual(el, active){ if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
 function reflectMuteSoloButtons(st){
-  const muted=!!stemMuteStates[st]
-  const soloed=(soloedStem===st)
-  setToggleVisual(document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"]`), muted)
-  setToggleVisual(document.querySelector(`[data-stem="${st}"] [data-action="solo-stem"]`), soloed)
-  setToggleVisual(document.querySelector(`[data-action="mix-mute"][data-stem="${st}"]`), muted)
-  setToggleVisual(document.querySelector(`[data-action="mix-solo"][data-stem="${st}"]`), soloed)
+  const muted  = !!stemMuteStates[st]
+  const soloed = (soloedStem === st)
+  // Update all mute buttons on the instrument card (desktop and mobile)
+  document.querySelectorAll(`[data-stem="${st}"] [data-action="mute-stem"]`).forEach(btn => setToggleVisual(btn, muted))
+  // Update all solo buttons on the instrument card (desktop and mobile)
+  document.querySelectorAll(`[data-stem="${st}"] [data-action="solo-stem"]`).forEach(btn => setToggleVisual(btn, soloed))
+  // Update mute/solo buttons in the mixer
+  document.querySelectorAll(`[data-action="mix-mute"][data-stem="${st}"]`).forEach(btn => setToggleVisual(btn, muted))
+  document.querySelectorAll(`[data-action="mix-solo"][data-stem="${st}"]`).forEach(btn => setToggleVisual(btn, soloed))
 }
 
 /* ---------- Volume link ---------- */
