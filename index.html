@@ -287,6 +287,8 @@
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="sessionSetupOverlay"></div>
     <div class="relative w-full max-w-md max-h-[85vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
       <h2 class="text-xl font-medium text-white mb-4">Set your session settings</h2>
+      <!-- Mobile-only warning about silent mode -->
+      <p class="text-xs text-red-500 font-bold sm:hidden mb-2">Please disable silent mode on your mobile device for audio playback.</p>
       <p class="text-xs text-white/60 mb-4">Choose the tempo, number of bars and key before starting. These values cannot be changed later in the session.</p>
       <div class="space-y-4">
         <!-- Tempo selection -->
@@ -390,6 +392,8 @@
       </button>
     </div>
     <div class="text-sm text-white/80 space-y-3 overflow-y-auto max-h-[60vh]">
+      <!-- Warning about silent mode appears first in the help modal -->
+      <p class="text-red-500 font-bold">Please disable silent mode on your mobile device for audio playback.</p>
       <p>Press the spacebar to play or pause the loop.</p>
       <p>Use number keys 1–9 to mute or unmute the corresponding instruments.</p>
       <p>If the number circles are red, it means either the stem has not been generated yet or the channel is muted.</p>
@@ -434,48 +438,34 @@
 <div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 select-none cursor-default hidden">
   <div class="mx-auto max-w-5xl px-4 py-3">
     <!-- Use a vertical stack on mobile and a horizontal layout on larger screens -->
-      <div class="flex flex-col sm:flex-row items-center gap-3 w-full">
-        <!-- Top row: Download, session info (mobile) and mixer toggle.  Align items to the left on all screens. -->
-        <div class="flex items-center mb-1 sm:mb-0 justify-between sm:justify-start gap-0 sm:gap-3 w-full">
-          <!-- Download All button -->
-          <button id="downloadAllBtn" class="px-4 py-2 rounded-full border border-white/20 player-surface text-sm tracking-wide hover:bg-white/10 transition">
-            <span class="hidden sm:inline whitespace-nowrap">download all</span>
-            <span class="inline sm:hidden whitespace-nowrap">get all</span>
-          </button>
-          <!-- Session info on mobile: positioned between the two buttons -->
-          <!-- Wrap the info card in a flex container that grows to fill the available space.  The inner card
-               itself remains auto-sized so that the background border hugs the text. -->
-          <div class="flex flex-1 justify-center sm:flex-none">
-            <div id="sessionInfoCardMobile" class="flex items-center justify-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 sm:hidden whitespace-nowrap">
-              <span id="sessionInfoTextMobile" class="whitespace-nowrap">--</span>
-            </div>
-          </div>
-          <!-- Mixer toggle inside player -->
-          <button id="mixerToggleBtn"
-                  class="px-4 py-2 rounded-full border border-white/20 player-surface text-sm tracking-wide hover:bg-white/10 transition"
-                  aria-pressed="false">
-            <span class="hidden sm:inline whitespace-nowrap">open mixer</span>
-            <span class="inline sm:hidden whitespace-nowrap">mixer</span>
-          </button>
+      <div class="flex items-center justify-between gap-3 w-full flex-wrap sm:flex-nowrap">
+        <!-- Download All button (text on desktop, icon on mobile) -->
+        <button id="downloadAllBtn" class="flex items-center justify-center w-10 h-10 sm:w-auto sm:h-auto rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
+          <span class="hidden sm:inline whitespace-nowrap">download all</span>
+          <span class="inline sm:hidden"><i data-lucide="download" class="w-5 h-5"></i></span>
+        </button>
+        <!-- Play/Pause -->
+        <button id="playBtn" class="flex items-center justify-center w-24 h-10 rounded-lg hover:bg-white/10 transition"
+                data-action="play-pause" title="Play / Pause">
+          <i data-lucide="play" class="stroke-current w-5 h-5"></i>
+        </button>
+        <!-- Volume slider (desktop only) -->
+        <div class="hidden sm:flex items-center gap-2">
+          <span class="text-xs text-white/60">Vol</span>
+          <input id="masterVolumeSlider" type="range" min="0" max="100" value="90"
+                 class="w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
+          <span id="masterVolumeValue" class="text-sm w-12 text-right">90%</span>
         </div>
-        <!-- Bottom row: Play button, volume control and session info (desktop).  This appears beneath the top row on mobile and alongside on larger screens. -->
-        <div class="flex items-center flex-wrap sm:flex-nowrap w-full sm:w-auto justify-between sm:justify-start gap-0 sm:gap-3">
-          <!-- Play/Pause -->
-          <button id="playBtn" class="flex items-center justify-center w-24 h-10 rounded-lg hover:bg-white/10 transition"
-                  data-action="play-pause" title="Play / Pause">
-            <i data-lucide="play" class="stroke-current w-5 h-5"></i>
-          </button>
-          <!-- Volume slider -->
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-white/60">Vol</span>
-            <input id="masterVolumeSlider" type="range" min="0" max="100" value="90"
-                   class="w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
-          <span id="masterVolumeValue" class="text-sm w-12 text-right pr-4">90%</span>
-          </div>
-          <!-- Session info card (desktop) -->
-          <div id="sessionInfoCard" class="hidden sm:flex items-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap">
-            <span id="sessionInfoText" class="whitespace-nowrap">--</span>
-          </div>
+        <!-- Mixer toggle button (text on desktop, icon on mobile) -->
+        <button id="mixerToggleBtn"
+                class="flex items-center justify-center w-10 h-10 sm:w-auto sm:h-auto rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
+                aria-pressed="false">
+          <span class="hidden sm:inline whitespace-nowrap">open mixer</span>
+          <span class="inline sm:hidden"><i data-lucide="sliders" class="w-5 h-5"></i></span>
+        </button>
+        <!-- Session info card (desktop only) -->
+        <div id="sessionInfoCard" class="hidden sm:flex items-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap">
+          <span id="sessionInfoText" class="whitespace-nowrap">--</span>
         </div>
       </div>
   </div>
@@ -483,13 +473,22 @@
   <!-- Docked Mixer Tray (expands upward) — same surface -->
   <div id="mixerTray" class="player-surface max-h-0 overflow-hidden transition-[max-height] duration-200 ease-out border-t border-white/10">
     <!-- The inner container scrolls only vertically when the mixer is open.  We hide horizontal overflow to prevent accidental sideways scrolling on mobile. Use full width on all screens to avoid zoom issues. -->
-    <div class="mixer-inner max-w-full mx-auto px-4 py-3 overflow-y-auto overflow-x-hidden">
-      <div class="text-xs text-white/70 mb-2">Mixer</div>
+    <div class="mixer-inner max-w-full mx-auto px-4 py-3 overflow-y-auto overflow-x-hidden relative">
+      <!-- Header with title and close button -->
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-xs text-white/70">Mixer</div>
+        <button id="mixerCloseBtn" class="hidden w-6 h-6 flex items-center justify-center rounded-md hover:bg-white/10" data-action="close-mixer" title="Close mixer">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
       <!-- Mixer grid is built dynamically in app.js.  The initial element is empty so the script can set the correct classes depending on screen size. -->
       <div id="mixerGrid"><!-- filled by app.js --></div>
     </div>
   </div>
 </div>
+
+<!-- Overlay to blur and block interaction with the page when the mixer is open -->
+<div id="mixerOverlay" class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm hidden"></div>
 
 <script type="module" src="/src/main.js"></script>
 </body>
