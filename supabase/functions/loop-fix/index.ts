@@ -145,9 +145,11 @@ function mod(a: number, n: number) {
 // best match.
 function findBestSeamOffset(data: Float32Array, startIdx: number, targetLen: number, xfadeN: number, sr: number) {
   const n = data.length
-  // search window ~45ms scaled by sample rate
-  // Enlarge search window to ~60 ms for better seam alignment
-  const search = Math.max(0, Math.round((60 / 1000) * sr))
+  // search window ~90ms scaled by sample rate.  A larger search helps
+  // align sparse drum transients (e.g. kicks and snares) when trimming
+  // loops for bar‑perfect playback.  Increasing this window reduces
+  // the chance of leaving a small gap or overlap at the loop seam.
+  const search = Math.max(0, Math.round((90 / 1000) * sr))
   const step = Math.max(1, Math.round(sr / 12000))
   let bestOffset = 0
   let bestScore = Number.POSITIVE_INFINITY
@@ -287,8 +289,7 @@ Deno.serve(async (req: Request) => {
     const body = (await req.json()) as LoopFixRequest
     const bpm = Math.max(40, Math.min(300, Math.round(Number(body.bpm) || 0)))
     const bars = Math.max(1, Math.min(32, Math.round(Number(body.bars) || 4)))
-    // Default crossfade is now 24 ms to reduce seam clicks.  Allow user override
-    const xfadeMs = Math.max(2, Math.min(200, Math.round(Number(body.xfade_ms) || 24)))
+    const xfadeMs = Math.max(2, Math.min(200, Math.round(Number(body.xfade_ms) || 12)))
     const wavBytes = decodeBase64(body.wav_b64 || '')
     if (!wavBytes || !wavBytes.length) {
       return new Response(JSON.stringify({ error: 'Missing wav_b64' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } })
@@ -302,8 +303,7 @@ Deno.serve(async (req: Request) => {
     const bestOff = findBestSeamOffset(pcm.data[0], headIdx, targetLen, xfadeN, sr)
     const start = mod(headIdx + bestOff, pcm.length)
     const trimmed = sliceWrap(pcm.data, start, targetLen)
-    // Use longer edge ramps (8 ms) and crossfade for smoother loops
-    applyEdgeRamps(trimmed, sr, 8)
+    applyEdgeRamps(trimmed, sr, 5)
     applySeamCrossfade(trimmed, sr, xfadeMs)
     const outBytes = makeWavFromPCM16(trimmed, sr)
     const diag = { bpm, bars, sr, channels: pcm.channels, headIndex: headIdx, offset: bestOff, targetFrames: targetLen }
