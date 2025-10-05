@@ -199,10 +199,15 @@
       <button id="userMenuBtn" class="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10" aria-haspopup="true" aria-expanded="false" title="User menu">
         <i data-lucide="user" class="w-4 h-4"></i>
       </button>
-      <!-- Dropdown menu for user actions -->
-      <div id="userMenu" class="absolute right-0 mt-2 w-40 player-surface card-border border border-white/10 rounded-md shadow-lg hidden z-40">
+      <!-- Dropdown menu for user actions.  Position it below the avatar and
+           give it a solid dark background instead of the semi-transparent
+           player surface.  Using top-full ensures the menu appears just
+           beneath the button and does not overlap the icons. -->
+      <div id="userMenu"
+           class="absolute right-0 top-full mt-2 w-40 bg-zinc-800 border border-white/10 rounded-md shadow-lg hidden z-40">
         <div class="px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center">
-          <span>Credits</span> <span id="headerCreditsValue" class="font-medium">100</span>
+          <span>Credits</span>
+          <span id="headerCreditsValue" class="font-medium">100</span>
         </div>
         <button id="userMenuLibrary" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Library</button>
         <button id="userMenuAccount" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Account</button>
@@ -475,9 +480,11 @@
 
 <!-- Waveform Edit Modal: allows adjusting volume and endpoint for a take -->
 <div id="waveformEditModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
-  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="waveformEditOverlay"></div>
+  <!-- Darkened overlay captures pointer events to prevent interaction with the background while editing -->
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto" id="waveformEditOverlay"></div>
   <div class="relative w-full max-w-md max-h-[85vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-    <h2 class="text-xl font-medium text-white mb-4">Edit Take</h2>
+    <!-- The Edit Take heading scales down on small screens (20% smaller) but remains visible on all devices -->
+    <h2 class="text-lg sm:text-xl font-medium text-white mb-4">Edit Take</h2>
     <!-- Waveform preview with bar grid overlay; bars will be drawn dynamically based on session bar count -->
     <div class="relative mb-4">
       <canvas id="waveformEditCanvas" class="w-full h-20 bg-white/5 rounded-md border border-white/10"></canvas>
