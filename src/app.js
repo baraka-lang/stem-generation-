@@ -102,6 +102,17 @@ const stemFilterValues = {}
 // state can be restored later via the dropdown in the player bar.
 const savedSets = []
 
+// Track the currently selected saved set index.  When a user loads or saves
+// a set, this variable is updated so the dropdown reflects the active set.
+// A value of null indicates no set has been selected yet.
+let currentSavedSetIndex = null
+
+// Temporary variable storing the index of the set the user is about to load.
+// This is set when the load confirmation modal opens and cleared when the
+// modal closes.  It allows the cancel handler to revert the dropdown to
+// its previous selection if the user aborts the load.
+let pendingLoadSetIndex = null
+
 /**
  * Capture the current player state across all stems.  This includes
  * the active take for each stem, its mute status, volume level,
@@ -277,6 +288,8 @@ function openLoadSetModal(index) {
   const label = document.getElementById('loadSetConfirmLabel')
   if (spinner) spinner.classList.add('hidden')
   if (label) label.textContent = 'Load'
+  // Remember which set is pending for load; used to revert on cancel
+  pendingLoadSetIndex = index
   // Show modal with fade-in
   modal.classList.remove('hidden')
   requestAnimationFrame(() => {
@@ -304,6 +317,8 @@ function closeLoadSetModal() {
   // Clear the stored index
   const confirmBtn = document.getElementById('loadSetConfirmBtn')
   if (confirmBtn) confirmBtn.removeAttribute('data-set-index')
+  // Reset pending index
+  pendingLoadSetIndex = null
 }
 
 /**
@@ -348,25 +363,29 @@ function initSavedStateFeature() {
   const saveBtn = document.getElementById('saveStateBtn')
   if (saveBtn) {
     saveBtn.addEventListener('click', () => {
-      saveCurrentPlayerState()
+      // When save is pressed, open confirmation modal instead of saving directly
+      openSaveSetModal()
     })
   }
   const dropdown = document.getElementById('savedSetsDropdown')
   if (dropdown) {
     dropdown.addEventListener('change', (e) => {
       const val = e.target.value
+      // If no set selected, do nothing
       if (!val) return
       const index = parseInt(val, 10)
-      if (!isNaN(index)) openLoadSetModal(index)
-      // Reset dropdown to placeholder after selection
-      e.target.value = ''
+      if (isNaN(index)) return
+      // Record current selection so it can be restored on cancel
+      // currentSavedSetIndex holds the last successfully loaded or saved set
+      // Open confirmation modal for loading
+      openLoadSetModal(index)
     })
   }
   // Cancel button on load set modal
   const cancelBtn = document.getElementById('loadSetCancelBtn')
   if (cancelBtn) {
     cancelBtn.addEventListener('click', () => {
-      closeLoadSetModal()
+      cancelLoadSet()
     })
   }
   // Confirm button on load set modal
@@ -376,12 +395,215 @@ function initSavedStateFeature() {
       const idxAttr = confirmBtn.getAttribute('data-set-index')
       const idx = idxAttr ? parseInt(idxAttr, 10) : NaN
       if (!isNaN(idx)) {
-        loadSavedSet(idx)
+        // On confirm, proceed with loading the set and update the selection
+        confirmLoadSet(idx)
       } else {
-        closeLoadSetModal()
+        cancelLoadSet()
       }
     })
   }
+  // Hook up the save set modal buttons
+  const saveModalCancel = document.getElementById('saveSetCancelBtn')
+  if (saveModalCancel) {
+    saveModalCancel.addEventListener('click', () => {
+      closeSaveSetModal()
+    })
+  }
+  const saveModalConfirm = document.getElementById('saveSetConfirmBtn')
+  if (saveModalConfirm) {
+    saveModalConfirm.addEventListener('click', () => {
+      saveNewSet()
+    })
+  }
+  // Hook up download confirmation modal buttons
+  const dlCancel = document.getElementById('downloadConfirmCancelBtn')
+  if (dlCancel) {
+    dlCancel.addEventListener('click', () => {
+      closeDownloadConfirmModal()
+    })
+  }
+  const dlConfirm = document.getElementById('downloadConfirmBtn')
+  if (dlConfirm) {
+    dlConfirm.addEventListener('click', () => {
+      confirmDownloadAll()
+    })
+  }
+}
+
+/**
+ * Open the save set confirmation modal.  This prompts the user to
+ * save the current state to a new set.  The next set number is
+ * derived from savedSets.length + 1.  The modal shows no spinner
+ * initially.
+ */
+function openSaveSetModal() {
+  const modal = document.getElementById('saveSetModal')
+  if (!modal) return
+  const desc = document.getElementById('saveSetDescription')
+  if (desc) {
+    const nextNum = savedSets.length + 1
+    desc.textContent = `Save current state as Set ${nextNum}?`
+  }
+  // Reset spinner and label
+  const spinner = document.getElementById('saveSetSpinner')
+  const label = document.getElementById('saveSetConfirmLabel')
+  if (spinner) spinner.classList.add('hidden')
+  if (label) label.textContent = 'Save'
+  // Show modal with fade-in
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    modal.firstElementChild?.classList.remove('scale-95')
+    modal.firstElementChild?.classList.add('scale-100')
+  })
+}
+
+/**
+ * Close the save set modal.
+ */
+function closeSaveSetModal() {
+  const modal = document.getElementById('saveSetModal')
+  if (!modal) return
+  modal.style.opacity = '0'
+  modal.firstElementChild?.classList.remove('scale-100')
+  modal.firstElementChild?.classList.add('scale-95')
+  setTimeout(() => { modal.classList.add('hidden') }, 200)
+}
+
+/**
+ * Persist the current state to a new saved set.  This function is
+ * invoked by the save set confirm button.  It displays a spinner while
+ * saving, updates the dropdown, selects the new set and closes the
+ * modal when complete.
+ */
+function saveNewSet() {
+  const spinner = document.getElementById('saveSetSpinner')
+  const label = document.getElementById('saveSetConfirmLabel')
+  if (spinner && label) {
+    spinner.classList.remove('hidden')
+    label.textContent = 'Saving'
+  }
+  // Save the state
+  const snapshot = getCurrentPlayerState()
+  savedSets.push(snapshot)
+  // Determine new index
+  const newIndex = savedSets.length - 1
+  // Update dropdown and select new set
+  updateSavedSetsDropdown()
+  const dropdown = document.getElementById('savedSetsDropdown')
+  if (dropdown) {
+    dropdown.value = String(newIndex)
+  }
+  currentSavedSetIndex = newIndex
+  // Hide spinner and close modal
+  if (spinner && label) {
+    spinner.classList.add('hidden')
+    label.textContent = 'Save'
+  }
+  closeSaveSetModal()
+}
+
+/**
+ * Cancel loading of a saved set.  This reverts the dropdown to the
+ * previously selected set (currentSavedSetIndex) and closes the modal.
+ */
+function cancelLoadSet() {
+  // Revert dropdown to previous selection
+  const dropdown = document.getElementById('savedSetsDropdown')
+  if (dropdown) {
+    if (currentSavedSetIndex != null) {
+      dropdown.value = String(currentSavedSetIndex)
+    } else {
+      dropdown.value = ''
+    }
+  }
+  closeLoadSetModal()
+}
+
+/**
+ * Confirm loading of a saved set.  After the set is loaded, the
+ * dropdown selection is updated to reflect the loaded set and the
+ * currentSavedSetIndex is updated.  The modal is closed when done.
+ * @param {number} idx Index of the set to load
+ */
+async function confirmLoadSet(idx) {
+  // Guard invalid indices
+  if (isNaN(idx) || idx < 0 || idx >= savedSets.length) {
+    cancelLoadSet()
+    return
+  }
+  // Show spinner on confirm button
+  const confirmBtn = document.getElementById('loadSetConfirmBtn')
+  const spinner = document.getElementById('loadSetSpinner')
+  const label = document.getElementById('loadSetConfirmLabel')
+  if (spinner && label) {
+    spinner.classList.remove('hidden')
+    label.textContent = 'Loading'
+  }
+  await loadSavedSet(idx)
+  // After loadSavedSet returns, update the current set index and dropdown selection
+  currentSavedSetIndex = idx
+  const dropdown = document.getElementById('savedSetsDropdown')
+  if (dropdown) dropdown.value = String(idx)
+  // Hide spinner
+  if (spinner && label) {
+    spinner.classList.add('hidden')
+    label.textContent = 'Load'
+  }
+  // Note: loadSavedSet() closes the modal
+}
+
+/**
+ * Open the download all confirmation modal.
+ */
+function openDownloadConfirmModal() {
+  const modal = document.getElementById('downloadConfirmModal')
+  if (!modal) return
+  // Reset spinner and label
+  const spinner = document.getElementById('downloadConfirmSpinner')
+  const label = document.getElementById('downloadConfirmLabel')
+  if (spinner) spinner.classList.add('hidden')
+  if (label) label.textContent = 'Download'
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    modal.firstElementChild?.classList.remove('scale-95')
+    modal.firstElementChild?.classList.add('scale-100')
+  })
+}
+
+/**
+ * Close the download confirmation modal.
+ */
+function closeDownloadConfirmModal() {
+  const modal = document.getElementById('downloadConfirmModal')
+  if (!modal) return
+  modal.style.opacity = '0'
+  modal.firstElementChild?.classList.remove('scale-100')
+  modal.firstElementChild?.classList.add('scale-95')
+  setTimeout(() => { modal.classList.add('hidden') }, 200)
+}
+
+/**
+ * Execute the download of all active stems after user confirmation.  A
+ * spinner is shown on the confirm button while the download is in
+ * progress.  The modal is closed after the download starts.
+ */
+function confirmDownloadAll() {
+  const spinner = document.getElementById('downloadConfirmSpinner')
+  const label = document.getElementById('downloadConfirmLabel')
+  if (spinner && label) {
+    spinner.classList.remove('hidden')
+    label.textContent = 'Downloading'
+  }
+  // Initiate download of all active stems
+  downloadAllActiveStems()
+  // After initiating, hide modal and reset
+  if (spinner && label) {
+    spinner.classList.add('hidden')
+    label.textContent = 'Download'
+  }
+  closeDownloadConfirmModal()
 }
 
 // Per‑stem UI state for waveform editing.  When true for a given stem, the
@@ -2432,9 +2654,13 @@ function setupEventListeners() {
   const mixerCloseBtn = document.getElementById('mixerCloseBtn')
   if (mixerCloseBtn) mixerCloseBtn.addEventListener('click', () => setMixerOpen(false))
 
-  // Download all button: save all active stems to WAV files
+  // Download all button: prompt the user to confirm downloading all files
   const downloadAllBtn = document.getElementById('downloadAllBtn')
-  if (downloadAllBtn) downloadAllBtn.addEventListener('click', () => downloadAllActiveStems())
+  if (downloadAllBtn) {
+    downloadAllBtn.addEventListener('click', () => {
+      openDownloadConfirmModal()
+    })
+  }
 
   // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
   const genCancelBtn = document.getElementById('generateSettingsCancelBtn')
@@ -3194,6 +3420,14 @@ function initTechnoGenerator(){
 
   // Initialise saved state feature (save/load sets)
   initSavedStateFeature()
+
+  // Close mixer when tapping/clicking on the blurred overlay outside of it
+  const mixerOverlay = document.getElementById('mixerOverlay')
+  if (mixerOverlay) {
+    mixerOverlay.addEventListener('click', () => {
+      setMixerOpen(false)
+    })
+  }
 
   // Create tooltip element for mixer sliders if it does not already exist
   if (!sliderTooltipEl) {
