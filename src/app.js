@@ -1636,6 +1636,8 @@ function openWaveformEditModal(st) {
   if (!modal) return
   waveformEditState.isOpen = true
   waveformEditState.stem = st
+  // Prevent background scrolling and interaction while the modal is open
+  document.body.style.overflow = 'hidden'
   // Store current values so we can revert on discard
   waveformEditState.prevVolume = stemControlValues[st]?.volume ?? 80
   waveformEditState.prevEndpointFactor = endpointFactors[st] ?? 1
@@ -1765,6 +1767,9 @@ function closeWaveformEditModal(save) {
   }
   waveformEditState.isOpen = false
   waveformEditState.stem = null
+
+  // Restore scrolling once the modal has closed
+  document.body.style.overflow = ''
 }
 
 /* =========================================================
