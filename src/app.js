@@ -1521,6 +1521,16 @@ function handleEndpointSlider(st, val) {
   // Map slider range 50–150 to a factor 0.5–1.5.  Clamp between 0.1 and 3.0 for safety.
   const factor = Math.max(0.1, Math.min(rawVal / 100, 3))
   endpointFactors[st] = factor
+  // Persist the endpoint factor on the active take so that when the user
+  // switches takes the correct stretch is restored.  Without this the
+  // endpoint factor may carry over between takes, causing unexpected
+  // changes when navigating through the history.
+  {
+    const idx = stemActiveIndex[st]
+    if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
+      stemHistory[st][idx].endpointFactor = factor
+    }
+  }
   adjustEndpoint(st, factor)
 }
 
@@ -3724,21 +3734,24 @@ function showSessionSetupModal() {
   const rootSelector = document.getElementById('setupRootSelector')
   const accidentalSelector = document.getElementById('setupAccidentalSelector')
   const modeSelector = document.getElementById('setupModeSelector')
+  // The cancel button has been removed (the session setup cannot be dismissed).  It may
+  // still exist in older templates, but we treat it as optional.
   const cancelBtn = document.getElementById('setupCancelBtn')
   const saveBtn = document.getElementById('setupSaveBtn')
-  if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !cancelBtn || !saveBtn) return
+  if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !saveBtn) return
   // Update displayed tempo when slider moves
   tempoSlider.addEventListener('input', e => {
     const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
     tempoValue.textContent = String(val)
   })
-  // Cancel button closes modal without locking settings
-  cancelBtn.addEventListener('click', () => {
-    modal.style.opacity = '0'
-    setTimeout(() => { modal.classList.add('hidden') }, 300)
-    // Restore page scrolling when the session setup modal is closed
-    document.body.style.overflow = ''
-  })
+  // If a cancel button exists (legacy HTML), wire it to simply hide the modal.
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      modal.style.opacity = '0'
+      setTimeout(() => { modal.classList.add('hidden') }, 300)
+      document.body.style.overflow = ''
+    })
+  }
   // Save button applies settings and locks them
   saveBtn.addEventListener('click', () => {
     const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
