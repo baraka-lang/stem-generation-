@@ -92,6 +92,298 @@ const prevSoloMuteStates = {}
 const stemEqValues = {}
 const stemFilterValues = {}
 
+/* =========================================================
+   Saved Sets (Player State Snapshots)
+   ========================================================= */
+
+// Array of saved player states.  Each entry is an object capturing
+// the current stem version, mute status, volume, EQ settings,
+// filter settings and endpoint factor for every stem.  A saved
+// state can be restored later via the dropdown in the player bar.
+const savedSets = []
+
+/**
+ * Capture the current player state across all stems.  This includes
+ * the active take for each stem, its mute status, volume level,
+ * EQ bands, filter cutoff/mode and endpoint stretch factor.  The
+ * returned snapshot can be stored in savedSets and restored later.
+ * @returns {object} snapshot of the current player state
+ */
+function getCurrentPlayerState() {
+  const snapshot = { stems: {} }
+  STEM_ORDER.forEach(st => {
+    // ensure structures exist
+    const activeIndex = stemActiveIndex[st] ?? -1
+    const mute = !!stemMuteStates[st]
+    const vol = stemControlValues[st]?.volume ?? 80
+    const eq = { ...(stemEqValues[st] || {}) }
+    const filt = { ...(stemFilterValues[st] || {}) }
+    const endpoint = endpointFactors[st] ?? 1
+    snapshot.stems[st] = {
+      activeIndex,
+      mute,
+      volume: vol,
+      eq,
+      filter: filt,
+      endpoint
+    }
+  })
+  return snapshot
+}
+
+/**
+ * Refresh the session information displayed in the bottom player bar.  This
+ * helper derives the current master tempo, bar count and key from
+ * stemControlValues.master and updates the text elements.  Some stems
+ * may have been generated at different tempos/bars; however, the
+ * session master values remain fixed after setup and are shown here.
+ */
+function updateSessionInfoCard() {
+  const infoEl = document.getElementById('sessionInfoText')
+  const infoElMob = document.getElementById('sessionInfoTextMobile')
+  const master = stemControlValues.master || {}
+  // Use helper getRootText() to derive the proper root name with accidentals
+  const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || '')
+  const tempo = master.tempo ?? DEFAULT_TEMPO
+  const bars = master.bars ?? DEFAULT_BARS
+  const mode = master.mode ?? 'Minor'
+  const infoString = `${tempo} BPM • ${bars} bars • ${rootName} ${mode}`
+  if (infoEl) infoEl.textContent = infoString
+  if (infoElMob) infoElMob.textContent = infoString
+}
+
+/**
+ * Restore a previously saved player state.  This function iterates
+ * through each stem and applies the saved settings: select the
+ * appropriate take, set volume, mute/unmute, apply EQ and filter
+ * values and adjust the endpoint stretch.  UI and audio nodes are
+ * updated accordingly.  Returns a Promise that resolves once all
+ * stems have been restored.  While the restoration is largely
+ * synchronous, wrapping it in a Promise allows the caller to await
+ * completion before closing modals or spinners.
+ * @param {object} snapshot The saved state to apply
+ */
+async function applyPlayerState(snapshot) {
+  if (!snapshot || !snapshot.stems) return
+  // For each stem in the order, restore its state
+  for (const st of STEM_ORDER) {
+    const saved = snapshot.stems[st]
+    if (!saved) continue
+    // Select take if index is valid
+    if (typeof saved.activeIndex === 'number' && saved.activeIndex >= 0) {
+      selectStemVersion(st, saved.activeIndex)
+    }
+    // Volume
+    if (typeof saved.volume === 'number') {
+      setVolumeUnified(st, saved.volume)
+    }
+    // Mute state
+    if (typeof saved.mute === 'boolean') {
+      if (!!stemMuteStates[st] !== saved.mute) {
+        toggleMute(st)
+      }
+    }
+    // EQ bands
+    if (saved.eq) {
+      const eqVals = saved.eq
+      if (typeof eqVals.low === 'number') setEqValue(st, 'low', eqVals.low)
+      if (typeof eqVals.mid === 'number') setEqValue(st, 'mid', eqVals.mid)
+      if (typeof eqVals.high === 'number') setEqValue(st, 'high', eqVals.high)
+    }
+    // Filter cutoff and mode
+    if (saved.filter) {
+      const f = saved.filter
+      // cutoff value (0-100)
+      if (typeof f.cutoff === 'number') setFilterCutoff(st, f.cutoff)
+      // mode (lowpass/highpass)
+      if (f.mode && stemFilterValues[st]?.mode !== f.mode) {
+        // toggle until mode matches
+        if ((stemFilterValues[st]?.mode || 'lowpass') !== f.mode) {
+          toggleFilterMode(st)
+        }
+      }
+    }
+    // Endpoint factor
+    if (typeof saved.endpoint === 'number') {
+      endpointFactors[st] = saved.endpoint
+      adjustEndpoint(st, saved.endpoint)
+    }
+  }
+  // After restoring all stems, update session info display since tempo/bars
+  // might change when selecting a different take.
+  updateSessionInfoCard()
+  // Update mixer panels and other UI (history indicators, card colours)
+  STEM_ORDER.forEach(st => {
+    updateHistoryIndicator(st)
+    updateCardNumberColor(st)
+    updateMutedBorder(st)
+    updateTempoIndicator(st)
+  })
+  return
+}
+
+/**
+ * Refresh the options in the saved sets dropdown based on the
+ * current savedSets array.  The dropdown displays "Set 1", "Set 2", etc.
+ * The placeholder option remains at the top with an empty value.
+ */
+function updateSavedSetsDropdown() {
+  const dd = document.getElementById('savedSetsDropdown')
+  if (!dd) return
+  // Clear current options except the placeholder
+  dd.innerHTML = ''
+  const placeholder = document.createElement('option')
+  placeholder.value = ''
+  placeholder.textContent = '------'
+  dd.appendChild(placeholder)
+  savedSets.forEach((set, idx) => {
+    const opt = document.createElement('option')
+    opt.value = String(idx)
+    opt.textContent = `Set ${idx + 1}`
+    dd.appendChild(opt)
+  })
+}
+
+/**
+ * Persist the current player state into the savedSets array.  After saving,
+ * the dropdown is refreshed to include the new entry.  No user
+ * confirmation is required when saving; the action always succeeds.
+ */
+function saveCurrentPlayerState() {
+  const snapshot = getCurrentPlayerState()
+  savedSets.push(snapshot)
+  updateSavedSetsDropdown()
+}
+
+// ------------------------- Load Set Modal handlers -------------------------
+
+/**
+ * Open the load set confirmation modal for the given saved set index.  This
+ * populates the description text, shows the modal and attaches event
+ * handlers to the confirm and cancel buttons.  The dropdown is reset
+ * after invocation, so the user must select again if they cancel.
+ * @param {number} index Index of the set in savedSets
+ */
+function openLoadSetModal(index) {
+  const modal = document.getElementById('loadSetModal')
+  if (!modal) return
+  const desc = document.getElementById('loadSetDescription')
+  if (desc) desc.textContent = `Load Set ${index + 1}? This will replace your current mix.`
+  // Store index on confirm button for reference
+  const confirmBtn = document.getElementById('loadSetConfirmBtn')
+  if (confirmBtn) confirmBtn.setAttribute('data-set-index', String(index))
+  // Reset spinner and label
+  const spinner = document.getElementById('loadSetSpinner')
+  const label = document.getElementById('loadSetConfirmLabel')
+  if (spinner) spinner.classList.add('hidden')
+  if (label) label.textContent = 'Load'
+  // Show modal with fade-in
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    modal.firstElementChild?.classList.remove('scale-95')
+    modal.firstElementChild?.classList.add('scale-100')
+  })
+}
+
+/**
+ * Close the load set modal without taking any action.  This resets
+ * opacity/scale transitions and clears any stored index on the confirm
+ * button.  Should be called when the user cancels or after loading.
+ */
+function closeLoadSetModal() {
+  const modal = document.getElementById('loadSetModal')
+  if (!modal) return
+  // Hide modal with fade-out
+  modal.style.opacity = '0'
+  modal.firstElementChild?.classList.remove('scale-100')
+  modal.firstElementChild?.classList.add('scale-95')
+  setTimeout(() => {
+    modal.classList.add('hidden')
+  }, 200)
+  // Clear the stored index
+  const confirmBtn = document.getElementById('loadSetConfirmBtn')
+  if (confirmBtn) confirmBtn.removeAttribute('data-set-index')
+}
+
+/**
+ * Restore the saved set at the specified index.  Shows a loading spinner
+ * while applyPlayerState runs.  When the state has been applied,
+ * hides the modal.  If the index is invalid, simply close the modal.
+ * @param {number} index Index of the saved set to load
+ */
+async function loadSavedSet(index) {
+  if (index == null || index < 0 || index >= savedSets.length) {
+    closeLoadSetModal()
+    return
+  }
+  const confirmBtn = document.getElementById('loadSetConfirmBtn')
+  const spinner = document.getElementById('loadSetSpinner')
+  const label = document.getElementById('loadSetConfirmLabel')
+  if (confirmBtn && spinner && label) {
+    // Show spinner and hide label
+    label.textContent = 'Loading'
+    spinner.classList.remove('hidden')
+  }
+  const snapshot = savedSets[index]
+  try {
+    await applyPlayerState(snapshot)
+  } catch (err) {
+    console.error('Failed to apply saved set', err)
+  }
+  // Hide spinner and close modal
+  if (confirmBtn && spinner && label) {
+    spinner.classList.add('hidden')
+    label.textContent = 'Load'
+  }
+  closeLoadSetModal()
+}
+
+/**
+ * Set up the saved state feature: attach listeners to the save button,
+ * dropdown and modal buttons.  Call this once after the player bar and
+ * mixer have been initialised.
+ */
+function initSavedStateFeature() {
+  const saveBtn = document.getElementById('saveStateBtn')
+  if (saveBtn) {
+    saveBtn.addEventListener('click', () => {
+      saveCurrentPlayerState()
+    })
+  }
+  const dropdown = document.getElementById('savedSetsDropdown')
+  if (dropdown) {
+    dropdown.addEventListener('change', (e) => {
+      const val = e.target.value
+      if (!val) return
+      const index = parseInt(val, 10)
+      if (!isNaN(index)) openLoadSetModal(index)
+      // Reset dropdown to placeholder after selection
+      e.target.value = ''
+    })
+  }
+  // Cancel button on load set modal
+  const cancelBtn = document.getElementById('loadSetCancelBtn')
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      closeLoadSetModal()
+    })
+  }
+  // Confirm button on load set modal
+  const confirmBtn = document.getElementById('loadSetConfirmBtn')
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', () => {
+      const idxAttr = confirmBtn.getAttribute('data-set-index')
+      const idx = idxAttr ? parseInt(idxAttr, 10) : NaN
+      if (!isNaN(idx)) {
+        loadSavedSet(idx)
+      } else {
+        closeLoadSetModal()
+      }
+    })
+  }
+}
+
 // Per‑stem UI state for waveform editing.  When true for a given stem, the
 // take navigation arrows on that waveform are hidden and the horizontal
 // dial overlay for adjusting volume and the endpoint is shown.  Use
@@ -2899,6 +3191,9 @@ function initTechnoGenerator(){
   // Build docked mixer
   buildFloatingMixerPanel()
   setMixerOpen(false) // hidden by default
+
+  // Initialise saved state feature (save/load sets)
+  initSavedStateFeature()
 
   // Create tooltip element for mixer sliders if it does not already exist
   if (!sliderTooltipEl) {
