@@ -348,8 +348,9 @@
           </select>
         </div>
       </div>
-      <div class="flex justify-end gap-3 mt-6">
-        <button id="setupCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+      <div class="flex justify-end mt-6">
+        <!-- Only a single Start button is provided.  The session setup cannot be dismissed
+             without starting, ensuring the user commits to the selected tempo/bars. -->
         <button id="setupSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Start Session</button>
       </div>
     </div>
