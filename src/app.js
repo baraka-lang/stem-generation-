@@ -430,6 +430,40 @@ function initSavedStateFeature() {
   }
 }
 
+/* =========================================================
+   Header User Menu
+   ========================================================= */
+/**
+ * Initialise the user avatar menu in the header.  When the avatar
+ * button is clicked, a dropdown menu appears with credits, library,
+ * account and logout options.  Clicking outside the menu closes it.
+ */
+function setupUserMenu() {
+  const btn = document.getElementById('userMenuBtn')
+  const menu = document.getElementById('userMenu')
+  if (!btn || !menu) return
+  // Toggle menu visibility on button click
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const isHidden = menu.classList.contains('hidden')
+    if (isHidden) {
+      menu.classList.remove('hidden')
+      btn.setAttribute('aria-expanded', 'true')
+    } else {
+      menu.classList.add('hidden')
+      btn.setAttribute('aria-expanded', 'false')
+    }
+  })
+  // Hide the menu when clicking outside
+  document.addEventListener('click', (e) => {
+    if (menu.classList.contains('hidden')) return
+    const target = e.target
+    if (menu.contains(target) || btn.contains(target)) return
+    menu.classList.add('hidden')
+    btn.setAttribute('aria-expanded', 'false')
+  })
+}
+
 /**
  * Open the save set confirmation modal.  This prompts the user to
  * save the current state to a new set.  The next set number is
@@ -2956,15 +2990,19 @@ function setupEventListeners() {
     const step = stepAttr ? parseFloat(stepAttr) || 0 : 0
     if (!type || !st || !step) return
     if (type === 'volume') {
-      // Adjust volume by 1 unit per step
+      // Adjust volume by ±1 unit per step (interpreted as approximately 1 dB)
       const current = stemControlValues[st]?.volume ?? 80
       let newVal = current + step
       newVal = Math.max(0, Math.min(100, newVal))
       setVolumeUnified(st, newVal)
     } else if (type === 'endpoint') {
-      // Adjust endpoint factor by a small increment (0.05 per step) to allow fine control
+      // Adjust endpoint factor by ±1/128th of a bar per step.  Compute the
+      // adjustment based on the current master bar count.  Bars default to
+      // DEFAULT_BARS if not set.  The delta is positive when step is
+      // positive and negative otherwise.
       const current = endpointFactors[st] ?? 1
-      const delta = 0.05 * step
+      const bars = stemControlValues.master?.bars ?? DEFAULT_BARS
+      const delta = (1 / (bars * 128)) * step
       let newVal = current + delta
       newVal = Math.max(0.1, Math.min(3, newVal))
       endpointFactors[st] = newVal
@@ -3470,6 +3508,8 @@ export async function initApp(){
   showPage('selection-page')
   window.lucide?.createIcons()
   setupHelpModal()
+  // Initialise the user menu in the header
+  setupUserMenu()
   console.log('✅ Navigation system ready')
 }
 
