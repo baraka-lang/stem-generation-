@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>AI Music Studio</title>
+  <title>AI Studio</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/lucide@latest"></script>
   <link rel="stylesheet" href="/styles.css" />
@@ -189,15 +189,25 @@
 <!-- Thin header with Library + Credits:100 + Account -->
 <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
   <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between">
-    <div class="text-sm text-white/70">AI Music Studio</div>
-    <nav class="flex items-center gap-2">
+    <div class="text-sm text-white/70">AI Studio</div>
+    <nav class="flex items-center gap-2 relative">
       <!-- Help button to open usage info -->
       <button id="helpBtn" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
         <i data-lucide="help-circle" class="w-4 h-4"></i>
       </button>
-      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Credits: 100</button>
-      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Library</button>
-      <button class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10">Account</button>
+      <!-- User menu button: circular avatar icon triggers dropdown -->
+      <button id="userMenuBtn" class="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10" aria-haspopup="true" aria-expanded="false" title="User menu">
+        <i data-lucide="user" class="w-4 h-4"></i>
+      </button>
+      <!-- Dropdown menu for user actions -->
+      <div id="userMenu" class="absolute right-0 mt-2 w-40 player-surface card-border border border-white/10 rounded-md shadow-lg hidden z-40">
+        <div class="px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center">
+          <span>Credits</span> <span id="headerCreditsValue" class="font-medium">100</span>
+        </div>
+        <button id="userMenuLibrary" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Library</button>
+        <button id="userMenuAccount" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Account</button>
+        <button id="userMenuLogout" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Log out</button>
+      </div>
     </nav>
   </div>
 </header>
