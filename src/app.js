@@ -1220,6 +1220,74 @@ async function ensureAudioContext() {
     masterGain.gain.setValueAtTime(0.9, audioContext.currentTime)
     masterGain.connect(audioContext.destination)
 
+      // On iOS 17+ devices, the Audio Session API allows web apps to specify
+      // the intended audio behaviour.  When the phone's ringer switch is set
+      // to silent, web audio is muted unless the session type is set to
+      // "playback"【76389239852111†L94-L98】.  Attempting to set
+      // navigator.audioSession.type informs the browser that audio is
+      // essential and should ignore the silent switch.  Wrap in try/catch
+      // because this API is only available in some Safari versions.
+      try {
+        if (navigator?.audioSession && navigator.audioSession.type !== 'playback') {
+          navigator.audioSession.type = 'playback'
+        }
+      } catch (err) {
+        console.warn('Failed to set navigator.audioSession.type:', err)
+      }
+
+      // ----------------------------------------------------------------------
+      // Fallback for devices/browsers where navigator.audioSession is
+      // unavailable (pre‑iOS 17 and some Android browsers).  On these
+      // platforms, web audio will be muted if the hardware ringer switch is
+      // set to silent.  To unmute web audio, we play a very short silent
+      // MP3 via a temporary <audio> element and also trigger a one‑sample
+      // buffer through a secondary AudioContext.  This pattern is based on
+      // community recommendations and WaveSurfer’s ignoreSilenceMode
+      // implementation and ensures that the browser promotes the audio
+      // session to media playback【76389239852111†L94-L98】.  Because the
+      // silent track is inaudible and removed immediately after playback
+      // begins, it does not disturb the user.  We only execute this once
+      // and only when navigator.audioSession is not present.
+      try {
+        if (!navigator?.audioSession) {
+          // Define a no‑op flag to prevent multiple invocations.
+          if (!window.__sg_ignore_silent_mode_ran__) {
+            window.__sg_ignore_silent_mode_ran__ = true
+            ;(function playSilent() {
+              try {
+                // 1. Create a throwaway AudioContext and play a single sample
+                const ac2 = new (window.AudioContext || window.webkitAudioContext)()
+                const buf = ac2.createBuffer(1, 1, 44100)
+                const src = ac2.createBufferSource()
+                src.buffer = buf
+                src.connect(ac2.destination)
+                src.start(0)
+                // 2. Create an <audio> element with a short silent MP3 (3 ms)
+                const audio = document.createElement('audio')
+                // iOS requires playsinline and denies AirPlay for such sounds
+                audio.setAttribute('playsinline', '')
+                audio.setAttribute('x-webkit-airplay', 'deny')
+                // Base64‑encoded 3ms silent MP3
+                audio.src =
+                  'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU2LjM2LjEwMAAAAAAAAAAAAAAA//OEAAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAAEAAABIADAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV6urq6urq6urq6urq6urq6urq6urq6urq6v////////////////////////////////////////////////////////////////////////////////8AAAAATGF2YzU2LjQxAAAAAAAAAAAAAAAAJAAAAAAAAAAAASDs90hvAAAAAAAAAAAAAAAAAA//MUZAAAAAGkAAAAAAAAA0gAAAAATEFN//MUZAMAAAGkAAAAAAAAA0gAAAAARTMu//MUZAYAAAGkAAAAAAAAA0gAAAAAOTku//MUZAkAAAGkAAAAAAAAA0gAAAAANVVV'
+                audio.volume = 0
+                // Load and play the silent audio; catch errors silently
+                const playPromise = audio.play()
+                if (playPromise && playPromise.catch) {
+                  playPromise.catch(() => {})
+                }
+                // Remove the element after a brief delay
+                setTimeout(() => {
+                  if (audio.parentNode) audio.parentNode.removeChild(audio)
+                }, 1000)
+              } catch (inner) {
+                console.warn('silent mode fallback failed', inner)
+              }
+            })()
+          }
+        }
+      } catch (ignored) {}
+
     // Handle platform interruptions such as phone calls.  On some
     // mobile browsers (e.g. iOS Safari) receiving a call causes the
     // AudioContext state to transition to "interrupted".  In this
@@ -2131,7 +2199,26 @@ async function generateStem(st) {
         : (tier > 0 ? `${base} — strict tier ${tier + 1}` : `${base}`)
     }
 
-    if (isPlaying) restartStemNextBoundary(st)
+    if (isPlaying) {
+      // If the transport is currently running, schedule this stem to restart
+      // at the next bar boundary so it aligns with the other loops.
+      restartStemNextBoundary(st)
+    } else {
+      // If nothing is playing yet and we have at least one stem ready,
+      // automatically start the transport.  Because the generation is
+      // initiated by a user gesture (the stem creation button), browsers
+      // permit autoplay here.  Count only non‑null loops to determine
+      // whether this is the first generated stem.
+      const readyLoops = Object.keys(stemLoop).filter(id => !!stemLoop[id]).length
+      if (readyLoops > 0) {
+        try {
+          await ensureAudioContext()
+          startTransport()
+        } catch (err) {
+          console.warn('Failed to auto‑start transport:', err)
+        }
+      }
+    }
     updateMixerGlow(st)
     updateCardNumberColor(st)
     updateHistoryIndicator(st)
