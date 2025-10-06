@@ -1219,8 +1219,50 @@ async function ensureAudioContext() {
     masterGain = audioContext.createGain()
     masterGain.gain.setValueAtTime(0.9, audioContext.currentTime)
     masterGain.connect(audioContext.destination)
+
+    // Handle platform interruptions such as phone calls.  On some
+    // mobile browsers (e.g. iOS Safari) receiving a call causes the
+    // AudioContext state to transition to "interrupted".  In this
+    // state, audio output is muted and resume() must be called once
+    // the interruption ends【739661679219257†L232-L244】.  Attach
+    // listeners to automatically resume the context whenever its
+    // state transitions to suspended or interrupted, and whenever
+    // the page becomes visible again.  These listeners fire even
+    // without explicit user gestures, which is permitted when resuming
+    // from an interruption.
+    const resumeIfPaused = async () => {
+      if (!audioContext) return
+      const st = audioContext.state
+      if (st !== 'running') {
+        try {
+          await audioContext.resume()
+        } catch (err) {
+          // Some browsers may reject resume() if hardware is still
+          // unavailable (e.g. during an ongoing call).  Log and
+          // silently ignore; playback will resume on the next attempt.
+          console.warn('AudioContext resume failed:', err)
+        }
+      }
+    }
+    // Resume on statechange if the context leaves running state
+    audioContext.addEventListener('statechange', () => {
+      const st = audioContext.state
+      if (st === 'suspended' || st === 'interrupted') {
+        resumeIfPaused()
+      }
+    })
+    // Resume when the page/tab becomes visible again
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        resumeIfPaused()
+      }
+    })
   }
-  if (audioContext.state === 'suspended') await audioContext.resume()
+  // If the context is paused (either suspended or interrupted), resume it.
+  // The state property can be "suspended" or "interrupted" when the
+  // audio hardware is not available.  In both cases, resume() will
+  // restart the audio clock and restore playback【739661679219257†L232-L244】.
+  if (audioContext.state !== 'running') await audioContext.resume()
 }
 function createEqNodes() {
   const low  = audioContext.createBiquadFilter()
