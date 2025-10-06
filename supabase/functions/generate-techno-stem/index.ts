@@ -73,7 +73,11 @@ function globalScaffold({ tempo, bars, root, mode }) {
     'Quantization: strict grid (no humanization)',
     'Delivery: instrumental only',
     // Absolute directive reinforcing loop length
-    `ABSOLUTE: The loop length must be exactly ${bars} bars at ${tempo} BPM; do not alter the tempo or add/remove bars`
+    `ABSOLUTE: The loop length must be exactly ${bars} bars at ${tempo} BPM; do not alter the tempo or add/remove bars`,
+    // Reinforce constant tempo.  Some users report subtle tempo drift; this
+    // statement makes explicit that the BPM cannot vary at all within the
+    // loop【690628932457069†L64-L80】.
+    `ABSOLUTE: Tempo must remain exactly ${tempo} BPM throughout; no variation or tempo drift`
   ].join('. ');
 }
 // Map a knob value to a rhythmic rate for arpeggiators.
@@ -493,7 +497,11 @@ function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
 function validateHihat(buf, bpm, bars) {
   const expected = bars * 16;
   const found = countOnsets(buf, 0.07, 0.35);
-  return found >= Math.max(10, Math.round(expected * 0.6));
+  // Raise the minimum required onsets to at least 80% of the expected hits.
+  // A stricter threshold ensures the hat pattern remains dense and avoids
+  // sparse or off‑time loops【721972514835288†L320-L324】.  We still allow a
+  // minimum of 10 hits in very short loops to avoid rejecting all outputs.
+  return found >= Math.max(10, Math.round(expected * 0.8));
 }
 // Validate a snare buffer: ensure hits at beat 2 and 4 of each bar.
 function validateSnare(buf, bpm, bars) {
