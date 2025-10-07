@@ -1571,10 +1571,8 @@ function toggleWaveformControls(st) {
   const cardEl = document.querySelector(`[data-stem="${st}"]`)
   if (!cardEl) return
   const overlay = cardEl.querySelector(`[data-stem-controls="${st}"]`)
-  const prevZoneBtn = cardEl.querySelector(`[data-action="prev-take"]`)
-  const nextZoneBtn = cardEl.querySelector(`[data-action="next-take"]`)
-  const prevZone = prevZoneBtn ? prevZoneBtn.closest('div') : null
-  const nextZone = nextZoneBtn ? nextZoneBtn.closest('div') : null
+  const prevZone = cardEl.querySelector(`[data-action="prev-take"]`)
+  const nextZone = cardEl.querySelector(`[data-action="next-take"]`)
   if (!overlay || !prevZone || !nextZone) return
   const currentlyHidden = overlay.classList.contains('hidden')
   if (currentlyHidden) {
@@ -2408,7 +2406,7 @@ function createBuilderStemCard(st, cfg){
   // rather than being drawn over the waveform.  Therefore, we no longer
   // include the overlay markup here.  Clicking on the waveform will open
   // the dedicated edit modal defined in index.html.
-  const waveformHTML = `\n        <div class="mb-2">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit label overlay: appears on hover to invite editing.  Pointer events are disabled so clicks pass through to the canvas. -->\n            <div class="absolute inset-0 flex items-center justify-center pointer-events-none text-white/70 text-[10px] uppercase tracking-wide opacity-0 group-hover:opacity-100 transition">\n              edit take\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each.  Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="prev-take" data-stem="${st}" type="button" title="Previous take">\n                <i data-lucide="chevron-left" class="w-5 h-5"></i>\n              </button>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto">\n              <button class="p-1 bg-transparent text-white flex items-center justify-center hover:bg-white/20 transition"\n                      data-action="next-take" data-stem="${st}" type="button" title="Next take">\n                <i data-lucide="chevron-right" class="w-5 h-5"></i>\n              </button>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  const waveformHTML = `\n        <div class="mb-2">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 left-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none transition-all duration-75 ease-linear opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit label overlay: appears on hover to invite editing.  Pointer events are disabled so clicks pass through to the canvas. -->\n            <div class="absolute inset-0 flex items-center justify-center pointer-events-none text-white/70 text-[10px] uppercase tracking-wide opacity-0 group-hover:opacity-100 transition">\n              edit take\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each.  Entire zone is clickable. Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Previous take"\n                 data-action="prev-take" data-stem="${st}" title="Previous take">\n              <i data-lucide="chevron-left" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Next take"\n                 data-action="next-take" data-stem="${st}" title="Next take">\n              <i data-lucide="chevron-right" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Volume dial: an infinite horizontal dial positioned between the
   // waveform and the create button.  A minus sign on the left and a plus
@@ -2448,15 +2446,6 @@ function createBuilderStemCard(st, cfg){
     // Apply responsive sizing for the create button's label and icon: make them 30% smaller on mobile.
     if (labelSpan) labelSpan.classList.add('text-xs', 'sm:text-sm')
     if (iconEl) iconEl.classList.add('w-3', 'h-3', 'sm:w-4', 'sm:h-4')
-    // Adjust arrow button padding to bring icons closer to the edges.  Remove px-2/py-1 and use p-1 instead.
-    const prevBtn = card.querySelector('[data-action="prev-take"]')
-    const nextBtn = card.querySelector('[data-action="next-take"]')
-    ;[prevBtn, nextBtn].forEach(btn => {
-      if (btn) {
-        btn.classList.remove('px-2', 'py-1')
-        btn.classList.add('p-1')
-      }
-    })
 
     // Remove the "Previous takes" label from the history drawer.  We leave only the close button.
     const historySpan = card.querySelector(`[data-history-drawer="${st}"] span`)
@@ -2901,6 +2890,20 @@ function setupEventListeners() {
     if (num && num >= 1 && num <= 9) {
       const st = STEM_ORDER[num - 1]
       if (st) toggleMute(st)
+    }
+  })
+
+  // Keyboard support for arrow zone buttons (Enter and Space keys)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      const target = e.target
+      if (target && target.hasAttribute('data-action') && target.getAttribute('role') === 'button') {
+        const action = target.getAttribute('data-action')
+        if (action === 'prev-take' || action === 'next-take') {
+          e.preventDefault()
+          target.click()
+        }
+      }
     }
   })
 

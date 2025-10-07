@@ -145,3 +145,16 @@ button[aria-disabled="true"] i {
     display: none !important;
   }
 }
+
+/* Focus states for arrow zone clickable areas */
+[data-action="prev-take"]:focus,
+[data-action="next-take"]:focus {
+  outline: 2px solid rgba(139, 92, 246, 0.6);
+  outline-offset: -2px;
+}
+
+[data-action="prev-take"]:focus-visible,
+[data-action="next-take"]:focus-visible {
+  outline: 2px solid rgba(139, 92, 246, 0.8);
+  outline-offset: -2px;
+}
