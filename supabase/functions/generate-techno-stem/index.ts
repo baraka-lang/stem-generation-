@@ -108,7 +108,7 @@ function roleDirectives(st, c) {
       // directives below.  When retrying with higher strictness, the
       // buildStemPrompt function appends stronger ABSOLUTE directives.
       return [
-        'ROLE: single isolated kick only',
+        'ROLE: single isolated kick only (Roland TR-909 voicing)',
         'Pattern: four-on-the-floor; exactly one kick hit on beats 1, 2, 3 and 4 of every bar (no extra hits)',
         'Pitch: unpitched; no tonal sub notes or toms; no tonal drops',
         `Decay: ${scaleKnob(c.decay, 'very short', 'short', 'medium', 'long', 'very long')}`,
@@ -195,6 +195,7 @@ function negatives(st) {
       'no rimshot',
       'no hi-hat',
       'no kick',
+      'no low-frequency thump',
       'no toms',
       'no melodic percussion',
       'no reverb tail',
@@ -269,6 +270,7 @@ function buildHihatPrompt(controls, master, strictness = 0) {
   const common = [
     'STEM: HIHAT — solo closed hi-hat only.',
     'Identity: crisp techno closed hi-hat.',
+    'Engine: Roland TR-909 closed hat; tight analog noise burst; zero bleed from other drums.',
     g,
     'ROLE: isolated closed hat (no open-hat).',
     'Pattern: strict 1/16 notes; first hit exactly at bar 1 beat 1; consistent every bar.',
@@ -278,9 +280,9 @@ function buildHihatPrompt(controls, master, strictness = 0) {
     'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
   ];
   if (strictness === 1) {
-    common.push('ABSOLUTE: Only closed-hat hits on a straight 1/16 grid; zero swing.');
+    common.push('ABSOLUTE: Only closed-hat hits on a straight 1/16 grid; zero swing.', 'ABSOLUTE: Preserve Roland TR-909 closed-hat timbre; no other drums.');
   } else if (strictness >= 2) {
-    common.push('MUST: closed-hat hits on each 1/16 step (16 hits/bar).', 'MUST: zero reverb tail at seam; gate hits before bar end.', 'MUST: exclude open hat, ride, shaker, snare, clap, toms, crashes.');
+    common.push('MUST: closed-hat hits on each 1/16 step (16 hits/bar).', 'MUST: zero reverb tail at seam; gate hits before bar end.', 'MUST: exclude open hat, ride, shaker, snare, clap, toms, crashes.', 'MUST: emulate Roland TR-909 closed-hat spectrum only.');
   }
   return common.join(' ');
 }
@@ -300,18 +302,19 @@ function buildSnarePrompt(controls, master, strictness = 0) {
   const common = [
     'STEM: SNARE — solo snare only.',
     'Identity: industrial techno snare; drum-machine style; no clap.',
+    'Engine: Roland TR-909 snare circuit; tuned noise burst plus resonant body; keep low-frequency thump minimal.',
     g,
     'ROLE: isolated electronic snare.',
     'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
     `Dynamics: ${intensity}; ${body}`,
     `Variation: ${varTxt} but positions remain 2 & 4.`,
-    'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam.',
+    'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam; absolutely no layered kick drum.',
     'Deliver a bar-perfect seamless loop aligned to bar boundaries.'
   ];
   if (strictness === 1) {
-    common.push('ABSOLUTE: only beat 2 and beat 4 per bar; no extra hits.', 'ABSOLUTE: no off-grid timing.');
+    common.push('ABSOLUTE: only beat 2 and beat 4 per bar; no extra hits.', 'ABSOLUTE: no off-grid timing.', 'ABSOLUTE: keep TR-909 snare tone only; do not mix in kick, clap or tom layers.');
   } else if (strictness >= 2) {
-    common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.');
+    common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.', 'MUST: zero kick/bass energy below 150 Hz; pure TR-909 snare body.');
   }
   return common.join(' ');
 }
@@ -405,9 +408,9 @@ function buildStemPrompt(st, controls, master, strictness = 0) {
     ];
     // Strictness tiers add increasingly strong mandates
     if (strictness === 1) {
-      basePrompt.push('ABSOLUTE: Only one kick hit on beats 1, 2, 3 and 4 per bar; no off-grid timing; no additional percussion.');
+      basePrompt.push('ABSOLUTE: Only one kick hit on beats 1, 2, 3 and 4 per bar; no off-grid timing; no additional percussion.', 'ABSOLUTE: Maintain pure Roland TR-909 kick voicing; do not layer snares, claps or bass notes.');
     } else if (strictness >= 2) {
-      basePrompt.push('MUST: exactly four kick hits per bar (beats 1, 2, 3, 4) and nothing else; exclude hi-hats, snares, claps, toms or any other drums; quantization must be perfect.');
+      basePrompt.push('MUST: exactly four kick hits per bar (beats 1, 2, 3, 4) and nothing else; exclude hi-hats, snares, claps, toms or any other drums; quantization must be perfect.', 'MUST: emulate Roland TR-909 kick circuit only; zero additional percussion or bass drones.');
     }
     return basePrompt.join(' ');
   }
@@ -493,6 +496,36 @@ function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
   }
   return peaks;
 }
+
+// Utility: compute RMS of an array using a stride to keep things light.
+function computeRms(data, step = 512) {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < data.length; i += step) {
+    const v = data[i];
+    sum += v * v;
+    n++;
+  }
+  return n > 0 ? Math.sqrt(sum / n) : 0;
+}
+
+// Utility: compute a 1-pole low-pass filtered RMS to detect kick energy
+// bleeding into the snare stem.  A large ratio between low-band and
+// full-band RMS indicates an unwanted kick/thump is present.
+function computeLowBandRms(data, sr, cutoffHz = 180) {
+  if (!data.length) return 0;
+  const dt = 1 / sr;
+  const rc = 1 / (2 * Math.PI * Math.max(10, cutoffHz));
+  const alpha = dt / (rc + dt);
+  let y = 0;
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    const x = data[i];
+    y = y + alpha * (x - y);
+    sum += y * y;
+  }
+  return Math.sqrt(sum / data.length);
+}
 // Validate a hi-hat buffer: expect ~16 hits per bar; accept if at
 // least 60% of expected hits are present.
 function validateHihat(buf, bpm, bars) {
@@ -511,6 +544,13 @@ function validateSnare(buf, bpm, bars) {
   const barSec = 4 * (60 / bpm);
   const beatSec = 60 / bpm;
   const tol = Math.round(40 / 1000 * sr);
+  const fullRms = computeRms(x, 256);
+  if (fullRms > 0) {
+    const lowRms = computeLowBandRms(x, sr, 170);
+    if (lowRms / fullRms > 0.48) {
+      return false;
+    }
+  }
   // Helper to detect a peak near the given sample index.  Computes an
   // RMS in a small window and sets a threshold relative to that RMS.  If
   // any sample exceeds the threshold, we consider a hit present.
@@ -761,6 +801,23 @@ function applySeamCrossfadeArray(chans, sr, xfadeMs) {
     d[n - 1] = d[0];
   }
 }
+
+function applyHighPassArray(chans, sr, cutoffHz = 180) {
+  const dt = 1 / sr;
+  const rc = 1 / (2 * Math.PI * Math.max(10, cutoffHz));
+  const alpha = rc / (rc + dt);
+  for (const d of chans) {
+    let prevY = 0;
+    let prevX = d[0] || 0;
+    for (let i = 0; i < d.length; i++) {
+      const x = d[i];
+      const y = alpha * (prevY + x - prevX);
+      d[i] = y;
+      prevY = y;
+      prevX = x;
+    }
+  }
+}
 // Convert channel arrays back to a PCM16 WAV.  Borrowed from loop-fix.
 function makeWavFromPCM16(chans, sr) {
   const ch = chans.length;
@@ -992,16 +1049,36 @@ Deno.serve(async (req)=>{
     // Convert raw PCM to channel arrays for trimming
     const pcm = convertRawPCMToChans(rawPCM, channels, sampleRate);
     // Compute trimming parameters
-    const targetFrames = Math.round(bars * 4 * (60 / tempo) * sampleRate);
+    const framesPerBeatFloat = sampleRate * (60 / tempo);
+    const framesPerBeatInt = Math.max(1, Math.round(framesPerBeatFloat));
+    let targetFrames = framesPerBeatInt * 4 * bars;
+    if (targetFrames > pcm.length) {
+      const beatMultiple = Math.max(1, Math.floor(pcm.length / framesPerBeatInt));
+      targetFrames = Math.max(framesPerBeatInt, beatMultiple * framesPerBeatInt);
+    }
     const headIdx = detectHeadIndexArray(pcm.data[0], sampleRate);
     const xfadeMs = 12;
     const xfadeN = Math.max(2, Math.round(xfadeMs / 1000 * sampleRate));
     const bestOff = findBestSeamOffsetArray(pcm.data[0], headIdx, targetFrames, xfadeN, sampleRate);
-    const start = mod(headIdx + bestOff, pcm.length);
+    let start = mod(headIdx + bestOff, pcm.length);
+    const framesPerBeat = framesPerBeatFloat;
+    if (Number.isFinite(framesPerBeat) && framesPerBeat > 0) {
+      const quantStart = Math.round(start / framesPerBeat) * framesPerBeat;
+      if (Number.isFinite(quantStart) && Math.abs(quantStart - start) <= framesPerBeat * 0.35) {
+        start = Math.max(0, Math.min(pcm.length - 1, Math.round(quantStart)));
+      } else {
+        start = Math.round(start);
+      }
+    } else {
+      start = Math.round(start);
+    }
     const trimmed = sliceWrapArray(pcm.data, start, targetFrames);
     // Apply ramps and crossfade
     applyEdgeRampsArray(trimmed, sampleRate, 5);
     applySeamCrossfadeArray(trimmed, sampleRate, xfadeMs);
+    if (stem === 'perc') {
+      applyHighPassArray(trimmed, sampleRate, 180);
+    }
     const outBytes = makeWavFromPCM16(trimmed, sampleRate);
     // Encode to base64
     let binary = '';
