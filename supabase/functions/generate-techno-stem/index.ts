@@ -21,10 +21,10 @@ const corsHeaders = {
 // omitted.
 const stemConfigs = {
   kick: {
-    basePrompt: 'deep techno kick drum'
+    basePrompt: 'deep TR-909 style techno kick drum'
   },
   perc: {
-    basePrompt: 'industrial techno snare'
+    basePrompt: 'industrial TR-909 techno snare'
   },
   bass: {
     basePrompt: 'dark techno bassline'
@@ -33,7 +33,7 @@ const stemConfigs = {
     basePrompt: 'hypnotic techno lead synth'
   },
   hihat: {
-    basePrompt: 'crisp techno closed hi-hat'
+    basePrompt: 'crisp TR-909 closed hi-hat'
   },
   pad: {
     basePrompt: 'ambient techno pad'
@@ -70,6 +70,7 @@ function globalScaffold({ tempo, bars, root, mode }) {
     'Start: bar 1 beat 1 (no count-in; no pre-roll)',
     `End: precisely at end of bar ${bars} (no tail; no reverb/delay bleed)`,
     'Loop: seamless at bar boundary (phase-coherent)',
+    'DrumPalette: Roland TR-909 inspired; dry, punchy, fully isolated per stem',
     'Quantization: strict grid (no humanization)',
     'Delivery: instrumental only',
     // Absolute directive reinforcing loop length
