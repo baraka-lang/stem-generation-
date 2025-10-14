@@ -3,61 +3,40 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-/* =========================================================
-   Feature flags / Env toggles
-   ========================================================= */
-const USE_COMPOSITION_PLAN = String(import.meta.env.VITE_ELEVEN_USE_PLAN || 'false').toLowerCase() === 'true'
-const PRIMARY_OUTPUT_FORMAT = 'pcm_44100'
-const FALLBACK_OUTPUT_FORMAT = 'mp3_44100_128'
-
-/* =========================================================
-   Generation format (server)
-   ========================================================= */
-const PRO_FORMAT = PRIMARY_OUTPUT_FORMAT
-
-/* =========================================================
-   UX flags
-   ========================================================= */
-const PROMPTS_MODE = 'builder' // 'builder' | 'freeform'
-
-/* =========================================================
-   Transport / DSP constants
-   ========================================================= */
-const TEMPO_MIN = 110
-const TEMPO_MAX = 140
-const DEFAULT_TEMPO = 130
-const DEFAULT_BARS  = 4
-
-const START_ENV_MS   = 5
-// Increase ramp and crossfade durations to minimise audible clicks at loop
-// boundaries.  A longer fade-in/out and crossfade smooths the transition
-// when the loop restarts, reducing the chance of hearing a click.
-const EDGE_RAMP_MS   = 8
-const LOOP_XFADE_MS  = 24
-const ALIGN_SEARCH_MS = 45
-const ZERO_FALLBACK_SAMPLES = 384
-
-const BOUNDARY_LOOKAHEAD_MS = 120
-const GEN_TAIL_PAD_MS = 200
-
-/* =========================================================
-   EQ‑3 + Filter defaults
-   ========================================================= */
-const EQ_MIN_DB = -80
-const EQ_MAX_DB =  +6
-const EQ_DEFAULT = 50
-const EQ_SMOOTH_TC = 0.02
-
-const EQ_LOW_FREQ  = 180
-const EQ_MID_FREQ  = 2200
-const EQ_MID_Q     = 1.20
-const EQ_HIGH_FREQ = 6500
-
-const FILTER_MIN_HZ = 40
-const FILTER_MAX_HZ = 18000
-const FILTER_Q = 0.707
-const FILTER_SMOOTH_TC = 0.02
-const FILTER_DEFAULT_HZ = 12000 // 12 kHz default
+import {
+  USE_COMPOSITION_PLAN,
+  PRIMARY_OUTPUT_FORMAT,
+  FALLBACK_OUTPUT_FORMAT,
+  PRO_FORMAT,
+  PROMPTS_MODE,
+  TEMPO_MIN,
+  TEMPO_MAX,
+  DEFAULT_TEMPO,
+  DEFAULT_BARS,
+  START_ENV_MS,
+  EDGE_RAMP_MS,
+  LOOP_XFADE_MS,
+  ALIGN_SEARCH_MS,
+  ZERO_FALLBACK_SAMPLES,
+  BOUNDARY_LOOKAHEAD_MS,
+  GEN_TAIL_PAD_MS,
+  EQ_MIN_DB,
+  EQ_MAX_DB,
+  EQ_DEFAULT,
+  EQ_SMOOTH_TC,
+  EQ_LOW_FREQ,
+  EQ_MID_FREQ,
+  EQ_MID_Q,
+  EQ_HIGH_FREQ,
+  FILTER_MIN_HZ,
+  FILTER_MAX_HZ,
+  FILTER_Q,
+  FILTER_SMOOTH_TC,
+  FILTER_DEFAULT_HZ,
+} from './Config/constants.js'
+import { knobToDb, formatDb, knobAngle } from './Utilities/index.js'
+import { bufferToWavAndDownload } from './DownloadAudio/index.js'
+import { scaleKnob, roleDirectives, negatives } from './TechnoGenerators/stemHelper.js'
 
 /* =========================================================
    Global state
@@ -970,245 +949,9 @@ function globalScaffold({ tempo, bars, root, mode }) {
     `ABSOLUTE: The loop length must be exactly ${bars} bars at ${tempo} BPM; do not alter the tempo or add/remove bars`
   ].join('. ')
 }
-function scaleKnob(v, a, b, c, d, e) {
-  const x = Number(v ?? 50)
-  if (x <= 20) return a
-  if (x <= 40) return b
-  if (x <= 60) return c
-  if (x <= 80) return d
-  return e
-}
 
-/* ---------- Builders (hihat/snare strict + others) ---------- */
-// (Builders unchanged; omitted for brevity in comments — logic preserved)
-function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before ... */ 
-  const { tempo, bars, root, mode } = master
-  const g = globalScaffold({ tempo, bars, root, mode })
-  const brightness = scaleKnob(controls.brightness, 'dark', 'balanced', 'crisp', 'bright', 'very bright')
-  const patternDesc = scaleKnob(controls.pattern, 'straight 1/16 notes', 'slight 1/16 shuffle', 'moderate syncopation', 'complex syncopation', 'polyrhythmic accents')
-  const lengthDesc = scaleKnob(controls.decay, '30–80ms', '60–120ms', '100–180ms', '150–250ms', '250–400ms')
-  const textureDesc = scaleKnob(controls.texture, 'soft', 'dry', 'balanced', 'crisp', 'metallic')
-  const swingDesc = scaleKnob(controls.shuffle, 'straight', 'light shuffle', 'moderate shuffle', 'noticeable shuffle', 'heavy shuffle')
-  const space = controls.reverb ? 'Space: tiny room; decay < 120 ms; gate tails before seam.' : 'Space: dry/minimal.'
-  const chorus = controls.chorus ? 'Chorus: subtle shimmer; avoid smear across seam.' : 'Chorus: off.'
-  const common = [
-    'STEM: HIHAT — solo closed hi‑hat only.',
-    'Identity: crisp techno closed hi‑hat.',
-    g,
-    'ROLE: isolated closed hat (no open‑hat).',
-    `Pattern: ${patternDesc}; first hit exactly at bar 1 beat 1; consistent every bar.`,
-    `Length: ${lengthDesc}.`,
-    `Tone: ${brightness}; Texture: ${textureDesc}.`,
-    `Swing: ${swingDesc}.`,
-    space,
-    chorus,
-    'Exclude: ride, shaker, clap, snare, kick, toms, crashes; no melodic content, sweeps, or FX.',
-    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
-  ]
-  if (strictness === 1) common.push('ABSOLUTE: Only closed‑hat hits on a straight 1/16 grid; zero swing.')
-  else if (strictness >= 2) common.push(
-    'MUST: closed‑hat hits on each 1/16 step (16 hits/bar).',
-    'MUST: zero reverb tail at seam; gate hits before bar end.',
-    'MUST: exclude open hat, ride, shaker, snare, clap, toms, crashes.'
-  )
-  return common.join(' ')
-}
-function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before ... */ 
-  const { tempo, bars, root, mode } = master
-  const g = globalScaffold({ tempo, bars, root, mode })
-  const varTxt     = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
-  const intensity  = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
-  const snap       = scaleKnob(controls.snap, 'soft', 'medium‑soft', 'balanced', 'sharp', 'cracking')
-  const tail       = scaleKnob(controls.decay, 'very short', 'short', 'medium', 'long', 'very long')
-  const toneDesc   = scaleKnob(controls.tone, 'thin', 'dry', 'balanced', 'full', 'deep')
-  const timbreTxt  = controls.metallic ? 'Timbre: slightly metallic; tight transient.' : 'Timbre: organic and dry.'
-  const space      = controls.reverb ? 'Space: tiny room; decay < 150 ms; gate tails before seam.' : 'Space: dry; short decay; no tail.'
-  const common = [
-    'STEM: SNARE — solo snare only.',
-    'Identity: industrial techno snare; drum‑machine style; no clap.',
-    g,
-    'ROLE: isolated electronic snare.',
-    'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
-    `Dynamics: ${intensity}; Snap: ${snap}; Tail: ${tail}.`,
-    `Tone: ${toneDesc}. ${timbreTxt}`,
-    `Variation: ${varTxt} but positions remain 2 & 4.`,
-    space,
-    'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam.',
-    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
-  ]
-  if (strictness === 1) common.push('ABSOLUTE: only beat 2 and beat 4 per bar; no extra hits.', 'ABSOLUTE: no off‑grid timing.')
-  else if (strictness >= 2) common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.')
-  return common.join(' ')
-}
-function mapArpRate(v){ const x=Number(v??55); return x<=33?'1/8 notes': x<=66?'1/16 notes':'1/32 notes' }
-function buildArpPrompt(controls, master){ /* ... same as before ... */ 
-  const { tempo, bars, root, mode } = master
-  const g = globalScaffold({ tempo, bars, root, mode })
-  const rate       = mapArpRate(controls.rate)
-  const complexity = scaleKnob(controls.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')
-  const rangeDesc  = scaleKnob(controls.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')
-  const swingDesc  = scaleKnob(controls.swing, 'straight', 'slight swing', 'moderate swing', 'pronounced swing', 'syncopated')
-  const toneDesc   = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'sparkling')
-  const gate       = controls.gate ? 'long‑ish gate (80–160 ms)' : 'short gate (30–80 ms)'
-  const delay      = controls.delay ? 'Delay: subtle tempo‑synced echoes; cut at bar end.' : 'Delay: off.'
-  return [
-    'STEM: ARPEGGIATOR — solo synth arpeggio only.',
-    `Identity: ${stemConfigs.arp.basePrompt}.`,
-    g,
-    `ROLE: isolated arp; strictly diatonic in ${root} ${mode}; no chords.`,
-    `Pattern: ${rate}; ${swingDesc}; fully quantized; phrase length must evenly divide ${bars} bars.`,
-    `Complexity: ${complexity}; consistent motif and octave moves.`,
-    `Range: ${rangeDesc}; Tone: ${toneDesc}.`,
-    `Envelope: ${gate}.`,
-    delay,
-    'Exclude: drums/percussion/bass/pads/leads/vocals.',
-    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
-  ].join(' ')
-}
-function buildFXPrompt(controls, master){ /* ... same as before ... */ 
-  const { tempo, bars, root, mode } = master
-  const g = globalScaffold({ tempo, bars, root, mode })
-  const intensity   = scaleKnob(controls.intensity, 'subtle', 'moderate', 'medium', 'strong', 'intense')
-  const movement    = scaleKnob(controls.movement, 'static', 'gentle motion', 'evolving', 'animated', 'dynamic')
-  const textureDesc = scaleKnob(controls.texture, 'smooth', 'grainy', 'noisy', 'metallic', 'chaotic')
-  const sweepDesc   = scaleKnob(controls.sweep, 'short sweep', 'moderate sweep', 'long sweep', 'full‑bar sweep', 'multi‑bar sweep')
-  const filterDesc  = scaleKnob(controls.filter, 'low emphasis', 'mid emphasis', 'balanced', 'high emphasis', 'resonant high‑pass')
-  const space       = controls.reverb ? 'Space: tiny room; decay ≤ 150 ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
-  const delayTxt    = controls.delay ? 'Delay: subtle echo; decay under bar.' : 'Delay: off.'
-  return [
-    'STEM: FX — solo techno transition effects & atmos only.',
-    `Identity: ${stemConfigs.fx.basePrompt}.`,
-    g,
-    'ROLE: bar‑internal whooshes/sweeps/noise beds that RESET each bar.',
-    `Intensity: ${intensity}. Movement: ${movement}. Texture: ${textureDesc}. Sweep: ${sweepDesc}. Filter: ${filterDesc}.`,
-    space,
-    delayTxt,
-    'Exclude: pitched melodies/drums/percussion; avoid risers/falls that exceed a single bar.',
-    'Deliver a bar‑perfect seamless loop; zero tail beyond the bar.'
-  ].join(' ')
-}
-function buildPercLoopPrompt(controls, master){ /* ... same as before ... */ 
-  const { tempo, bars, root, mode } = master
-  const g = globalScaffold({ tempo, bars, root, mode })
-  const density     = scaleKnob(controls.density, 'sparse', 'light', 'medium', 'busy', 'dense')
-  const groove      = scaleKnob(controls.groove, 'straight', 'straight with mild syncopation', 'syncopated but quantized', 'complex yet quantized', 'complex yet quantized')
-  const variation   = scaleKnob(controls.variation, 'repetitive', 'subtle', 'moderate', 'intricate', 'wild')
-  const toneDesc    = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'metallic')
-  const syncDesc    = scaleKnob(controls.syncopation, 'straight', 'mild', 'groovy', 'complex', 'polyrhythmic')
-  const metallic    = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
-  const space       = controls.reverb ? 'Space: tiny room; gate before seam.' : 'Space: dry; no reverb.'
-  return [
-    'STEM: PERCUSSION — solo top percussion only (shakers/blocks/taps); not snare/hat/kick.',
-    `Identity: ${stemConfigs.perc2.basePrompt}.`,
-    g,
-    `ROLE: quantized on‑grid accents; ${groove}; zero swing.`,
-    `Density: ${density}; keep consistent across bars.`,
-    `Variation: ${variation}.`,
-    `Tone: ${toneDesc}.`,
-    `Syncopation: ${syncDesc}.`,
-    `Timbre: ${metallic}; short releases; zero tails at seam.`,
-    space,
-    'Exclude: tonal hits/kick/snare/clap/hat/ride/toms/crashes.',
-    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
-  ].join(' ')
-}
-function roleDirectives(st, c){ /* ... same as before ... */ 
-  switch (st) {
-    case 'kick': return [
-      'ROLE: single isolated kick only',
-      'Pattern: four-on-the-floor; hits on beats 1–4 every bar',
-      'Pitch: unpitched; no tonal sub note; no toms',
-      // Envelope and tone descriptors
-      `Attack: ${scaleKnob(c.attack, 'slow','soft','balanced','sharp','instant')}`,
-      `Decay: ${scaleKnob(c.decay, 'very short','short','medium','long','very long')}`,
-      `Punch: ${scaleKnob(c.punch, 'soft','firm','punchy','very punchy','aggressive')}`,
-      `Body: ${scaleKnob(c.body, 'thin','firm','full','thick','boomy')}`,
-      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','very bright')}`,
-      // Toggle descriptors
-      c.distortion ? 'Distortion: moderate saturation; no excessive clipping' : 'Distortion: none; clean transient',
-      c.rumble ? 'Rumble: deep sub tail under 50 Hz; subtle' : 'Rumble: none',
-      'Exclude: fills/intro flam/crashes'
-    ].join('. ')
-    case 'bass': return [
-      'ROLE: single isolated bass only',
-      'Harmony: strictly diatonic in project key (no chromatic notes)',
-      'Pitch: root + fifth primarily; occasional octave',
-      `Movement: ${scaleKnob(c.movement, 'static','simple','groovy','animated','busy')} repeating per bar`,
-      `Depth: ${scaleKnob(c.depth, 'light','medium','deep','deeper','subby')} low‑end; controlled release`,
-      `Attack: ${scaleKnob(c.attack, 'soft','moderate','distinct','sharp','percussive')}`,
-      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','acidic')}`,
-      `Sub: ${scaleKnob(c.sub, 'minimal','moderate','full','deep','subsonic')} content`,
-      c.filter ? 'Filter: subtle motion within bar; reset each bar' : 'Filter: stable',
-      c.distortion ? 'Distortion: mild analog saturation; no heavy clipping' : 'Distortion: none',
-      'Start note on beat 1; no slides across seam'
-    ].join('. ')
-    case 'lead': return [
-      'ROLE: single isolated lead synth only',
-      'Melody: strictly diatonic; avoid chromatic passing tones',
-      `Phrase length evenly divides ${Math.max(1, stemControlValues?.master?.bars || DEFAULT_BARS)} bar(s)`,
-      `Complexity: ${scaleKnob(c.complexity, 'simple','moderate','interesting','intricate','ornate')} (quantized)`,
-      `Brightness: ${scaleKnob(c.brightness, 'dark','mellow','balanced','bright','very bright')}`,
-      `Motion: ${scaleKnob(c.motion, 'static','gentle','flowing','evolving','chaotic')}`,
-      `Attack: ${scaleKnob(c.attack, 'soft','moderate','plucky','sharp','percussive')}`,
-      `Range: ${scaleKnob(c.range, 'narrow','one octave','two octaves','three octaves','wide')}`,
-      c.delay ? 'Delay: minimal tempo‑synced; cut at bar end' : 'Delay: off',
-      c.chorus ? 'Chorus: subtle stereo spread; no detune at seam' : 'Chorus: off',
-      'No bends/slides across loop seam'
-    ].join('. ')
-    case 'pad': return [
-      'ROLE: single isolated pad only',
-      'Chord: sustained diatonic chord(s); no modulation',
-      `Evolution: ${scaleKnob(c.evolution, 'static','gentle','subtle motion','evolving','animated')} but reset every bar`,
-      `Warmth: ${scaleKnob(c.warmth, 'cool','neutral','warm','lush','very lush')}`,
-      `Brightness: ${scaleKnob(c.brightness, 'dark','warm','balanced','bright','shimmering')}`,
-      `Motion: ${scaleKnob(c.motion, 'static','gentle','animated','evolving','shifting')}`,
-      `Texture: ${scaleKnob(c.texture, 'smooth','airy','lush','grainy','noisy')}`,
-      c.chorus ? 'Chorus: subtle; no stereo smear at seam' : 'Chorus: off',
-      c.reverb ? 'Reverb: soft ambient; decay under bar; gate at seam' : 'Reverb: off',
-      'No long reverb tail; envelope ends before bar boundary'
-    ].join('. ')
-    default: return 'ROLE: single isolated instrument only'
-  }
-}
-function negatives(st){ /* ... same as before ... */ 
-  const common = [
-    'no vocals or speech','no cymbal crash on the last beat','no count-in','no pre-roll',
-    'no silence at start','no tempo changes','no swing','no off-grid timing','no modulation or key change'
-  ]
-  const per = {
-    kick:['no toms','no pitch glides','no tonal sub drops','no reverb tail'],
-    hihat:['no open hats','no ride','no shaker','no clap','no snare','no pitch sweeps','no reverb tail'],
-    perc:['no clap','no rimshot','no hi-hat','no kick','no toms','no melodic percussion','no reverb tail'],
-    bass:['no chords','no distortion tail','no slides across seam'],
-    lead:['no atonal notes','no portamento across seam','no long delay tail'],
-    pad:['no huge reverb','no side instruments','no arpeggios','no tail at seam'],
-    arp:['no drums','no percussion','no bass','no pads','no leads','no vocals','no FX'],
-    fx:['no drums or percussion','no pitched melodies','no vocals','no tails across seam'],
-    perc2:['no kick','no snare','no clap','no hi-hat','no ride','no toms','no tonal hits','no tail across seam']
-  }
-  return [...common, ...(per[st] || [])].join('; ')
-}
-function buildStemPrompt(st, strictness=0){
-  const controls = stemControlValues[st] || {}
-  const master = getMasterForPrompt()
-  if (st === 'hihat') return buildHihatPrompt(controls, master, strictness)
-  if (st === 'perc')  return buildSnarePrompt(controls, master, strictness)
-  if (st === 'arp')   return buildArpPrompt(controls, master)
-  if (st === 'fx')    return buildFXPrompt(controls, master)
-  if (st === 'perc2') return buildPercLoopPrompt(controls, master)
-  const cfg = stemConfigs[st]
-  const stemBase = cfg?.basePrompt || 'single instrument'
-  const global   = globalScaffold(master)
-  const role     = roleDirectives(st, controls)
-  const negs     = negatives(st)
-  return [
-    `STEM: ${st.toUpperCase()} — solo ${stemBase}.`,
-    global,
-    role,
-    `Avoid: ${negs}.`,
-    'Deliver a bar-perfect loop that aligns exactly with bar boundaries and starts at bar 1 beat 1.'
-  ].join(' ')
-}
+/* ---------- Builders (legacy stubs removed; using TechnoGenerators exports) ---------- */
+
 
 /* =========================================================
    Audio graph (Filter + EQ)
@@ -1456,25 +1199,7 @@ function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
     for(let i=0;i<ramp && i<n;i++) d[n-1-i]*=Math.sin(0.5*Math.PI*(1-(i/(ramp-1))))
   }
 }
-function buildLoopBufferFromRawStrict(raw, bpm, bars, headIndex){
-  removeDcOffset(raw)
-  const sr=raw.sampleRate
-  const target=computeTargetFrames(sr,bpm,bars)
-  const ch=raw.numberOfChannels
-  const out=new AudioBuffer({ length: target, numberOfChannels: ch, sampleRate: sr })
-  const xfadeN=Math.max(2, Math.round((LOOP_XFADE_MS/1000)*sr))
-  const bestOff=findBestSeamOffset(raw, headIndex, target, xfadeN)
-  const start=((headIndex+bestOff)%raw.length + raw.length)%raw.length
-  const end=start+target
-  for(let c=0;c<ch;c++){
-    const src=raw.getChannelData(c), dst=out.getChannelData(c)
-    if(end<=raw.length) dst.set(src.subarray(start,end),0)
-    else { const first=raw.length-start; dst.set(src.subarray(start),0); dst.set(src.subarray(0, target-first), first) }
-  }
-  applyEdgeRamps(out, EDGE_RAMP_MS)
-  applySeamCrossfade(out, LOOP_XFADE_MS)
-  return out
-}
+
 
 /* =========================================================
    Validators (unchanged)
@@ -1988,55 +1713,7 @@ function restartStemNextBoundary(st) {
    ========================================================= */
 const genControllers = new Map()
 function getNewStemController(st){ const prev=genControllers.get(st); if(prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded','AbortError')); const ctrl=new AbortController(); genControllers.set(st, ctrl); return ctrl }
-function buildCompositionPlan({ tempo, bars }, descriptor){ const ms=Math.round(bars*4*(60/tempo)*1000); return { positive_global_styles:["techno","instrumental","loop"], negative_global_styles:["vocals","fade-in","fade-out","free-time"], sections:[{ section_name:"Loop", positive_local_styles:[descriptor||"modern techno"], negative_local_styles:["rubato","modulation","improv cadenza"], duration_ms: ms, lines: [] }] } }
-async function composeOnce(payload, signal){
-  const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/eleven-music-compose`
-  const tryPayload = (fmt) => ({ ...payload, output_format: fmt, model_id: 'music_v1', respect_sections_durations: true })
-  let lastErr = null
-  for (const fmt of [PRIMARY_OUTPUT_FORMAT, FALLBACK_OUTPUT_FORMAT]) {
-    try {
-      const res = await fetch(functionUrl, {
-        method: 'POST', signal,
-        headers: { 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(tryPayload(fmt))
-      })
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`
-        try {
-          const e = await res.json()
-          if (e.error) msg = e.error
-          if (e.upstream) msg += ` • upstream: ${e.upstream}`
-        } catch { msg += ` • Raw: ${await res.text()}` }
-        if (fmt === PRIMARY_OUTPUT_FORMAT && /only allowed for Pro|PCM/i.test(msg)) { lastErr = new Error(msg); continue }
-        throw new Error(msg)
-      }
-      return res.arrayBuffer()
-    } catch (e) { lastErr = e }
-  }
-  throw lastErr || new Error('composeOnce failed')
-}
-async function composeWithRetries(st, tempo, bars, signal, statusEl){
-  const beats=bars*4
-  const seconds=beats*(60/tempo)
-  let music_length_ms=Math.round(seconds*1000)+GEN_TAIL_PAD_MS
-  music_length_ms=Math.max(10000, Math.min(300000, music_length_ms))
-  const master=getMasterForPrompt()
-  const controls=stemControlValues[st]||{}
-  for(let tier=0;tier<3;tier++){
-    const prompt=(st==='hihat')?buildHihatPrompt(controls, master, tier):buildSnarePrompt(controls, master, tier)
-    if (statusEl) statusEl.textContent=`Creating… (${st}, tier ${tier+1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
-    const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt, music_length_ms }
-    const ab=await composeOnce(body, signal)
-    const buf=await audioContext.decodeAudioData(ab)
-    const ok=(st==='hihat')?validateHihat(buf, tempo, bars):validateSnare(buf, tempo, bars)
-    if(ok) return { buffer: buf, usedPrompt: prompt, tier }
-  }
-  const finalPrompt=(st==='hihat')?buildHihatPrompt(controls, master, 2):buildSnarePrompt(controls, master, 2)
-  const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt: finalPrompt, music_length_ms }
-  const ab=await composeOnce(body, signal)
-  const buf=await audioContext.decodeAudioData(ab)
-  return { buffer: buf, usedPrompt: finalPrompt, tier: 2, failedValidation: true }
-}
+import { buildCompositionPlan, composeOnce, composeWithRetries as composeWithRetriesGen, buildLoopBufferFromRawStrict as buildLoopBufferFromRawStrictGen, buildHihatPrompt as buildHihatPromptGen, buildSnarePrompt as buildSnarePromptGen, buildStemPrompt as buildStemPromptGen } from './TechnoGenerators/index.js'
 async function generateStem(st) {
   await ensureAudioContext()
   const ctrl = getNewStemController(st)
@@ -2109,13 +1786,26 @@ async function generateStem(st) {
       // Use the old generate logic: call Eleven Labs via the proxy function
       // (`composeOnce` and `composeWithRetries`) and build a strict loop locally.
       if (st === 'hihat' || st === 'perc') {
-        const res = await composeWithRetries(st, tempo, bars, signal, statusEl)
+        const res = await composeWithRetriesGen(st, tempo, bars, signal, {
+          genTailPadMs: GEN_TAIL_PAD_MS,
+          primaryFormat: PRIMARY_OUTPUT_FORMAT,
+          usePlan: USE_COMPOSITION_PLAN,
+          stemConfigs,
+          getMasterForPrompt,
+          getControls: (id) => stemControlValues[id],
+          buildTierPrompt: (id, controls, master, tier) => id==='hihat'?buildHihatPromptGen(controls, master, tier):buildSnarePromptGen(controls, master, tier),
+          decodeAudio: (ab) => audioContext.decodeAudioData(ab),
+          validateBuffer: (id, buf, t, b) => id==='hihat'?validateHihat(buf, t, b):validateSnare(buf, t, b),
+          statusUpdate: (txt) => { if (statusEl) statusEl.textContent = txt }
+        })
         audioBuffer = res.buffer
         usedPrompt = res.usedPrompt
         tier = res.tier
         failedValidation = !!res.failedValidation
       } else {
-        const prompt = buildStemPrompt(st).trim()
+        const controls = stemControlValues[st] || {}
+        const master = getMasterForPrompt()
+        const prompt = buildStemPromptGen(st, controls, master).trim()
         const beats = bars * 4
         const seconds = beats * (60 / tempo)
         let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
@@ -2132,7 +1822,7 @@ async function generateStem(st) {
       // Determine head index and build a strict loop from the raw buffer
       referenceHeadIndex = detectHeadIndex(audioBuffer)
       referenceStemType = st
-      const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
+      const strictLoop = buildLoopBufferFromRawStrictGen(audioBuffer, tempo, bars, referenceHeadIndex, { loopXfadeMs: LOOP_XFADE_MS, edgeRampMs: EDGE_RAMP_MS, alignSearchMs: ALIGN_SEARCH_MS })
       // Store the newly generated raw buffer and strict loop.  We explicitly
       // assign the raw to stemRaw so that endpoint adjustments can be
       // constructed from the unmodified audio later.  The strict loop is
@@ -2239,53 +1929,15 @@ async function generateStem(st) {
 }
 
 /* =========================================================
-   Downloads (unchanged)
+   Downloads (modularized)
    ========================================================= */
-function encodeWAV(audioBuffer){
-  const srcCh=audioBuffer.numberOfChannels
-  const len=audioBuffer.length
-  const sr=audioBuffer.sampleRate
-  const bps=2
-  const chans=Array.from({ length: srcCh }, (_, c) => audioBuffer.getChannelData(c))
-  const interleaved=new Float32Array(len*srcCh)
-  let o=0; for(let i=0;i<len;i++) for(let c=0;c<srcCh;c++) interleaved[o++]=chans[c][i]
-  const blockAlign=srcCh*bps, byteRate=sr*blockAlign, dataSize=interleaved.length*bps
-  const buffer=new ArrayBuffer(44+dataSize); const view=new DataView(buffer)
-  writeAscii(view,0,'RIFF'); view.setUint32(4,36+dataSize,true); writeAscii(view,8,'WAVE')
-  writeAscii(view,12,'fmt '); view.setUint32(16,16,true); view.setUint16(20,1,true)
-  writeAscii(view,22,String.fromCharCode(srcCh)); view.setUint16(22,srcCh,true)
-  view.setUint32(24,sr,true); view.setUint32(28,byteRate,true)
-  view.setUint16(32,blockAlign,true); view.setUint16(34,16,true)
-  writeAscii(view,36,'data'); view.setUint32(40,dataSize,true)
-  let off=44
-  for(let i=0;i<interleaved.length;i++,off+=2){ let s=Math.max(-1,Math.min(1, interleaved[i])); s=s<0?s*0x8000:s*0x7FFF; view.setInt16(off,s,true) }
-  return new Blob([view], { type: 'audio/wav' })
-  function writeAscii(v,o,s){ for(let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)) }
-}
 function downloadStem(st){
   const buf=stemLoop[st]
   if(!buf){ alert(`No audio for ${stemConfigs[st]?.name || st}. Create first.`); return }
-  const wav=encodeWAV(buf)
-  const url=URL.createObjectURL(wav)
-  const a=document.createElement('a')
-  a.href=url; a.download=`techno_${st}_${Date.now()}.wav`
-  document.body.appendChild(a); a.click(); document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  bufferToWavAndDownload(buf, `techno_${st}_${Date.now()}.wav`)
 }
 
-/**
- * Download all active takes for every stem.  When the user clicks the
- * "download all" button, iterate over all configured stems and, if a
- * take has been generated and is currently selected (active), create a
- * WAV file and trigger a download.  This does nothing for stems
- * without a generated take.  The file names mirror the single
- * download button naming scheme and include a timestamp.
- */
 function downloadAllActiveStems(){
-  // Iterate over the keys of stemConfigs to include all stems defined in
-  // the current session.  For each stem, check whether there is an
-  // active history entry (active index >= 0) and that a loop buffer
-  // exists.  If so, download that buffer.
   Object.keys(stemConfigs).forEach(st => {
     const hasActive = (stemActiveIndex[st] ?? -1) >= 0
     const buf = stemLoop[st]
@@ -2298,19 +1950,7 @@ function downloadAllActiveStems(){
 /* =========================================================
    UI rendering (per card) — with black generate btn, wider sliders, click‑overlay for toggles
    ========================================================= */
-function knobToDb(val){
-  const v=Math.max(0, Math.min(100, Number(val)||0))
-  // Shift the 0 dB point to 75% of the slider to mirror professional DAW faders.
-  const pivot = 75
-  if (v <= pivot) return EQ_MIN_DB + (v / pivot) * (0 - EQ_MIN_DB)
-  return ((v - pivot) / (100 - pivot)) * EQ_MAX_DB
-}
-function formatDb(db){
-  if (db <= EQ_MIN_DB + 0.5) return 'CUT'
-  if (Math.abs(db) < 0.05) return '0 dB'
-  return `${db.toFixed(1)} dB`
-}
-function knobAngle(val){ return -135 + (val/100)*270 }
+// knobToDb, formatDb, knobAngle now imported from Utilities/index.js
 function applyEqValuesToNodes(eqNodes, vals){
   if (!eqNodes || !audioContext) return
   const now=audioContext.currentTime
