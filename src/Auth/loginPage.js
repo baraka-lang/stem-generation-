@@ -229,8 +229,11 @@ export function setupLoginPage() {
       // Update icon
       const icon = toggleLoginPasswordBtn.querySelector('i[data-lucide]')
       if (icon) {
-        icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
-        // Update Lucide icons
+        const newIconType = isPassword ? 'eye-off' : 'eye'
+        icon.setAttribute('data-lucide', newIconType)
+        icon.setAttribute('class', `lucide lucide-${newIconType} w-5 h-5`)
+        
+        // Force update Lucide icons
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
           window.lucide.createIcons()
         }
@@ -254,8 +257,11 @@ export function setupLoginPage() {
       // Update icon
       const icon = toggleSignupPasswordBtn.querySelector('i[data-lucide]')
       if (icon) {
-        icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
-        // Update Lucide icons
+        const newIconType = isPassword ? 'eye-off' : 'eye'
+        icon.setAttribute('data-lucide', newIconType)
+        icon.setAttribute('class', `lucide lucide-${newIconType} w-5 h-5`)
+        
+        // Force update Lucide icons
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
           window.lucide.createIcons()
         }
@@ -279,8 +285,11 @@ export function setupLoginPage() {
       // Update icon
       const icon = toggleSignupConfirmPasswordBtn.querySelector('i[data-lucide]')
       if (icon) {
-        icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
-        // Update Lucide icons
+        const newIconType = isPassword ? 'eye-off' : 'eye'
+        icon.setAttribute('data-lucide', newIconType)
+        icon.setAttribute('class', `lucide lucide-${newIconType} w-5 h-5`)
+        
+        // Force update Lucide icons
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
           window.lucide.createIcons()
         }
