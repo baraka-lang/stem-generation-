@@ -217,193 +217,44 @@ export function setupLoginPage() {
     }
   })
 
-  // Password visibility toggle for login form
-  function setupLoginPasswordToggle() {
-    const toggleLoginPasswordBtn = document.getElementById('toggleLoginPasswordLoginPage')
-    const loginPasswordInput = document.getElementById('loginPassword')
-    const loginEyeIcon = document.getElementById('loginEyeIcon')
-    const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
-
-    console.log('Login password toggle elements:', {
-      toggleLoginPasswordBtn,
-      loginPasswordInput,
-      loginEyeIcon,
-      loginEyeOffIcon
-    });
-
-    if (toggleLoginPasswordBtn && loginPasswordInput && loginEyeIcon && loginEyeOffIcon) {
-      console.log('Setting up login password toggle');
-      toggleLoginPasswordBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        console.log('Login password toggle clicked');
-        const isPassword = loginPasswordInput.type === 'password'
-        loginPasswordInput.type = isPassword ? 'text' : 'password'
-        
-        console.log('Password type changed to:', loginPasswordInput.type);
-        
-        // Toggle between eye icons using CSS classes
-        if (isPassword) {
-          // Show password - show eye-off icon
-          console.log('Showing password - switching to eye-off icon');
-          loginEyeIcon.classList.add('hidden')
-          loginEyeOffIcon.classList.remove('hidden')
-        } else {
-          // Hide password - show eye icon
-          console.log('Hiding password - switching to eye icon');
-          loginEyeIcon.classList.remove('hidden')
-          loginEyeOffIcon.classList.add('hidden')
-        }
-        
-        // Update aria-label
-        toggleLoginPasswordBtn.setAttribute('aria-label', 
-          isPassword ? 'Hide password' : 'Show password')
-      })
-      return true; // Success
-    } else {
-      console.error('Login password toggle elements not found:', {
-        toggleLoginPasswordBtn: !!toggleLoginPasswordBtn,
-        loginPasswordInput: !!loginPasswordInput,
-        loginEyeIcon: !!loginEyeIcon,
-        loginEyeOffIcon: !!loginEyeOffIcon
-      });
-      return false; // Failed
-    }
-  }
-
-  // Try to setup immediately, if fails, retry with intervals
-  if (!setupLoginPasswordToggle()) {
-    let retryCount = 0;
-    const maxRetries = 50; // Try for 5 seconds (50 * 100ms)
-    
-    const retryInterval = setInterval(() => {
-      retryCount++;
-      console.log(`Retrying login password toggle setup (attempt ${retryCount}/${maxRetries})`);
+  // Simple password toggle using event delegation
+  document.addEventListener('click', (e) => {
+    // Check if clicked element is a password toggle button
+    if (e.target.closest('[id*="toggle"]') && e.target.closest('[id*="Password"]')) {
+      const button = e.target.closest('[id*="toggle"]')
+      const buttonId = button.id
       
-      if (setupLoginPasswordToggle()) {
-        console.log('Login password toggle setup successful on retry');
-        clearInterval(retryInterval);
-      } else if (retryCount >= maxRetries) {
-        console.error('Failed to setup login password toggle after maximum retries');
-        clearInterval(retryInterval);
+      // Find the input field (look for password input near the button)
+      const inputContainer = button.closest('.relative')
+      if (inputContainer) {
+        const passwordInput = inputContainer.querySelector('input[type="password"], input[type="text"]')
+        const eyeIcon = button.querySelector('[data-lucide="eye"]')
+        const eyeOffIcon = button.querySelector('[data-lucide="eye-off"]')
+        
+        if (passwordInput && eyeIcon && eyeOffIcon) {
+          e.preventDefault()
+          
+          const isPassword = passwordInput.type === 'password'
+          passwordInput.type = isPassword ? 'text' : 'password'
+          
+          // Toggle icons
+          if (isPassword) {
+            eyeIcon.classList.add('hidden')
+            eyeOffIcon.classList.remove('hidden')
+          } else {
+            eyeIcon.classList.remove('hidden')
+            eyeOffIcon.classList.add('hidden')
+          }
+          
+          // Update aria-label
+          button.setAttribute('aria-label', 
+            isPassword ? 'Hide password' : 'Show password')
+        }
       }
-    }, 100);
-  }
-
-  // Password visibility toggle for signup form
-  // Note: This is inside the hidden signup form, so we'll set it up when signup form becomes visible
-  function setupSignupPasswordToggle() {
-    const toggleSignupPasswordBtn = document.getElementById('toggleSignupPasswordSignupPage')
-    const signupPasswordInput = document.getElementById('signupPassword')
-    const signupEyeIcon = document.getElementById('signupEyeIcon')
-    const signupEyeOffIcon = document.getElementById('signupEyeOffIcon')
-
-    console.log('Signup password toggle elements:', {
-      toggleSignupPasswordBtn,
-      signupPasswordInput,
-      signupEyeIcon,
-      signupEyeOffIcon
-    });
-
-    if (toggleSignupPasswordBtn && signupPasswordInput && signupEyeIcon && signupEyeOffIcon) {
-      console.log('Setting up signup password toggle');
-      toggleSignupPasswordBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        console.log('Signup password toggle clicked');
-        const isPassword = signupPasswordInput.type === 'password'
-        signupPasswordInput.type = isPassword ? 'text' : 'password'
-        
-        console.log('Password type changed to:', signupPasswordInput.type);
-        
-        // Toggle between eye icons using CSS classes
-        if (isPassword) {
-          // Show password - show eye-off icon
-          console.log('Showing password - switching to eye-off icon');
-          signupEyeIcon.classList.add('hidden')
-          signupEyeOffIcon.classList.remove('hidden')
-        } else {
-          // Hide password - show eye icon
-          console.log('Hiding password - switching to eye icon');
-          signupEyeIcon.classList.remove('hidden')
-          signupEyeOffIcon.classList.add('hidden')
-        }
-        
-        // Update aria-label
-        toggleSignupPasswordBtn.setAttribute('aria-label', 
-          isPassword ? 'Hide password' : 'Show password')
-      })
-      return true; // Success
-    } else {
-      console.log('Signup password toggle elements not found (expected - signup form is hidden):', {
-        toggleSignupPasswordBtn: !!toggleSignupPasswordBtn,
-        signupPasswordInput: !!signupPasswordInput,
-        signupEyeIcon: !!signupEyeIcon,
-        signupEyeOffIcon: !!signupEyeOffIcon
-      });
-      return false; // Failed
     }
-  }
+  })
 
-  // Set up signup password toggle when signup form becomes visible
-  // We'll call this from the signup form show/hide logic
-  window.setupSignupPasswordToggle = setupSignupPasswordToggle;
-
-  // Password visibility toggle for confirm password field
-  // Note: This is inside the hidden signup form, so we'll set it up when signup form becomes visible
-  function setupConfirmPasswordToggle() {
-    const toggleSignupConfirmPasswordBtn = document.getElementById('toggleSignupConfirmPasswordSignupPage')
-    const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
-    const confirmEyeIcon = document.getElementById('confirmEyeIcon')
-    const confirmEyeOffIcon = document.getElementById('confirmEyeOffIcon')
-
-    console.log('Confirm password toggle elements:', {
-      toggleSignupConfirmPasswordBtn,
-      signupConfirmPasswordInput,
-      confirmEyeIcon,
-      confirmEyeOffIcon
-    });
-
-    if (toggleSignupConfirmPasswordBtn && signupConfirmPasswordInput && confirmEyeIcon && confirmEyeOffIcon) {
-      console.log('Setting up confirm password toggle');
-      toggleSignupConfirmPasswordBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        console.log('Confirm password toggle clicked');
-        const isPassword = signupConfirmPasswordInput.type === 'password'
-        signupConfirmPasswordInput.type = isPassword ? 'text' : 'password'
-        
-        console.log('Password type changed to:', signupConfirmPasswordInput.type);
-        
-        // Toggle between eye icons using CSS classes
-        if (isPassword) {
-          // Show password - show eye-off icon
-          console.log('Showing password - switching to eye-off icon');
-          confirmEyeIcon.classList.add('hidden')
-          confirmEyeOffIcon.classList.remove('hidden')
-        } else {
-          // Hide password - show eye icon
-          console.log('Hiding password - switching to eye icon');
-          confirmEyeIcon.classList.remove('hidden')
-          confirmEyeOffIcon.classList.add('hidden')
-        }
-        
-        // Update aria-label
-        toggleSignupConfirmPasswordBtn.setAttribute('aria-label', 
-          isPassword ? 'Hide password' : 'Show password')
-      })
-      return true; // Success
-    } else {
-      console.log('Confirm password toggle elements not found (expected - signup form is hidden):', {
-        toggleSignupConfirmPasswordBtn: !!toggleSignupConfirmPasswordBtn,
-        signupConfirmPasswordInput: !!signupConfirmPasswordInput,
-        confirmEyeIcon: !!confirmEyeIcon,
-        confirmEyeOffIcon: !!confirmEyeOffIcon
-      });
-      return false; // Failed
-    }
-  }
-
-  // Set up confirm password toggle when signup form becomes visible
-  // We'll call this from the signup form show/hide logic
-  window.setupConfirmPasswordToggle = setupConfirmPasswordToggle;
+  // All password toggles are now handled by the simple event delegation above
 
   // Forgot password button
   if (forgotPasswordBtn) {
@@ -629,17 +480,7 @@ export function setupLoginPage() {
       validatePassword()
     }, 50)
     
-    // Set up signup and confirm password toggles now that signup form is visible
-    setTimeout(() => {
-      if (window.setupSignupPasswordToggle) {
-        console.log('Setting up signup password toggle after signup form is shown');
-        window.setupSignupPasswordToggle();
-      }
-      if (window.setupConfirmPasswordToggle) {
-        console.log('Setting up confirm password toggle after signup form is shown');
-        window.setupConfirmPasswordToggle();
-      }
-    }, 100)
+    // Password toggles are now handled by event delegation - no setup needed
   }
 
   /**
