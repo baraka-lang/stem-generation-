@@ -1,9 +1,10 @@
-@@ .. @@
+/* CSS Reset and Base Styles */
+* {
   color: #747bff;
 }
+
 button {
   background-color: #f9f9f9;
-}
 }
 
 /* Aurora Canvas Background Styles */
