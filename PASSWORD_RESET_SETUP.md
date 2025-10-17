@@ -10,7 +10,46 @@ This document explains how to set up the branded password reset page for the 343
 
 ## Setup Instructions
 
-### 1. Configure Supabase Credentials
+### Quick Start (Simple Setup)
+
+For quick testing, use the `reset-password-simple.html` file which has everything embedded:
+
+1. **Open `reset-password-simple.html`** in a text editor
+2. **Find the CONFIG object** around line 200:
+   ```javascript
+   const CONFIG = {
+       supabaseUrl: 'https://your-project.supabase.co', // Replace with your Supabase URL
+       supabaseKey: 'your-anon-key', // Replace with your Supabase anon key
+       redirectUrl: '/'
+   };
+   ```
+3. **Replace the placeholder values** with your actual Supabase credentials
+4. **Deploy the file** to your web server
+5. **Rename to `reset-password.html`** if needed
+
+This version avoids CORS issues and module import problems.
+
+### 1. Configure Supabase Credentials (Advanced Setup)
+
+#### Option A: Using Environment Variables (Recommended)
+
+Create a `.env` file in your project root with your Supabase credentials:
+
+```env
+VITE_SUPABASE_URL=https://your-project-id.supabase.co
+VITE_SUPABASE_ANON_KEY=your-actual-anon-key
+VITE_APP_URL=https://yourdomain.com
+```
+
+Then run the environment injection script:
+
+```bash
+npm run inject-env
+```
+
+This will automatically update `reset-password-config.js` with your environment variables.
+
+#### Option B: Manual Configuration
 
 Edit `reset-password-config.js` and replace the placeholder values with your actual Supabase project details:
 
@@ -28,6 +67,14 @@ window.RESET_PASSWORD_CONFIG = {
     // Whether to show demo mode notice
     showDemoMode: false
 };
+```
+
+#### Option C: URL Parameters (For Testing)
+
+You can test the reset page by passing configuration via URL parameters:
+
+```
+reset-password.html?supabase_url=https://your-project.supabase.co&supabase_key=your-anon-key
 ```
 
 ### 2. Deploy the Reset Page
