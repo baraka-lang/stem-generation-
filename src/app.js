@@ -3252,7 +3252,7 @@ export async function initApp() {
     // Set up UI components
     window.lucide?.createIcons()
     setupHelpModal()
-    // setupUserMenu() // Moved to dynamic rendering in selectionPage.js
+    setupUserMenu() // Setup main header user menu
     setupLoginPage()
     setupResetPasswordPage()
     setupSelectionPage()

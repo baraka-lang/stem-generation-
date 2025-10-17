@@ -4,33 +4,44 @@ import { getCredits } from '../Auth/userProfile.js'
 import { getAuthGuard } from '../Auth/authGuard.js'
 
 export function setupUserMenu(){
-  const btn = document.getElementById('userMenuBtn')
-  const menu = document.getElementById('userMenu')
-  if (!btn || !menu) return
+  // Wait a bit to ensure DOM is fully ready
+  setTimeout(() => {
+    const btn = document.getElementById('userMenuBtn')
+    const menu = document.getElementById('userMenu')
+    
+    if (!btn || !menu) {
+      console.error('❌ User menu elements not found!', {
+        userMenuBtn: document.getElementById('userMenuBtn'),
+        userMenu: document.getElementById('userMenu')
+      })
+      return
+    }
   
-  // Menu toggle functionality
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation()
-    const isHidden = menu.classList.contains('hidden')
-    if (isHidden) {
-      menu.classList.remove('hidden')
-      btn.setAttribute('aria-expanded', 'true')
-    } else {
+    // Menu toggle functionality
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const isHidden = menu.classList.contains('hidden')
+      if (isHidden) {
+        menu.classList.remove('hidden')
+        btn.setAttribute('aria-expanded', 'true')
+      } else {
+        menu.classList.add('hidden')
+        btn.setAttribute('aria-expanded', 'false')
+      }
+    })
+    
+    document.addEventListener('click', (e) => {
+      if (menu.classList.contains('hidden')) return
+      const target = e.target
+      if (menu.contains(target) || btn.contains(target)) return
       menu.classList.add('hidden')
       btn.setAttribute('aria-expanded', 'false')
-    }
-  })
-  
-  document.addEventListener('click', (e) => {
-    if (menu.classList.contains('hidden')) return
-    const target = e.target
-    if (menu.contains(target) || btn.contains(target)) return
-    menu.classList.add('hidden')
-    btn.setAttribute('aria-expanded', 'false')
-  })
+    })
 
-  // Set up menu item functionality
-  setupMenuItems()
+    // Set up menu item functionality
+    setupMenuItems()
+    
+  }, 100) // Wait 100ms for DOM to be ready
 }
 
 /**
