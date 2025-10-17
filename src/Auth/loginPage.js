@@ -220,29 +220,23 @@ export function setupLoginPage() {
   // Password visibility toggle for login form
   const toggleLoginPasswordBtn = document.getElementById('toggleLoginPassword')
   const loginPasswordInput = document.getElementById('loginPassword')
-  
-  if (toggleLoginPasswordBtn && loginPasswordInput) {
+  const loginEyeIcon = document.getElementById('loginEyeIcon')
+  const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
+
+  if (toggleLoginPasswordBtn && loginPasswordInput && loginEyeIcon && loginEyeOffIcon) {
     toggleLoginPasswordBtn.addEventListener('click', () => {
       const isPassword = loginPasswordInput.type === 'password'
       loginPasswordInput.type = isPassword ? 'text' : 'password'
       
-      // Update icon by replacing the entire element for better reliability
-      const newIconType = isPassword ? 'eye-off' : 'eye'
-      
-      // Create new icon element
-      const newIcon = document.createElement('i')
-      newIcon.setAttribute('data-lucide', newIconType)
-      newIcon.className = 'w-5 h-5'
-      
-      // Replace the old icon with the new one
-      const oldIcon = toggleLoginPasswordBtn.querySelector('i[data-lucide]')
-      if (oldIcon) {
-        toggleLoginPasswordBtn.replaceChild(newIcon, oldIcon)
-        
-        // Force Lucide to create the new icon
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons()
-        }
+      // Toggle between eye icons using CSS classes
+      if (isPassword) {
+        // Show password - show eye-off icon
+        loginEyeIcon.classList.add('hidden')
+        loginEyeOffIcon.classList.remove('hidden')
+      } else {
+        // Hide password - show eye icon
+        loginEyeIcon.classList.remove('hidden')
+        loginEyeOffIcon.classList.add('hidden')
       }
       
       // Update aria-label
@@ -254,29 +248,23 @@ export function setupLoginPage() {
   // Password visibility toggle for signup form
   const toggleSignupPasswordBtn = document.getElementById('toggleSignupPassword')
   const signupPasswordInput = document.getElementById('signupPassword')
-  
-  if (toggleSignupPasswordBtn && signupPasswordInput) {
+  const signupEyeIcon = document.getElementById('signupEyeIcon')
+  const signupEyeOffIcon = document.getElementById('signupEyeOffIcon')
+
+  if (toggleSignupPasswordBtn && signupPasswordInput && signupEyeIcon && signupEyeOffIcon) {
     toggleSignupPasswordBtn.addEventListener('click', () => {
       const isPassword = signupPasswordInput.type === 'password'
       signupPasswordInput.type = isPassword ? 'text' : 'password'
       
-      // Update icon by replacing the entire element for better reliability
-      const newIconType = isPassword ? 'eye-off' : 'eye'
-      
-      // Create new icon element
-      const newIcon = document.createElement('i')
-      newIcon.setAttribute('data-lucide', newIconType)
-      newIcon.className = 'w-5 h-5'
-      
-      // Replace the old icon with the new one
-      const oldIcon = toggleSignupPasswordBtn.querySelector('i[data-lucide]')
-      if (oldIcon) {
-        toggleSignupPasswordBtn.replaceChild(newIcon, oldIcon)
-        
-        // Force Lucide to create the new icon
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons()
-        }
+      // Toggle between eye icons using CSS classes
+      if (isPassword) {
+        // Show password - show eye-off icon
+        signupEyeIcon.classList.add('hidden')
+        signupEyeOffIcon.classList.remove('hidden')
+      } else {
+        // Hide password - show eye icon
+        signupEyeIcon.classList.remove('hidden')
+        signupEyeOffIcon.classList.add('hidden')
       }
       
       // Update aria-label
@@ -288,29 +276,23 @@ export function setupLoginPage() {
   // Password visibility toggle for confirm password field
   const toggleSignupConfirmPasswordBtn = document.getElementById('toggleSignupConfirmPassword')
   const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
-  
-  if (toggleSignupConfirmPasswordBtn && signupConfirmPasswordInput) {
+  const confirmEyeIcon = document.getElementById('confirmEyeIcon')
+  const confirmEyeOffIcon = document.getElementById('confirmEyeOffIcon')
+
+  if (toggleSignupConfirmPasswordBtn && signupConfirmPasswordInput && confirmEyeIcon && confirmEyeOffIcon) {
     toggleSignupConfirmPasswordBtn.addEventListener('click', () => {
       const isPassword = signupConfirmPasswordInput.type === 'password'
       signupConfirmPasswordInput.type = isPassword ? 'text' : 'password'
       
-      // Update icon by replacing the entire element for better reliability
-      const newIconType = isPassword ? 'eye-off' : 'eye'
-      
-      // Create new icon element
-      const newIcon = document.createElement('i')
-      newIcon.setAttribute('data-lucide', newIconType)
-      newIcon.className = 'w-5 h-5'
-      
-      // Replace the old icon with the new one
-      const oldIcon = toggleSignupConfirmPasswordBtn.querySelector('i[data-lucide]')
-      if (oldIcon) {
-        toggleSignupConfirmPasswordBtn.replaceChild(newIcon, oldIcon)
-        
-        // Force Lucide to create the new icon
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons()
-        }
+      // Toggle between eye icons using CSS classes
+      if (isPassword) {
+        // Show password - show eye-off icon
+        confirmEyeIcon.classList.add('hidden')
+        confirmEyeOffIcon.classList.remove('hidden')
+      } else {
+        // Hide password - show eye icon
+        confirmEyeIcon.classList.remove('hidden')
+        confirmEyeOffIcon.classList.add('hidden')
       }
       
       // Update aria-label
