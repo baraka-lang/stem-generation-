@@ -226,14 +226,20 @@ export function setupLoginPage() {
       const isPassword = loginPasswordInput.type === 'password'
       loginPasswordInput.type = isPassword ? 'text' : 'password'
       
-      // Update icon
-      const icon = toggleLoginPasswordBtn.querySelector('i[data-lucide]')
-      if (icon) {
-        const newIconType = isPassword ? 'eye-off' : 'eye'
-        icon.setAttribute('data-lucide', newIconType)
-        icon.setAttribute('class', `lucide lucide-${newIconType} w-5 h-5`)
+      // Update icon by replacing the entire element for better reliability
+      const newIconType = isPassword ? 'eye-off' : 'eye'
+      
+      // Create new icon element
+      const newIcon = document.createElement('i')
+      newIcon.setAttribute('data-lucide', newIconType)
+      newIcon.className = 'w-5 h-5'
+      
+      // Replace the old icon with the new one
+      const oldIcon = toggleLoginPasswordBtn.querySelector('i[data-lucide]')
+      if (oldIcon) {
+        toggleLoginPasswordBtn.replaceChild(newIcon, oldIcon)
         
-        // Force update Lucide icons
+        // Force Lucide to create the new icon
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
           window.lucide.createIcons()
         }
@@ -254,14 +260,20 @@ export function setupLoginPage() {
       const isPassword = signupPasswordInput.type === 'password'
       signupPasswordInput.type = isPassword ? 'text' : 'password'
       
-      // Update icon
-      const icon = toggleSignupPasswordBtn.querySelector('i[data-lucide]')
-      if (icon) {
-        const newIconType = isPassword ? 'eye-off' : 'eye'
-        icon.setAttribute('data-lucide', newIconType)
-        icon.setAttribute('class', `lucide lucide-${newIconType} w-5 h-5`)
+      // Update icon by replacing the entire element for better reliability
+      const newIconType = isPassword ? 'eye-off' : 'eye'
+      
+      // Create new icon element
+      const newIcon = document.createElement('i')
+      newIcon.setAttribute('data-lucide', newIconType)
+      newIcon.className = 'w-5 h-5'
+      
+      // Replace the old icon with the new one
+      const oldIcon = toggleSignupPasswordBtn.querySelector('i[data-lucide]')
+      if (oldIcon) {
+        toggleSignupPasswordBtn.replaceChild(newIcon, oldIcon)
         
-        // Force update Lucide icons
+        // Force Lucide to create the new icon
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
           window.lucide.createIcons()
         }
@@ -282,14 +294,20 @@ export function setupLoginPage() {
       const isPassword = signupConfirmPasswordInput.type === 'password'
       signupConfirmPasswordInput.type = isPassword ? 'text' : 'password'
       
-      // Update icon
-      const icon = toggleSignupConfirmPasswordBtn.querySelector('i[data-lucide]')
-      if (icon) {
-        const newIconType = isPassword ? 'eye-off' : 'eye'
-        icon.setAttribute('data-lucide', newIconType)
-        icon.setAttribute('class', `lucide lucide-${newIconType} w-5 h-5`)
+      // Update icon by replacing the entire element for better reliability
+      const newIconType = isPassword ? 'eye-off' : 'eye'
+      
+      // Create new icon element
+      const newIcon = document.createElement('i')
+      newIcon.setAttribute('data-lucide', newIconType)
+      newIcon.className = 'w-5 h-5'
+      
+      // Replace the old icon with the new one
+      const oldIcon = toggleSignupConfirmPasswordBtn.querySelector('i[data-lucide]')
+      if (oldIcon) {
+        toggleSignupConfirmPasswordBtn.replaceChild(newIcon, oldIcon)
         
-        // Force update Lucide icons
+        // Force Lucide to create the new icon
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
           window.lucide.createIcons()
         }
