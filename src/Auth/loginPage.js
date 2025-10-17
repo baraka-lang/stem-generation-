@@ -218,7 +218,7 @@ export function setupLoginPage() {
   })
 
   // Password visibility toggle for login form
-  setTimeout(() => {
+  function setupLoginPasswordToggle() {
     const toggleLoginPasswordBtn = document.getElementById('toggleLoginPassword')
     const loginPasswordInput = document.getElementById('loginPassword')
     const loginEyeIcon = document.getElementById('loginEyeIcon')
@@ -258,6 +258,7 @@ export function setupLoginPage() {
         toggleLoginPasswordBtn.setAttribute('aria-label', 
           isPassword ? 'Hide password' : 'Show password')
       })
+      return true; // Success
     } else {
       console.error('Login password toggle elements not found:', {
         toggleLoginPasswordBtn: !!toggleLoginPasswordBtn,
@@ -265,11 +266,31 @@ export function setupLoginPage() {
         loginEyeIcon: !!loginEyeIcon,
         loginEyeOffIcon: !!loginEyeOffIcon
       });
+      return false; // Failed
     }
-  }, 100);
+  }
+
+  // Try to setup immediately, if fails, retry with intervals
+  if (!setupLoginPasswordToggle()) {
+    let retryCount = 0;
+    const maxRetries = 50; // Try for 5 seconds (50 * 100ms)
+    
+    const retryInterval = setInterval(() => {
+      retryCount++;
+      console.log(`Retrying login password toggle setup (attempt ${retryCount}/${maxRetries})`);
+      
+      if (setupLoginPasswordToggle()) {
+        console.log('Login password toggle setup successful on retry');
+        clearInterval(retryInterval);
+      } else if (retryCount >= maxRetries) {
+        console.error('Failed to setup login password toggle after maximum retries');
+        clearInterval(retryInterval);
+      }
+    }, 100);
+  }
 
   // Password visibility toggle for signup form
-  setTimeout(() => {
+  function setupSignupPasswordToggle() {
     const toggleSignupPasswordBtn = document.getElementById('toggleSignupPassword')
     const signupPasswordInput = document.getElementById('signupPassword')
     const signupEyeIcon = document.getElementById('signupEyeIcon')
@@ -309,6 +330,7 @@ export function setupLoginPage() {
         toggleSignupPasswordBtn.setAttribute('aria-label', 
           isPassword ? 'Hide password' : 'Show password')
       })
+      return true; // Success
     } else {
       console.error('Signup password toggle elements not found:', {
         toggleSignupPasswordBtn: !!toggleSignupPasswordBtn,
@@ -316,11 +338,31 @@ export function setupLoginPage() {
         signupEyeIcon: !!signupEyeIcon,
         signupEyeOffIcon: !!signupEyeOffIcon
       });
+      return false; // Failed
     }
-  }, 100);
+  }
+
+  // Try to setup immediately, if fails, retry with intervals
+  if (!setupSignupPasswordToggle()) {
+    let retryCount = 0;
+    const maxRetries = 50; // Try for 5 seconds (50 * 100ms)
+    
+    const retryInterval = setInterval(() => {
+      retryCount++;
+      console.log(`Retrying signup password toggle setup (attempt ${retryCount}/${maxRetries})`);
+      
+      if (setupSignupPasswordToggle()) {
+        console.log('Signup password toggle setup successful on retry');
+        clearInterval(retryInterval);
+      } else if (retryCount >= maxRetries) {
+        console.error('Failed to setup signup password toggle after maximum retries');
+        clearInterval(retryInterval);
+      }
+    }, 100);
+  }
 
   // Password visibility toggle for confirm password field
-  setTimeout(() => {
+  function setupConfirmPasswordToggle() {
     const toggleSignupConfirmPasswordBtn = document.getElementById('toggleSignupConfirmPassword')
     const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
     const confirmEyeIcon = document.getElementById('confirmEyeIcon')
@@ -360,6 +402,7 @@ export function setupLoginPage() {
         toggleSignupConfirmPasswordBtn.setAttribute('aria-label', 
           isPassword ? 'Hide password' : 'Show password')
       })
+      return true; // Success
     } else {
       console.error('Confirm password toggle elements not found:', {
         toggleSignupConfirmPasswordBtn: !!toggleSignupConfirmPasswordBtn,
@@ -367,8 +410,28 @@ export function setupLoginPage() {
         confirmEyeIcon: !!confirmEyeIcon,
         confirmEyeOffIcon: !!confirmEyeOffIcon
       });
+      return false; // Failed
     }
-  }, 100);
+  }
+
+  // Try to setup immediately, if fails, retry with intervals
+  if (!setupConfirmPasswordToggle()) {
+    let retryCount = 0;
+    const maxRetries = 50; // Try for 5 seconds (50 * 100ms)
+    
+    const retryInterval = setInterval(() => {
+      retryCount++;
+      console.log(`Retrying confirm password toggle setup (attempt ${retryCount}/${maxRetries})`);
+      
+      if (setupConfirmPasswordToggle()) {
+        console.log('Confirm password toggle setup successful on retry');
+        clearInterval(retryInterval);
+      } else if (retryCount >= maxRetries) {
+        console.error('Failed to setup confirm password toggle after maximum retries');
+        clearInterval(retryInterval);
+      }
+    }, 100);
+  }
 
   // Forgot password button
   if (forgotPasswordBtn) {
