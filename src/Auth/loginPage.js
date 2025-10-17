@@ -123,67 +123,10 @@ function updateRequirementIndicator(element, isValid) {
 
 /**
  * Setup password toggle functionality for all password fields
+ * Note: This function is kept for compatibility but actual toggles are handled by event delegation
  */
 function setupPasswordToggles() {
-  console.log('Setting up password toggles...')
-
-  // Login password toggle
-  const toggleLoginPassword = document.getElementById('toggleLoginPassword')
-  const loginPasswordInput = document.getElementById('loginPassword')
-  const loginEyeIcon = document.getElementById('loginEyeIcon')
-  const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
-
-  console.log('Login toggle elements:', {
-    toggleLoginPassword,
-    loginPasswordInput,
-    loginEyeIcon,
-    loginEyeOffIcon
-  })
-
-  if (toggleLoginPassword && loginPasswordInput && loginEyeIcon && loginEyeOffIcon) {
-    console.log('Adding login password toggle listener')
-    toggleLoginPassword.addEventListener('click', (e) => {
-      e.preventDefault()
-      console.log('Login password toggle clicked hhh')
-      const isPassword = loginPasswordInput.type === 'password'
-      loginPasswordInput.type = isPassword ? 'text' : 'password'
-      loginEyeIcon.classList.toggle('hidden', !isPassword)
-      loginEyeOffIcon.classList.toggle('hidden', isPassword)
-      console.log('Password type changed to:', loginPasswordInput.type)
-    })
-  } else {
-    console.warn('Login password toggle elements not found')
-  }
-
-  // Signup password toggle
-  const toggleSignupPassword = document.getElementById('toggleSignupPasswordSignupPage')
-  const signupPasswordInput = document.getElementById('signupPassword')
-  const signupEyeIcon = document.getElementById('signupEyeIcon')
-  const signupEyeOffIcon = document.getElementById('signupEyeOffIcon')
-
-  if (toggleSignupPassword && signupPasswordInput && signupEyeIcon && signupEyeOffIcon) {
-    toggleSignupPassword.addEventListener('click', () => {
-      const isPassword = signupPasswordInput.type === 'password'
-      signupPasswordInput.type = isPassword ? 'text' : 'password'
-      signupEyeIcon.classList.toggle('hidden', !isPassword)
-      signupEyeOffIcon.classList.toggle('hidden', isPassword)
-    })
-  }
-
-  // Signup confirm password toggle
-  const toggleSignupConfirmPassword = document.getElementById('toggleSignupConfirmPasswordSignupPage')
-  const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
-  const confirmEyeIcon = document.getElementById('confirmEyeIcon')
-  const confirmEyeOffIcon = document.getElementById('confirmEyeOffIcon')
-
-  if (toggleSignupConfirmPassword && signupConfirmPasswordInput && confirmEyeIcon && confirmEyeOffIcon) {
-    toggleSignupConfirmPassword.addEventListener('click', () => {
-      const isPassword = signupConfirmPasswordInput.type === 'password'
-      signupConfirmPasswordInput.type = isPassword ? 'text' : 'password'
-      confirmEyeIcon.classList.toggle('hidden', !isPassword)
-      confirmEyeOffIcon.classList.toggle('hidden', isPassword)
-    })
-  }
+  console.log('Password toggles are handled by event delegation - no direct setup needed')
 }
 
 export function setupLoginPage() {
@@ -295,14 +238,12 @@ export function setupLoginPage() {
       console.log('Login password toggle clicked')
 
       const loginPasswordInput = document.getElementById('loginPassword')
-      const isPassword = loginPasswordInput.type === 'password'
-        loginPasswordInput.type = isPassword ? 'text' : 'password'
-        loginToggleBtn.style.color = isPassword ? 'cyan' : 'white'
       const loginEyeIcon = document.getElementById('loginEyeIcon')
       const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
 
       if (loginPasswordInput && loginEyeIcon && loginEyeOffIcon) {
-        
+        const isPassword = loginPasswordInput.type === 'password'
+        loginPasswordInput.type = isPassword ? 'text' : 'password'
         loginEyeIcon.classList.toggle('hidden', !isPassword)
         loginEyeOffIcon.classList.toggle('hidden', isPassword)
         console.log('Login password toggled, new type:', loginPasswordInput.type)
@@ -312,7 +253,7 @@ export function setupLoginPage() {
           window.lucide.createIcons()
         }
       } else {
-        // console.error('Login password toggle elements not found')
+        console.error('Login password toggle elements not found')
       }
 
       return
@@ -356,10 +297,10 @@ export function setupLoginPage() {
       const confirmPasswordInput = document.getElementById('signupConfirmPassword')
       const confirmEyeIcon = document.getElementById('confirmEyeIcon')
       const confirmEyeOffIcon = document.getElementById('confirmEyeOffIcon')
-   const isPassword = confirmPasswordInput.type === 'password'
-        confirmPasswordInput.type = isPassword ? 'text' : 'password'
+
       if (confirmPasswordInput && confirmEyeIcon && confirmEyeOffIcon) {
-     
+        const isPassword = confirmPasswordInput.type === 'password'
+        confirmPasswordInput.type = isPassword ? 'text' : 'password'
         confirmEyeIcon.classList.toggle('hidden', !isPassword)
         confirmEyeOffIcon.classList.toggle('hidden', isPassword)
         console.log('Signup confirm password toggled, new type:', confirmPasswordInput.type)

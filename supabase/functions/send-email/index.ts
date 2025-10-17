@@ -136,6 +136,48 @@ async function handleWelcomeEmail(data: any): Promise<void> {
 }
 
 /**
+ * Generate password reset URL with Supabase tokens
+ */
+async function generatePasswordResetUrl(email: string, baseUrl: string): Promise<string> {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      throw new Error('Supabase configuration missing');
+    }
+
+    // Use Supabase Admin API to generate password reset token
+    const response = await fetch(`${supabaseUrl}/auth/v1/recover`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseServiceKey,
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        email: email,
+        options: {
+          redirectTo: baseUrl
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to generate reset token: ${error}`);
+    }
+
+    // Supabase will send the email with the proper reset URL
+    // We return the base URL for the template
+    return baseUrl;
+  } catch (error) {
+    console.error('Error generating password reset URL:', error);
+    throw error;
+  }
+}
+
+/**
  * Main handler for the Edge Function
  */
 Deno.serve(async (req: Request) => {
@@ -145,7 +187,62 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { type, record, old_record } = await req.json();
+    const body = await req.json();
+    
+    // Check if this is a direct email request (not a webhook)
+    if (body.emailType && body.email) {
+      console.log('Direct email request:', { emailType: body.emailType, email: body.email });
+      
+      // Handle direct email sending
+      let templateName: string;
+      let subject: string;
+      let emailData: any = { email: body.email, ...body.data };
+
+      switch (body.emailType) {
+        case 'confirmation':
+          templateName = emailTemplates.confirmation.template;
+          subject = emailTemplates.confirmation.subject;
+          break;
+        case 'password_reset':
+          templateName = emailTemplates.password_reset.template;
+          subject = emailTemplates.password_reset.subject;
+          
+          // Generate proper password reset URL with tokens
+          if (body.data?.reset_url) {
+            try {
+              await generatePasswordResetUrl(body.email, body.data.reset_url);
+              // The actual reset URL will be sent by Supabase
+              // We use the provided URL as a fallback in the template
+            } catch (error) {
+              console.error('Failed to generate reset URL, using provided URL:', error);
+              // Fall back to the provided URL
+            }
+          }
+          break;
+        case 'welcome':
+          templateName = emailTemplates.welcome.template;
+          subject = emailTemplates.welcome.subject;
+          break;
+        default:
+          throw new Error('Invalid email type');
+      }
+
+      const template = await loadEmailTemplate(templateName);
+      const htmlContent = replaceTemplateVariables(template, emailData);
+      
+      await sendEmail(body.email, subject, htmlContent);
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'Email sent successfully' }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200 
+        }
+      );
+    }
+
+    // Handle webhook events (original functionality)
+    const { type, record, old_record } = body;
     
     console.log('Received webhook:', { type, recordId: record?.id });
 
