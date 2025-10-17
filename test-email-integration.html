@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Email Service Integration Test - 343 Labs AI Music Studio</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1e293b;
+            color: white;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .header h1 {
+            background: linear-gradient(135deg, #8b5cf6, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2.5rem;
+            margin: 0;
+        }
+        .test-section {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .test-button {
+            background: linear-gradient(135deg, #8b5cf6, #ec4899);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            margin: 5px;
+        }
+        .test-button:hover {
+            transform: translateY(-2px);
+        }
+        .test-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background-color: rgba(34, 197, 94, 0.2);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #22c55e;
+        }
+        .status.error {
+            background-color: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+        }
+        .status.info {
+            background-color: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #3b82f6;
+        }
+        .config-display {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 14px;
+        }
+        .input-group input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>343 Labs AI Music Studio</h1>
+            <p>Email Service Integration Test</p>
+        </div>
+
+        <div class="test-section">
+            <h2>Email Service Configuration</h2>
+            <div id="configStatus" class="status info">
+                Loading configuration...
+            </div>
+            <div id="configDisplay" class="config-display">
+                <!-- Configuration will be displayed here -->
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>Test Email Service Connection</h2>
+            <button class="test-button" onclick="testConnection()">
+                Test Connection
+            </button>
+            <div id="connectionStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Test Email Sending</h2>
+            <div class="input-group">
+                <label for="testEmail">Test Email Address:</label>
+                <input type="email" id="testEmail" placeholder="test@example.com" value="test@example.com">
+            </div>
+            <div class="input-group">
+                <label for="testUrl">Test URL:</label>
+                <input type="url" id="testUrl" placeholder="https://app.com/reset" value="https://app.com/reset">
+            </div>
+            
+            <button class="test-button" onclick="testPasswordResetEmail()">
+                Test Password Reset Email
+            </button>
+            <button class="test-button" onclick="testConfirmationEmail()">
+                Test Confirmation Email
+            </button>
+            <button class="test-button" onclick="testWelcomeEmail()">
+                Test Welcome Email
+            </button>
+            
+            <div id="emailStatus"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Environment Variables Required</h2>
+            <p>Make sure these are set in your <code>.env</code> file:</p>
+            <ul>
+                <li><code>VITE_EMAIL_SERVICE_URL</code> - Your lead developer's email service endpoint</li>
+                <li><code>VITE_EMAIL_SERVICE_KEY</code> - API key for the email service</li>
+                <li><code>VITE_APP_URL</code> - Your application URL</li>
+                <li><code>VITE_SUPPORT_URL</code> - Support page URL</li>
+                <li><code>VITE_PRIVACY_URL</code> - Privacy policy URL</li>
+                <li><code>VITE_TERMS_URL</code> - Terms of service URL</li>
+            </ul>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import the email service functions
+        import { 
+            EMAIL_SERVICE_CONFIG, 
+            testEmailService, 
+            sendPasswordResetEmail, 
+            sendConfirmationEmail, 
+            sendWelcomeEmail 
+        } from './src/Config/emailService.js';
+
+        // Make functions globally available
+        window.testConnection = testConnection;
+        window.testPasswordResetEmail = testPasswordResetEmail;
+        window.testConfirmationEmail = testConfirmationEmail;
+        window.testWelcomeEmail = testWelcomeEmail;
+
+        // Display configuration on page load
+        function displayConfiguration() {
+            const configStatus = document.getElementById('configStatus');
+            const configDisplay = document.getElementById('configDisplay');
+            
+            const isConfigured = EMAIL_SERVICE_CONFIG.endpoint && EMAIL_SERVICE_CONFIG.apiKey;
+            
+            if (isConfigured) {
+                configStatus.innerHTML = '<div class="status success">✅ Email service configured</div>';
+            } else {
+                configStatus.innerHTML = '<div class="status error">❌ Email service not configured - check environment variables</div>';
+            }
+            
+            configDisplay.innerHTML = `
+                <strong>Configuration:</strong><br>
+                Endpoint: ${EMAIL_SERVICE_CONFIG.endpoint || 'Not set'}<br>
+                API Key: ${EMAIL_SERVICE_CONFIG.apiKey ? 'Set' : 'Not set'}<br>
+                App URL: ${EMAIL_SERVICE_CONFIG.defaultVariables.APP_URL}<br>
+                Support URL: ${EMAIL_SERVICE_CONFIG.defaultVariables.SUPPORT_URL}
+            `;
+        }
+
+        async function testConnection() {
+            const statusDiv = document.getElementById('connectionStatus');
+            statusDiv.innerHTML = '<div class="status info">Testing connection...</div>';
+            
+            try {
+                const result = await testEmailService();
+                if (result.success) {
+                    statusDiv.innerHTML = '<div class="status success">✅ Connection successful!</div>';
+                } else {
+                    statusDiv.innerHTML = `<div class="status error">❌ Connection failed: ${result.error}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ Connection error: ${error.message}</div>`;
+            }
+        }
+
+        async function testPasswordResetEmail() {
+            const email = document.getElementById('testEmail').value;
+            const url = document.getElementById('testUrl').value;
+            const statusDiv = document.getElementById('emailStatus');
+            
+            if (!email) {
+                statusDiv.innerHTML = '<div class="status error">❌ Please enter an email address</div>';
+                return;
+            }
+            
+            statusDiv.innerHTML = '<div class="status info">Sending password reset email...</div>';
+            
+            try {
+                const result = await sendPasswordResetEmail(email, url);
+                if (result.success) {
+                    statusDiv.innerHTML = '<div class="status success">✅ Password reset email sent successfully!</div>';
+                } else {
+                    statusDiv.innerHTML = `<div class="status error">❌ Failed to send email: ${result.error}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testConfirmationEmail() {
+            const email = document.getElementById('testEmail').value;
+            const url = document.getElementById('testUrl').value;
+            const statusDiv = document.getElementById('emailStatus');
+            
+            if (!email) {
+                statusDiv.innerHTML = '<div class="status error">❌ Please enter an email address</div>';
+                return;
+            }
+            
+            statusDiv.innerHTML = '<div class="status info">Sending confirmation email...</div>';
+            
+            try {
+                const result = await sendConfirmationEmail(email, url);
+                if (result.success) {
+                    statusDiv.innerHTML = '<div class="status success">✅ Confirmation email sent successfully!</div>';
+                } else {
+                    statusDiv.innerHTML = `<div class="status error">❌ Failed to send email: ${result.error}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testWelcomeEmail() {
+            const email = document.getElementById('testEmail').value;
+            const statusDiv = document.getElementById('emailStatus');
+            
+            if (!email) {
+                statusDiv.innerHTML = '<div class="status error">❌ Please enter an email address</div>';
+                return;
+            }
+            
+            statusDiv.innerHTML = '<div class="status info">Sending welcome email...</div>';
+            
+            try {
+                const result = await sendWelcomeEmail(email);
+                if (result.success) {
+                    statusDiv.innerHTML = '<div class="status success">✅ Welcome email sent successfully!</div>';
+                } else {
+                    statusDiv.innerHTML = `<div class="status error">❌ Failed to send email: ${result.error}</div>`;
+                }
+            } catch (error) {
+                statusDiv.innerHTML = `<div class="status error">❌ Error: ${error.message}</div>`;
+            }
+        }
+
+        // Initialize on page load
+        displayConfiguration();
+    </script>
+</body>
+</html>

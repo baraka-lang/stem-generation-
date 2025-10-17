@@ -1,0 +1,62 @@
+{
+    "id": "ed2d6ddf-2620-4a6b-a28e-f2dbb489cddf",
+    "aud": "authenticated",
+    "role": "authenticated",
+    "email": "williumkimambo61@gmail.com",
+    "phone": "",
+    "confirmation_sent_at": "2025-10-15T13:21:38.234734893Z",
+    "app_metadata": {
+        "provider": "email",
+        "providers": [
+            "email"
+        ]
+    },
+    "user_metadata": {
+        "email": "williumkimambo61@gmail.com",
+        "email_verified": false,
+        "phone_verified": false,
+        "sub": "ed2d6ddf-2620-4a6b-a28e-f2dbb489cddf"
+    },
+    "identities": [
+        {
+            "identity_id": "852d6db9-6306-4149-8590-7f893ed1fb3d",
+            "id": "ed2d6ddf-2620-4a6b-a28e-f2dbb489cddf",
+            "user_id": "ed2d6ddf-2620-4a6b-a28e-f2dbb489cddf",
+            "identity_data": {
+                "email": "williumkimambo61@gmail.com",
+                "email_verified": false,
+                "phone_verified": false,
+                "sub": "ed2d6ddf-2620-4a6b-a28e-f2dbb489cddf"
+            },
+            "provider": "email",
+            "last_sign_in_at": "2025-10-15T13:21:38.229481671Z",
+            "created_at": "2025-10-15T13:21:38.229534Z",
+            "updated_at": "2025-10-15T13:21:38.229534Z",
+            "email": "williumkimambo61@gmail.com"
+        }
+    ],
+    "created_at": "2025-10-15T13:21:38.223538Z",
+    "updated_at": "2025-10-15T13:21:38.722013Z",
+    "is_anonymous": false
+}
+
+{
+    "id": "f8873fe3-6fbf-4a14-8b87-b7c38cf2c250",
+    "aud": "authenticated",
+    "role": "",
+    "email": "jamesjojo461@gmail.com",
+    "phone": "",
+    "confirmation_sent_at": "2025-10-15T13:25:43.404881424Z",
+    "recovery_sent_at": "2025-10-15T09:43:22.44966Z",
+    "app_metadata": {
+        "provider": "email",
+        "providers": [
+            "email"
+        ]
+    },
+    "user_metadata": {},
+    "identities": [],
+    "created_at": "2025-10-15T13:25:43.404881424Z",
+    "updated_at": "2025-10-15T13:25:43.404881424Z",
+    "is_anonymous": false
+}

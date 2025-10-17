@@ -35,18 +35,32 @@ import {
   FILTER_DEFAULT_HZ,
 } from './Config/constants.js'
 import { knobToDb, formatDb, knobAngle } from './Utilities/index.js'
-import { bufferToWavAndDownload } from './DownloadAudio/index.js'
+import { getColorRGB, drawWaveform, drawTinyWaveform } from './Utilities/waveform.js'
+import { setupUserMenu, updateUserMenu } from './UI/userMenu.js'
+import { initializeAuthGuard, addAuthListener } from './Auth/authGuard.js'
+import { setupLoginPage } from './Auth/loginPage.js'
+import { setupResetPasswordPage } from './Auth/resetPasswordPage.js'
+import { setupSelectionPage } from './Auth/selectionPage.js'
+import { setupProfilePage } from './Auth/profilePage.js'
+import { initializeUserProfile } from './Auth/userProfile.js'
+import { checkCredits, updateCredits } from './Auth/userProfile.js'
+import { getAuthGuard } from './Auth/authGuard.js'
+import { setupHelpModal } from './UI/helpModal.js'
+import { injectGlobalStyles } from './UI/styles.js'
+import { stemConfigs, STEM_ORDER } from './Config/stems.js'
+import { downloadStem as saveDownloadStem, downloadAllActiveStems as saveDownloadAllActiveStems } from './SaveAudio/index.js'
+import { openDownloadConfirmModal, closeDownloadConfirmModal, confirmDownloadAll, setDownloadAllHandler } from './DownloadAudio/index.js'
 import { scaleKnob, roleDirectives, negatives } from './TechnoGenerators/stemHelper.js'
 
 /* =========================================================
    Global state
    ========================================================= */
 let audioContext = null
-let masterGain   = null
-let isPlaying    = false
+let masterGain = null
+let isPlaying = false
 
-const stemRaw   = {}
-const stemLoop  = {}
+const stemRaw = {}
+const stemLoop = {}
 // active nodes: { source, env, filter, eq:{low,mid,high}, gain }
 const stemNodes = {}
 const stemGains = {}
@@ -341,9 +355,19 @@ async function loadSavedSet(index) {
 function initSavedStateFeature() {
   const saveBtn = document.getElementById('saveStateBtn')
   if (saveBtn) {
-    saveBtn.addEventListener('click', () => {
-      // When save is pressed, open confirmation modal instead of saving directly
-      openSaveSetModal()
+    saveBtn.addEventListener('click', async () => {
+      // Check if user is authenticated before allowing save
+      const { canUserSave } = await import('./Auth/selectionPage.js')
+      const canSave = await canUserSave()
+      
+      if (canSave) {
+        // User is authenticated, proceed with save
+        openSaveSetModal()
+      } else {
+        // User not authenticated, show login modal
+        const { showSaveLoginModal } = await import('./Auth/selectionPage.js')
+        showSaveLoginModal()
+      }
     })
   }
   const dropdown = document.getElementById('savedSetsDropdown')
@@ -417,31 +441,8 @@ function initSavedStateFeature() {
  * button is clicked, a dropdown menu appears with credits, library,
  * account and logout options.  Clicking outside the menu closes it.
  */
-function setupUserMenu() {
-  const btn = document.getElementById('userMenuBtn')
-  const menu = document.getElementById('userMenu')
-  if (!btn || !menu) return
-  // Toggle menu visibility on button click
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation()
-    const isHidden = menu.classList.contains('hidden')
-    if (isHidden) {
-      menu.classList.remove('hidden')
-      btn.setAttribute('aria-expanded', 'true')
-    } else {
-      menu.classList.add('hidden')
-      btn.setAttribute('aria-expanded', 'false')
-    }
-  })
-  // Hide the menu when clicking outside
-  document.addEventListener('click', (e) => {
-    if (menu.classList.contains('hidden')) return
-    const target = e.target
-    if (menu.contains(target) || btn.contains(target)) return
-    menu.classList.add('hidden')
-    btn.setAttribute('aria-expanded', 'false')
-  })
-}
+// moved to ./UI/userMenu.js
+// setupUserMenu moved to ./UI/userMenu.js
 
 /**
  * Open the save set confirmation modal.  This prompts the user to
@@ -566,58 +567,7 @@ async function confirmLoadSet(idx) {
   // Note: loadSavedSet() closes the modal
 }
 
-/**
- * Open the download all confirmation modal.
- */
-function openDownloadConfirmModal() {
-  const modal = document.getElementById('downloadConfirmModal')
-  if (!modal) return
-  // Reset spinner and label
-  const spinner = document.getElementById('downloadConfirmSpinner')
-  const label = document.getElementById('downloadConfirmLabel')
-  if (spinner) spinner.classList.add('hidden')
-  if (label) label.textContent = 'Download'
-  modal.classList.remove('hidden')
-  requestAnimationFrame(() => {
-    modal.style.opacity = '1'
-    modal.firstElementChild?.classList.remove('scale-95')
-    modal.firstElementChild?.classList.add('scale-100')
-  })
-}
-
-/**
- * Close the download confirmation modal.
- */
-function closeDownloadConfirmModal() {
-  const modal = document.getElementById('downloadConfirmModal')
-  if (!modal) return
-  modal.style.opacity = '0'
-  modal.firstElementChild?.classList.remove('scale-100')
-  modal.firstElementChild?.classList.add('scale-95')
-  setTimeout(() => { modal.classList.add('hidden') }, 200)
-}
-
-/**
- * Execute the download of all active stems after user confirmation.  A
- * spinner is shown on the confirm button while the download is in
- * progress.  The modal is closed after the download starts.
- */
-function confirmDownloadAll() {
-  const spinner = document.getElementById('downloadConfirmSpinner')
-  const label = document.getElementById('downloadConfirmLabel')
-  if (spinner && label) {
-    spinner.classList.remove('hidden')
-    label.textContent = 'Downloading'
-  }
-  // Initiate download of all active stems
-  downloadAllActiveStems()
-  // After initiating, hide modal and reset
-  if (spinner && label) {
-    spinner.classList.add('hidden')
-    label.textContent = 'Download'
-  }
-  closeDownloadConfirmModal()
-}
+// moved: openDownloadConfirmModal, closeDownloadConfirmModal, confirmDownloadAll
 
 // Per‑stem UI state for waveform editing.  When true for a given stem, the
 // take navigation arrows on that waveform are hidden and the horizontal
@@ -643,8 +593,8 @@ const waveformEditState = {
   prevEndpointFactor: 1
 }
 
-let loopStartTime  = 0
-let loopDuration   = 0
+let loopStartTime = 0
+let loopDuration = 0
 let transportTicker = null
 
 let referenceStemType = null
@@ -688,230 +638,19 @@ function getActiveVersion(st) {
 /* =========================================================
    Supabase client
    ========================================================= */
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-/* =========================================================
-   Visual helpers
-   ========================================================= */
-function getColorRGB(colorName) {
-  const m = {
-    red: '239, 68, 68',
-    orange: '249, 115, 22',
-    yellow: '234, 179, 8',
-    green: '34, 197, 94',
-    cyan: '6, 182, 212',
-    purple: '147, 51, 234',
-    blue: '59, 130, 246',
-    pink: '236, 72, 153'
-  }
-  return m[colorName] || '156, 163, 175'
-}
-function drawWaveform(canvas, audioBuffer, color) {
-  if (!canvas || !audioBuffer) return
-  const ctx = canvas.getContext('2d')
-  const { width, height } = canvas
-  ctx.clearRect(0, 0, width, height)
-  ctx.strokeStyle = color
-  ctx.lineWidth = 1
-  const data = audioBuffer.getChannelData(0)
-  const step = Math.ceil(data.length / width)
-  const amp = height / 2
-  ctx.beginPath()
-  for (let x = 0; x < width; x++) {
-    let min = 1, max = -1
-    for (let j = 0; j < step && (x*step + j) < data.length; j++) {
-      const v = data[x*step + j]
-      if (v < min) min = v
-      if (v > max) max = v
-    }
-    const y1 = (1 + min) * amp
-    const y2 = (1 + max) * amp
-    ctx.moveTo(x, y1)
-    ctx.lineTo(x, y2)
-  }
-  ctx.stroke()
-}
-function drawTinyWaveform(canvas, audioBuffer) {
-  if (!canvas || !audioBuffer) return
-  const ctx = canvas.getContext('2d')
-  const { width, height } = canvas
-  ctx.clearRect(0, 0, width, height)
-  ctx.fillStyle = 'rgba(255,255,255,0.08)'
-  ctx.fillRect(0, 0, width, height)
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
-  ctx.lineWidth = 1
-  const data = audioBuffer.getChannelData(0)
-  const step = Math.max(1, Math.floor(data.length / (width * 2)))
-  const amp = height / 2
-  ctx.beginPath()
-  for (let x = 0, i = 0; x < width; x++, i += step) {
-    let min = 1, max = -1
-    for (let k = 0; k < step && (i + k) < data.length; k++) {
-      const v = data[i + k]
-      if (v < min) min = v
-      if (v > max) max = v
-    }
-    const y1 = (1 + min) * amp
-    const y2 = (1 + max) * amp
-    ctx.moveTo(x, y1)
-    ctx.lineTo(x, y2)
-  }
-  ctx.stroke()
+let supabase = null
+if (supabaseUrl && supabaseKey && supabaseUrl !== 'your_supabase_url_here') {
+  supabase = createClient(supabaseUrl, supabaseKey)
+  console.log('✅ Supabase client initialized')
+} else {
+  console.warn('⚠️ Supabase not configured - using fallback generation only')
 }
 
-/* =========================================================
-   Stem configs (9 cards) — order defines 1–9 hotkeys
-   ========================================================= */
-// Expanded stem configuration.  Each instrument now exposes five
-// parametric sliders (knobs) that map to musical descriptors such as
-// attack, body, tone and pattern, plus two toggles for auxiliary
-// processing (e.g. distortion, reverb).  Volume remains a
-// non‑generative control and is therefore excluded from the count of
-// five sliders.  These descriptors draw upon common envelope and
-// timbre terminology suggested in ElevenLabs prompting guidelines and
-// the sound‑effect prompt cheatsheet【250912434198074†L742-L756】.
-const stemConfigs = {
-  kick: {
-    name: 'Kick',
-    color: 'red',
-    basePrompt: 'deep techno kick drum',
-    controls: {
-      punch:   { type: 'knob', min: 0, max: 100, default: 70, unit: '%', label: 'Punch' },
-      attack:  { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Attack' },
-      decay:   { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
-      body:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Body' },
-      tone:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      distortion: { type: 'toggle', default: false, label: 'Distortion' },
-      rumble:     { type: 'toggle', default: false, label: 'Rumble' },
-      volume:  { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  perc: {
-    name: 'Snare',
-    color: 'cyan',
-    basePrompt: 'industrial techno snare',
-    controls: {
-      intensity: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Intensity' },
-      variation: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Variation' },
-      snap:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Snap' },
-      decay:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Decay' },
-      tone:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      metallic: { type: 'toggle', default: false, label: 'Metallic' },
-      reverb:   { type: 'toggle', default: false, label: 'Reverb' },
-      volume:   { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  bass: {
-    name: 'Bass',
-    color: 'yellow',
-    basePrompt: 'dark techno bassline',
-    controls: {
-      depth:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Depth' },
-      movement:  { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Movement' },
-      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
-      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      sub:       { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Sub' },
-      filter:    { type: 'toggle', default: true, label: 'Filter Sweep' },
-      distortion:{ type: 'toggle', default: false, label: 'Distortion' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  lead: {
-    name: 'Lead',
-    color: 'green',
-    basePrompt: 'hypnotic techno lead synth',
-    controls: {
-      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
-      complexity:{ type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Complexity' },
-      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
-      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
-      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
-      delay:     { type: 'toggle', default: false, label: 'Delay' },
-      chorus:    { type: 'toggle', default: false, label: 'Chorus' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  hihat: {
-    name: 'Hihat',
-    color: 'orange',
-    basePrompt: 'crisp techno closed hi-hat',
-    controls: {
-      brightness: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Brightness' },
-      pattern:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Pattern' },
-      decay:      { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
-      texture:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
-      shuffle:    { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Shuffle' },
-      reverb:     { type: 'toggle', default: false, label: 'Reverb' },
-      chorus:     { type: 'toggle', default: false, label: 'Chorus' },
-      volume:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  pad: {
-    name: 'Pad',
-    color: 'purple',
-    basePrompt: 'ambient techno pad',
-    controls: {
-      warmth:    { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Warmth' },
-      evolution: { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Evolution' },
-      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
-      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
-      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
-      chorus:    { type: 'toggle', default: true, label: 'Chorus' },
-      reverb:    { type: 'toggle', default: false, label: 'Reverb' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  arp: {
-    name: 'Arp',
-    color: 'blue',
-    basePrompt: 'techno synthesizer arpeggio',
-    controls: {
-      rate:      { type: 'knob', min: 0, max: 100, default: 55, unit: '%', label: 'Rate' },
-      complexity:{ type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Complexity' },
-      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
-      swing:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Swing' },
-      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      gate:      { type: 'toggle', default: false, label: 'Long Gate' },
-      delay:     { type: 'toggle', default: false, label: 'Delay' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  fx: {
-    name: 'FX',
-    color: 'pink',
-    basePrompt: 'techno transition effects and atmos',
-    controls: {
-      intensity: { type: 'knob', min: 0, max: 100, default: 65, unit: '%', label: 'Intensity' },
-      movement:  { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Movement' },
-      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
-      sweep:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Sweep' },
-      filter:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Filter' },
-      reverb:    { type: 'toggle', default: true, label: 'Reverb' },
-      delay:     { type: 'toggle', default: false, label: 'Delay' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-  perc2: {
-    name: 'Perc',
-    color: 'orange',
-    basePrompt: 'techno top percussion loop',
-    controls: {
-      density:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Density' },
-      groove:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Groove' },
-      variation:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Variation' },
-      tone:        { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      syncopation:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Syncopation' },
-      metallic:    { type: 'toggle', default: false, label: 'Metallic' },
-      reverb:      { type: 'toggle', default: false, label: 'Reverb' },
-      volume:      { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
-    },
-  },
-}
-// Fixed hotkey order (1–9)
-const STEM_ORDER = ['kick','perc','bass','lead','hihat','pad','arp','fx','perc2']
+
+
 
 /* =========================================================
    Prompt scaffold (unchanged)
@@ -963,40 +702,40 @@ async function ensureAudioContext() {
     masterGain.gain.setValueAtTime(0.9, audioContext.currentTime)
     masterGain.connect(audioContext.destination)
 
-      // On iOS 17+ devices, the Audio Session API allows web apps to specify
-      // the intended audio behaviour.  When the phone's ringer switch is set
-      // to silent, web audio is muted unless the session type is set to
-      // "playback"【76389239852111†L94-L98】.  Attempting to set
-      // navigator.audioSession.type informs the browser that audio is
-      // essential and should ignore the silent switch.  Wrap in try/catch
-      // because this API is only available in some Safari versions.
-      try {
-        if (navigator?.audioSession && navigator.audioSession.type !== 'playback') {
-          navigator.audioSession.type = 'playback'
-        }
-      } catch (err) {
-        console.warn('Failed to set navigator.audioSession.type:', err)
+    // On iOS 17+ devices, the Audio Session API allows web apps to specify
+    // the intended audio behaviour.  When the phone's ringer switch is set
+    // to silent, web audio is muted unless the session type is set to
+    // "playback"【76389239852111†L94-L98】.  Attempting to set
+    // navigator.audioSession.type informs the browser that audio is
+    // essential and should ignore the silent switch.  Wrap in try/catch
+    // because this API is only available in some Safari versions.
+    try {
+      if (navigator?.audioSession && navigator.audioSession.type !== 'playback') {
+        navigator.audioSession.type = 'playback'
       }
+    } catch (err) {
+      console.warn('Failed to set navigator.audioSession.type:', err)
+    }
 
-      // ----------------------------------------------------------------------
-      // Fallback for devices/browsers where navigator.audioSession is
-      // unavailable (pre‑iOS 17 and some Android browsers).  On these
-      // platforms, web audio will be muted if the hardware ringer switch is
-      // set to silent.  To unmute web audio, we play a very short silent
-      // MP3 via a temporary <audio> element and also trigger a one‑sample
-      // buffer through a secondary AudioContext.  This pattern is based on
-      // community recommendations and WaveSurfer’s ignoreSilenceMode
-      // implementation and ensures that the browser promotes the audio
-      // session to media playback【76389239852111†L94-L98】.  Because the
-      // silent track is inaudible and removed immediately after playback
-      // begins, it does not disturb the user.  We only execute this once
-      // and only when navigator.audioSession is not present.
-      try {
-        if (!navigator?.audioSession) {
-          // Define a no‑op flag to prevent multiple invocations.
-          if (!window.__sg_ignore_silent_mode_ran__) {
-            window.__sg_ignore_silent_mode_ran__ = true
-            ;(function playSilent() {
+    // ----------------------------------------------------------------------
+    // Fallback for devices/browsers where navigator.audioSession is
+    // unavailable (pre‑iOS 17 and some Android browsers).  On these
+    // platforms, web audio will be muted if the hardware ringer switch is
+    // set to silent.  To unmute web audio, we play a very short silent
+    // MP3 via a temporary <audio> element and also trigger a one‑sample
+    // buffer through a secondary AudioContext.  This pattern is based on
+    // community recommendations and WaveSurfer’s ignoreSilenceMode
+    // implementation and ensures that the browser promotes the audio
+    // session to media playback【76389239852111†L94-L98】.  Because the
+    // silent track is inaudible and removed immediately after playback
+    // begins, it does not disturb the user.  We only execute this once
+    // and only when navigator.audioSession is not present.
+    try {
+      if (!navigator?.audioSession) {
+        // Define a no‑op flag to prevent multiple invocations.
+        if (!window.__sg_ignore_silent_mode_ran__) {
+          window.__sg_ignore_silent_mode_ran__ = true
+            ; (function playSilent() {
               try {
                 // 1. Create a throwaway AudioContext and play a single sample
                 const ac2 = new (window.AudioContext || window.webkitAudioContext)()
@@ -1017,7 +756,7 @@ async function ensureAudioContext() {
                 // Load and play the silent audio; catch errors silently
                 const playPromise = audio.play()
                 if (playPromise && playPromise.catch) {
-                  playPromise.catch(() => {})
+                  playPromise.catch(() => { })
                 }
                 // Remove the element after a brief delay
                 setTimeout(() => {
@@ -1027,9 +766,9 @@ async function ensureAudioContext() {
                 console.warn('silent mode fallback failed', inner)
               }
             })()
-          }
         }
-      } catch (ignored) {}
+      }
+    } catch (ignored) { }
 
     // Handle platform interruptions such as phone calls.  On some
     // mobile browsers (e.g. iOS Safari) receiving a call causes the
@@ -1076,12 +815,12 @@ async function ensureAudioContext() {
   if (audioContext.state !== 'running') await audioContext.resume()
 }
 function createEqNodes() {
-  const low  = audioContext.createBiquadFilter()
+  const low = audioContext.createBiquadFilter()
   low.type = 'lowshelf'
   low.frequency.setValueAtTime(EQ_LOW_FREQ, audioContext.currentTime)
   low.gain.setValueAtTime(0, audioContext.currentTime)
 
-  const mid  = audioContext.createBiquadFilter()
+  const mid = audioContext.createBiquadFilter()
   mid.type = 'peaking'
   mid.frequency.setValueAtTime(EQ_MID_FREQ, audioContext.currentTime)
   mid.Q.setValueAtTime(EQ_MID_Q, audioContext.currentTime)
@@ -1095,13 +834,13 @@ function createEqNodes() {
   return { low, mid, high }
 }
 function knobToFreq(val) {
-  const v = Math.max(0, Math.min(100, Number(val)||0))
+  const v = Math.max(0, Math.min(100, Number(val) || 0))
   const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
-  const lnF = lnMin + (v/100) * (lnMax - lnMin)
+  const lnF = lnMin + (v / 100) * (lnMax - lnMin)
   return Math.exp(lnF)
 }
 function freqToKnob(freq) {
-  const f = Math.max(FILTER_MIN_HZ, Math.min(FILTER_MAX_HZ, Number(freq)||FILTER_DEFAULT_HZ))
+  const f = Math.max(FILTER_MIN_HZ, Math.min(FILTER_MAX_HZ, Number(freq) || FILTER_DEFAULT_HZ))
   const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
   const lnF = Math.log(f)
   return Math.round(((lnF - lnMin) / (lnMax - lnMin)) * 100)
@@ -1152,51 +891,120 @@ function createStemNodes(st, loopBuffer) {
    Loop math + seam tools
    ========================================================= */
 // (unchanged helpers)
-function clampTempo(t){ const x=Math.round(Number(t)||DEFAULT_TEMPO); return Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, x)) }
-function computeTargetFrames(sr, bpm, bars){ const beats=bars*4; const seconds=beats*(60/bpm); return Math.round(seconds*sr) }
-function removeDcOffset(buffer){ const ch=buffer.numberOfChannels; for(let c=0;c<ch;c++){ const d=buffer.getChannelData(c); let sum=0; for(let i=0;i<d.length;i++) sum+=d[i]; const mean=sum/d.length; if(Math.abs(mean)>1e-6){ for(let i=0;i<d.length;i++) d[i]-=mean } } }
-function nearestZeroCrossing(data, around, radius){ const n=data.length; let best=around,bestVal=Math.abs(data[around]||0); const a=Math.max(0,around-radius), b=Math.min(n-1,around+radius); for(let i=a;i<=b;i++){ const v=Math.abs(data[i]); if(v<bestVal){ bestVal=v; best=i } } return best }
-function detectHeadIndex(buffer){ const sr=buffer.sampleRate; const maxMs=1000; const maxN=Math.min(buffer.length, Math.round((maxMs/1000)*sr)); if(maxN<=0) return 0; const x=buffer.getChannelData(0); const env=new Float32Array(maxN); for(let i=0;i<maxN;i++) env[i]=Math.abs(x[i]); const win=Math.max(2, Math.round((8/1000)*sr)); let acc=0; for(let i=0;i<win && i<env.length;i++) acc+=env[i]; const sm=new Float32Array(maxN); for(let i=0;i<maxN;i++){ if(i>=win) acc+=env[i]-env[i-win]; sm[i]=acc/Math.min(win,i+1) } let peak=0; for(let i=0;i<maxN;i++) if(sm[i]>peak) peak=sm[i]; const th=Math.max(Math.pow(10,-45/20), peak*0.12); const backOff=Math.round(0.0035*sr); for(let i=0;i<maxN;i++) if(sm[i]>=th){ const z=nearestZeroCrossing(x, Math.max(0,i-backOff), ZERO_FALLBACK_SAMPLES); return Math.max(0,z) } return 0 }
-function sampleAt(data, idx){ const n=data.length; while(idx<0) idx+=n; while(idx>=n) idx-=n; return data[idx] }
-function findBestSeamOffset(raw, startIdx, targetLen, xfadeN){
+function clampTempo(t) {
+  const x = Math.round(Number(t) || DEFAULT_TEMPO);
+  return Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, x))
+}
+
+function computeTargetFrames(sr, bpm, bars) {
+  const beats = bars * 4;
+  const seconds = beats * (60 / bpm);
+  return Math.round(seconds * sr)
+}
+
+function removeDcOffset(buffer) {
+  const ch = buffer.numberOfChannels;
+  for (let c = 0; c < ch; c++) {
+    const d = buffer.getChannelData(c);
+    let sum = 0;
+    for (let i = 0; i < d.length; i++)
+      sum += d[i];
+    const mean = sum / d.length;
+    if (Math.abs(mean) > 1e-6) {
+      for (let i = 0; i < d.length; i++)
+        d[i] -= mean
+    }
+  }
+}
+function nearestZeroCrossing(data, around, radius) {
+  const n = data.length;
+  let best = around, bestVal = Math.abs(data[around] || 0);
+  const a = Math.max(0, around - radius), b = Math.min(n - 1, around + radius);
+  for (let i = a; i <= b; i++) {
+    const v = Math.abs(data[i]);
+    if (v < bestVal) {
+      bestVal = v; best = i
+    }
+  }
+  return best
+}
+
+function detectHeadIndex(buffer) {
+  const sr = buffer.sampleRate;
+  const maxMs = 1000;
+  const maxN = Math.min(buffer.length, Math.round((maxMs / 1000) * sr));
+  if (maxN <= 0)
+    return 0;
+  const x = buffer.getChannelData(0);
+  const env = new Float32Array(maxN);
+  for (let i = 0; i < maxN; i++) env[i] = Math.abs(x[i]);
+  const win = Math.max(2, Math.round((8 / 1000) * sr));
+  let acc = 0;
+  for (let i = 0; i < win && i < env.length; i++) acc += env[i];
+  const sm = new Float32Array(maxN);
+  for (let i = 0; i < maxN; i++) {
+    if (i >= win)
+      acc += env[i] - env[i - win];
+    sm[i] = acc / Math.min(win, i + 1)
+  }
+  let peak = 0;
+  for (let i = 0; i < maxN; i++)
+    if (sm[i] > peak) peak = sm[i];
+  const th = Math.max(Math.pow(10, -45 / 20), peak * 0.12);
+  const backOff = Math.round(0.0035 * sr);
+  for (let i = 0; i < maxN; i++) if (sm[i] >= th) {
+    const z = nearestZeroCrossing(x, Math.max(0, i - backOff), ZERO_FALLBACK_SAMPLES);
+    return Math.max(0, z)
+  }
+  return 0
+}
+
+function sampleAt(data, idx) {
+  const n = data.length;
+  while (idx < 0) idx += n;
+  while (idx >= n) idx -= n;
+  return data[idx]
+}
+
+function findBestSeamOffset(raw, startIdx, targetLen, xfadeN) {
   const sr = raw.sampleRate
   const d0 = raw.getChannelData(0)
-  const search = Math.max(0, Math.round((ALIGN_SEARCH_MS/1000)*sr))
+  const search = Math.max(0, Math.round((ALIGN_SEARCH_MS / 1000) * sr))
   const step = Math.max(1, Math.round(sr / 12000))
   let bestOffset = 0, bestScore = Number.POSITIVE_INFINITY
   for (let off = -search; off <= search; off += step) {
     let score = 0
-    for (let i=0;i<xfadeN;i+=step) {
+    for (let i = 0; i < xfadeN; i += step) {
       const a = sampleAt(d0, startIdx + i + off)
       const b = sampleAt(d0, startIdx + targetLen - xfadeN + i + off)
       const diff = a - b
-      score += diff*diff
+      score += diff * diff
     }
     if (score < bestScore) { bestScore = score; bestOffset = off }
   }
   return bestOffset
 }
-function applySeamCrossfade(buffer, xfadeMs=LOOP_XFADE_MS){
-  const sr=buffer.sampleRate, n=buffer.length
-  const xfadeN=Math.max(2, Math.round((xfadeMs/1000)*sr))
-  for(let c=0;c<buffer.numberOfChannels;c++){
-    const d=buffer.getChannelData(c)
-    for(let i=0;i<xfadeN;i++){
-      const t=i/(xfadeN-1)
-      const wa=Math.cos(0.5*Math.PI*t), wb=Math.sin(0.5*Math.PI*t)
-      const endIdx=n-xfadeN+i
-      d[endIdx]= (d[endIdx]*wa + d[i]*wb)
+function applySeamCrossfade(buffer, xfadeMs = LOOP_XFADE_MS) {
+  const sr = buffer.sampleRate, n = buffer.length
+  const xfadeN = Math.max(2, Math.round((xfadeMs / 1000) * sr))
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const d = buffer.getChannelData(c)
+    for (let i = 0; i < xfadeN; i++) {
+      const t = i / (xfadeN - 1)
+      const wa = Math.cos(0.5 * Math.PI * t), wb = Math.sin(0.5 * Math.PI * t)
+      const endIdx = n - xfadeN + i
+      d[endIdx] = (d[endIdx] * wa + d[i] * wb)
     }
-    d[n-1]=d[0]
+    d[n - 1] = d[0]
   }
 }
-function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
-  const sr=buffer.sampleRate, n=buffer.length
-  const ramp=Math.max(2, Math.round((rampMs/1000)*sr))
-  for(let c=0;c<buffer.numberOfChannels;c++){
-    const d=buffer.getChannelData(c)
-    for(let i=0;i<ramp && i<n;i++) d[i]*=Math.sin(0.5*Math.PI*(i/(ramp-1)))
-    for(let i=0;i<ramp && i<n;i++) d[n-1-i]*=Math.sin(0.5*Math.PI*(1-(i/(ramp-1))))
+function applyEdgeRamps(buffer, rampMs = EDGE_RAMP_MS) {
+  const sr = buffer.sampleRate, n = buffer.length
+  const ramp = Math.max(2, Math.round((rampMs / 1000) * sr))
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const d = buffer.getChannelData(c)
+    for (let i = 0; i < ramp && i < n; i++) d[i] *= Math.sin(0.5 * Math.PI * (i / (ramp - 1)))
+    for (let i = 0; i < ramp && i < n; i++) d[n - 1 - i] *= Math.sin(0.5 * Math.PI * (1 - (i / (ramp - 1))))
   }
 }
 
@@ -1204,42 +1012,42 @@ function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
 /* =========================================================
    Validators (unchanged)
    ========================================================= */
-function countOnsets(buf, refractorySec=0.08, relThresh=0.35){
-  const sr=buf.sampleRate
-  const x=buf.getChannelData(0)
-  let sum=0; for(let i=0;i<x.length;i+=512){ const v=x[i]; sum+=v*v }
-  const rms=Math.sqrt(sum/Math.max(1, Math.floor(x.length/512)))
-  const thr=Math.max(0.02, rms*relThresh)
-  const refr=Math.max(1, Math.round(refractorySec*sr))
-  let peaks=0,i=0
-  while(i<x.length){ if(Math.abs(x[i])>=thr){ peaks++; i+=refr } else i++ }
+function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
+  const sr = buf.sampleRate
+  const x = buf.getChannelData(0)
+  let sum = 0; for (let i = 0; i < x.length; i += 512) { const v = x[i]; sum += v * v }
+  const rms = Math.sqrt(sum / Math.max(1, Math.floor(x.length / 512)))
+  const thr = Math.max(0.02, rms * relThresh)
+  const refr = Math.max(1, Math.round(refractorySec * sr))
+  let peaks = 0, i = 0
+  while (i < x.length) { if (Math.abs(x[i]) >= thr) { peaks++; i += refr } else i++ }
   return peaks
 }
-function validateSnare(buf, bpm, bars, tolMs=40){
-  const sr=buf.sampleRate
-  const barSec=4*(60/bpm)
-  const beatSec=60/bpm
-  const tol=Math.round((tolMs/1000)*sr)
-  const x=buf.getChannelData(0)
-  function hasPeakNear(sampleIdx, win=tol, mult=3.0){
-    const a=Math.max(0, sampleIdx-win), b=Math.min(x.length-1, sampleIdx+win)
-    let s=0,n=0; for(let i=a;i<=b;i+=4){ const v=x[i]; s+=v*v; n++ }
-    const rms=Math.sqrt(s/Math.max(1,n))
-    const thr=Math.max(0.02, rms*mult)
-    for(let i=a;i<=b;i+=2) if(Math.abs(x[i])>=thr) return true
+function validateSnare(buf, bpm, bars, tolMs = 40) {
+  const sr = buf.sampleRate
+  const barSec = 4 * (60 / bpm)
+  const beatSec = 60 / bpm
+  const tol = Math.round((tolMs / 1000) * sr)
+  const x = buf.getChannelData(0)
+  function hasPeakNear(sampleIdx, win = tol, mult = 3.0) {
+    const a = Math.max(0, sampleIdx - win), b = Math.min(x.length - 1, sampleIdx + win)
+    let s = 0, n = 0; for (let i = a; i <= b; i += 4) { const v = x[i]; s += v * v; n++ }
+    const rms = Math.sqrt(s / Math.max(1, n))
+    const thr = Math.max(0.02, rms * mult)
+    for (let i = a; i <= b; i += 2) if (Math.abs(x[i]) >= thr) return true
     return false
   }
-  for(let bar=0; bar<bars; bar++){
-    const barStart=Math.round(bar*barSec*sr)
-    const beat2=barStart+Math.round(1*beatSec*sr)
-    const beat4=barStart+Math.round(3*beatSec*sr)
-    if(!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false
+  for (let bar = 0; bar < bars; bar++) {
+    const barStart = Math.round(bar * barSec * sr)
+    const beat2 = barStart + Math.round(1 * beatSec * sr)
+    const beat4 = barStart + Math.round(3 * beatSec * sr)
+    if (!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false
   }
   return true
 }
-function validateHihat(buf, bpm, bars){
-  const expected=bars*16
-  const found=countOnsets(buf, 0.07, 0.35)
+function validateHihat(buf, bpm, bars) {
+  const expected = bars * 16
+  const found = countOnsets(buf, 0.07, 0.35)
   return found >= Math.max(10, Math.round(expected * 0.6))
 }
 
@@ -1626,7 +1434,7 @@ function startTransport() {
   // We no longer compute a global loop duration.  Each stem uses its own
   // buffer length for looping.  Record the start time of this transport so
   // that per‑stem phases can be computed relative to a common origin.
-  const t0 = audioContext.currentTime + START_ENV_MS/1000
+  const t0 = audioContext.currentTime + START_ENV_MS / 1000
   loopStartTime = t0
 
   Object.keys(stemConfigs).forEach(st => {
@@ -1640,8 +1448,8 @@ function startTransport() {
     const nodes = createStemNodes(st, buf)
     stemNodes[st] = nodes
     nodes.env.gain.setValueAtTime(0, t0)
-    nodes.env.gain.linearRampToValueAtTime(1, t0 + START_ENV_MS/1000)
-    const vol = (stemControlValues[st]?.volume ?? 80)/100
+    nodes.env.gain.linearRampToValueAtTime(1, t0 + START_ENV_MS / 1000)
+    const vol = (stemControlValues[st]?.volume ?? 80) / 100
     const muted = stemMuteStates[st]
     const soloedOther = (soloedStem && soloedStem !== st)
     nodes.gain.gain.setValueAtTime((muted || soloedOther) ? 0 : vol, t0)
@@ -1672,7 +1480,7 @@ function stopTransport() {
     n.env.gain.cancelScheduledValues(audioContext.currentTime)
     n.env.gain.setValueAtTime(n.env.gain.value, audioContext.currentTime)
     n.env.gain.linearRampToValueAtTime(0, stopAt)
-    try { n.source.stop(stopAt) } catch {}
+    try { n.source.stop(stopAt) } catch { }
   })
   Object.keys(stemNodes).forEach(k => delete stemNodes[k])
   if (transportTicker) clearInterval(transportTicker)
@@ -1701,9 +1509,9 @@ function restartStemNextBoundary(st) {
   next.env.gain.setValueAtTime(1, startAt)
   try {
     next.source.start(startAt, elapsed)
-  } catch {}
+  } catch { }
   if (prev?.source) {
-    try { prev.source.stop(startAt) } catch {}
+    try { prev.source.stop(startAt) } catch { }
   }
   updateMixerGlow(st)
 }
@@ -1712,10 +1520,45 @@ function restartStemNextBoundary(st) {
    Eleven Music compose (unchanged core)
    ========================================================= */
 const genControllers = new Map()
-function getNewStemController(st){ const prev=genControllers.get(st); if(prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded','AbortError')); const ctrl=new AbortController(); genControllers.set(st, ctrl); return ctrl }
+function getNewStemController(st) {
+  const prev = genControllers.get(st);
+  if (prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded', 'AbortError'));
+  const ctrl = new AbortController();
+  genControllers.set(st, ctrl);
+  return ctrl
+}
 import { buildCompositionPlan, composeOnce, composeWithRetries as composeWithRetriesGen, buildLoopBufferFromRawStrict as buildLoopBufferFromRawStrictGen, buildHihatPrompt as buildHihatPromptGen, buildSnarePrompt as buildSnarePromptGen, buildStemPrompt as buildStemPromptGen } from './TechnoGenerators/index.js'
 async function generateStem(st) {
   await ensureAudioContext()
+
+  // Check if user is authenticated for credits system
+  const user = getAuthGuard().getCurrentUser()
+  let hasCredits = true
+  let currentCredits = 0
+  
+  if (user) {
+    // User is authenticated, check credits
+    const CREDITS_PER_GENERATION = 5 // Cost per stem generation
+    const creditsResult = await checkCredits(user.id, CREDITS_PER_GENERATION)
+    
+    if (creditsResult.error) {
+      console.error('Error checking credits:', creditsResult.error)
+      alert('Unable to check credits. Please try again.')
+      return
+    }
+    
+    hasCredits = creditsResult.hasCredits
+    currentCredits = creditsResult.currentCredits
+    
+    if (!hasCredits) {
+      alert(`Insufficient credits. You need ${CREDITS_PER_GENERATION} credits to generate a stem. You currently have ${currentCredits} credits.`)
+      return
+    }
+  } else {
+    // User is in guest mode, allow generation without credits
+    console.log('🎵 Generating stem in guest mode (no credits required)')
+  }
+
   const ctrl = getNewStemController(st)
   const { signal } = ctrl
 
@@ -1732,59 +1575,86 @@ async function generateStem(st) {
       if (icon) { icon.setAttribute('data-lucide', 'loader-2'); icon.classList.add('loading-spin'); window.lucide?.createIcons() }
     }
     if (card) card.classList.add('is-generating')
-    if (statusEl) statusEl.textContent = `Creating… (Eleven Music v1)`
-
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
-    const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
+    const bars = stemControlValues.master?.bars ?? DEFAULT_BARS
 
-    // Attempt to generate the stem via the Supabase edge function
-    // `generate-techno-stem`.  This function builds the prompt, calls
-    // the ElevenLabs API and trims the loop server-side.  On success
-    // it returns a base64 encoded WAV along with prompt metadata.
+    // For guest mode or when Supabase functions are not available, use demo mode
     let audioBuffer, usedPrompt, tier = 0, validated = true, failedValidation = false
-    try {
-      const payload = {
-        stem: st,
-        controls: stemControlValues[st] || {},
-        master: {
-          tempo,
-          bars,
-          rootBase: stemControlValues.master?.rootBase || 'A',
-          accidental: stemControlValues.master?.accidental || 'natural',
-          mode: stemControlValues.master?.mode || 'Minor'
-        },
-        use_grok: false
+    
+    // Check if we should use Supabase functions (only for authenticated users)
+    let useSupabaseFunctions = user && supabase
+    
+    if (statusEl) {
+      if (useSupabaseFunctions) {
+        statusEl.textContent = `Creating… (Eleven Music v1)`
+      } else {
+        statusEl.textContent = `Creating… (Fallback Mode)`
       }
-      const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
-      if (error || !data) {
-        throw new Error(error?.message || 'Supabase invocation failed')
+    }
+    
+    if (useSupabaseFunctions) {
+      try {
+        const payload = {
+          stem: st,
+          controls: stemControlValues[st] || {},
+          master: {
+            tempo,
+            bars,
+            rootBase: stemControlValues.master?.rootBase || 'A',
+            accidental: stemControlValues.master?.accidental || 'natural',
+            mode: stemControlValues.master?.mode || 'Minor'
+          },
+          use_grok: false
+        }
+        const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
+        if (error || !data) {
+          throw new Error(error?.message || 'Supabase invocation failed')
+        }
+        // data should contain audio_b64, usedPrompt, tier, validated
+        const { audio_b64, usedPrompt: up, tier: tt, validated: val } = data
+        usedPrompt = up || ''
+        tier = typeof tt === 'number' ? tt : 0
+        validated = val !== false
+        // Decode the base64 audio string
+        const commaIdx = (audio_b64 || '').indexOf(',')
+        const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
+        const binaryStr = atob(b64 || '')
+        const len = binaryStr.length
+        const bytes = new Uint8Array(len)
+        for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i)
+        audioBuffer = await audioContext.decodeAudioData(bytes.buffer)
+        // Determine head index for record keeping
+        referenceHeadIndex = detectHeadIndex(audioBuffer)
+        referenceStemType = st
+        // Use the returned audio as the strict loop
+        stemRaw[st] = audioBuffer
+        stemLoop[st] = audioBuffer
+        stemLoopDuration[st] = audioBuffer.duration
+        failedValidation = !validated
+
+        // Deduct credits after successful generation (only if user is authenticated)
+        if (validated && user) {
+          const CREDITS_PER_GENERATION = 5
+          const { error: deductError } = await updateCredits(user.id, -CREDITS_PER_GENERATION)
+          if (deductError) {
+            console.error('Error deducting credits:', deductError)
+          } else {
+            console.log(`Credits deducted: ${CREDITS_PER_GENERATION}`)
+            // Update user menu to show new credits
+            await updateUserMenu()
+          }
+        }
+      } catch (supErr) {
+        // Supabase call failed or returned error; fallback to local generation
+        console.error('Supabase request failed, falling back to local generation:', supErr)
+        useSupabaseFunctions = false
       }
-      // data should contain audio_b64, usedPrompt, tier, validated
-      const { audio_b64, usedPrompt: up, tier: tt, validated: val } = data
-      usedPrompt = up || ''
-      tier = typeof tt === 'number' ? tt : 0
-      validated = val !== false
-      // Decode the base64 audio string
-      const commaIdx = (audio_b64 || '').indexOf(',')
-      const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
-      const binaryStr = atob(b64 || '')
-      const len = binaryStr.length
-      const bytes = new Uint8Array(len)
-      for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i)
-      audioBuffer = await audioContext.decodeAudioData(bytes.buffer)
-      // Determine head index for record keeping
-      referenceHeadIndex = detectHeadIndex(audioBuffer)
-      referenceStemType = st
-      // Use the returned audio as the strict loop
-      stemRaw[st]  = audioBuffer
-      stemLoop[st] = audioBuffer
-      stemLoopDuration[st] = audioBuffer.duration
-      failedValidation = !validated
-    } catch (supErr) {
-      // Supabase call failed or returned error; fallback to local generation
-      console.error('Supabase request failed', supErr)
-      // Use the old generate logic: call Eleven Labs via the proxy function
-      // (`composeOnce` and `composeWithRetries`) and build a strict loop locally.
+    }
+    
+    if (!useSupabaseFunctions) {
+      // Fallback to local generation using the original logic
+      console.log('🎵 Using fallback generation for stem:', st)
+      
       if (st === 'hihat' || st === 'perc') {
         const res = await composeWithRetriesGen(st, tempo, bars, signal, {
           genTailPadMs: GEN_TAIL_PAD_MS,
@@ -1793,9 +1663,9 @@ async function generateStem(st) {
           stemConfigs,
           getMasterForPrompt,
           getControls: (id) => stemControlValues[id],
-          buildTierPrompt: (id, controls, master, tier) => id==='hihat'?buildHihatPromptGen(controls, master, tier):buildSnarePromptGen(controls, master, tier),
+          buildTierPrompt: (id, controls, master, tier) => id === 'hihat' ? buildHihatPromptGen(controls, master, tier) : buildSnarePromptGen(controls, master, tier),
           decodeAudio: (ab) => audioContext.decodeAudioData(ab),
-          validateBuffer: (id, buf, t, b) => id==='hihat'?validateHihat(buf, t, b):validateSnare(buf, t, b),
+          validateBuffer: (id, buf, t, b) => id === 'hihat' ? validateHihat(buf, t, b) : validateSnare(buf, t, b),
           statusUpdate: (txt) => { if (statusEl) statusEl.textContent = txt }
         })
         audioBuffer = res.buffer
@@ -1819,21 +1689,21 @@ async function generateStem(st) {
         tier = 0
         failedValidation = false
       }
+      
       // Determine head index and build a strict loop from the raw buffer
       referenceHeadIndex = detectHeadIndex(audioBuffer)
       referenceStemType = st
       const strictLoop = buildLoopBufferFromRawStrictGen(audioBuffer, tempo, bars, referenceHeadIndex, { loopXfadeMs: LOOP_XFADE_MS, edgeRampMs: EDGE_RAMP_MS, alignSearchMs: ALIGN_SEARCH_MS })
-      // Store the newly generated raw buffer and strict loop.  We explicitly
-      // assign the raw to stemRaw so that endpoint adjustments can be
-      // constructed from the unmodified audio later.  The strict loop is
-      // stored in stemLoop to be used for playback.  Reset the
-      // endpoint stretch factor to its default (1.0) for a fresh take so
-      // that subsequent adjustments start from an unmodified loop.
-      stemRaw[st]  = audioBuffer
+      
+      // Store the newly generated raw buffer and strict loop
+      stemRaw[st] = audioBuffer
       stemLoop[st] = strictLoop
       stemLoopDuration[st] = strictLoop.duration
       endpointFactors[st] = 1
     }
+    
+    // If not using Supabase functions, we already generated demo audio above
+    // No additional fallback logic needed
 
     // Push the new version into history
     pushStemVersion(st, {
@@ -1931,86 +1801,74 @@ async function generateStem(st) {
 /* =========================================================
    Downloads (modularized)
    ========================================================= */
-function downloadStem(st){
-  const buf=stemLoop[st]
-  if(!buf){ alert(`No audio for ${stemConfigs[st]?.name || st}. Create first.`); return }
-  bufferToWavAndDownload(buf, `techno_${st}_${Date.now()}.wav`)
-}
+function downloadStem(st) { return saveDownloadStem(st, stemLoop, stemConfigs) }
 
-function downloadAllActiveStems(){
-  Object.keys(stemConfigs).forEach(st => {
-    const hasActive = (stemActiveIndex[st] ?? -1) >= 0
-    const buf = stemLoop[st]
-    if (hasActive && buf) {
-      downloadStem(st)
-    }
-  })
-}
+function downloadAllActiveStems() { return saveDownloadAllActiveStems(stemConfigs, stemActiveIndex, stemLoop) }
 
 /* =========================================================
    UI rendering (per card) — with black generate btn, wider sliders, click‑overlay for toggles
    ========================================================= */
 // knobToDb, formatDb, knobAngle now imported from Utilities/index.js
-function applyEqValuesToNodes(eqNodes, vals){
+function applyEqValuesToNodes(eqNodes, vals) {
   if (!eqNodes || !audioContext) return
-  const now=audioContext.currentTime
+  const now = audioContext.currentTime
   eqNodes.low.gain.setTargetAtTime(knobToDb(vals.low), now, EQ_SMOOTH_TC)
   eqNodes.mid.gain.setTargetAtTime(knobToDb(vals.mid), now, EQ_SMOOTH_TC)
   eqNodes.high.gain.setTargetAtTime(knobToDb(vals.high), now, EQ_SMOOTH_TC)
 }
-function applyFilterValuesToNode(filterNode, vals){
+function applyFilterValuesToNode(filterNode, vals) {
   if (!filterNode || !audioContext) return
-  const now=audioContext.currentTime
-  filterNode.type=vals.mode
+  const now = audioContext.currentTime
+  filterNode.type = vals.mode
   filterNode.Q.setTargetAtTime(FILTER_Q, now, FILTER_SMOOTH_TC)
   filterNode.frequency.setTargetAtTime(knobToFreq(vals.cutoff), now, FILTER_SMOOTH_TC)
 }
-function updateEqKnobVisual(knobEl, val){
-  if(!knobEl) return
-  knobEl.dataset.value=String(val)
-  const ptr=knobEl.querySelector('[data-eq-pointer]')
-  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
+function updateEqKnobVisual(knobEl, val) {
+  if (!knobEl) return
+  knobEl.dataset.value = String(val)
+  const ptr = knobEl.querySelector('[data-eq-pointer]')
+  if (ptr) ptr.style.transform = `translateX(-50%) rotate(${knobAngle(val)}deg)`
 }
-function updateEqReadout(st, band){
-  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
-  const db=knobToDb(v)
-  const ro=document.querySelector(`[data-eq-readout="${st}:${band}"]`)
-  if (ro) ro.textContent=formatDb(db)
+function updateEqReadout(st, band) {
+  const v = (stemEqValues[st] || {})[band] ?? EQ_DEFAULT
+  const db = knobToDb(v)
+  const ro = document.querySelector(`[data-eq-readout="${st}:${band}"]`)
+  if (ro) ro.textContent = formatDb(db)
 }
 
 /* ---------- Filter UI ---------- */
-function updateFilterKnobVisual(knobEl, val){
-  if(!knobEl) return
-  knobEl.dataset.value=String(val)
-  const ptr=knobEl.querySelector('[data-filter-pointer]')
-  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
+function updateFilterKnobVisual(knobEl, val) {
+  if (!knobEl) return
+  knobEl.dataset.value = String(val)
+  const ptr = knobEl.querySelector('[data-filter-pointer]')
+  if (ptr) ptr.style.transform = `translateX(-50%) rotate(${knobAngle(val)}deg)`
 }
-function updateFilterReadout(st){
-  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
-  const hz=knobToFreq(v)
-  const ro=document.querySelector(`[data-filter-readout="${st}"]`)
-  if (ro) ro.textContent = hz >= 1000 ? `${(hz/1000).toFixed(hz>=10000?0:1)} kHz` : `${Math.round(hz)} Hz`
+function updateFilterReadout(st) {
+  const v = (stemFilterValues[st] || {}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const hz = knobToFreq(v)
+  const ro = document.querySelector(`[data-filter-readout="${st}"]`)
+  if (ro) ro.textContent = hz >= 1000 ? `${(hz / 1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
 }
-function updateFilterModeButton(st){
-  const btn=document.querySelector(`[data-filter-mode="${st}"]`)
-  if(!btn) return
-  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
+function updateFilterModeButton(st) {
+  const btn = document.querySelector(`[data-filter-mode="${st}"]`)
+  if (!btn) return
+  const mode = (stemFilterValues[st] || {}).mode || 'lowpass'
   btn.textContent = mode === 'lowpass' ? 'LP' : 'HP'
 }
 
 /* ---------- Per-card HTML ---------- */
-function eqKnobHTML(st, band, label){
-  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
-  const ang=knobAngle(v)
+function eqKnobHTML(st, band, label) {
+  const v = (stemEqValues[st] || {})[band] ?? EQ_DEFAULT
+  const ang = knobAngle(v)
   return `\n        <div class="flex flex-col items-center select-none">\n          <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n               data-eq-knob data-stem="${st}" data-band="${band}" data-value="${v}" title="${label}: drag to adjust">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                 data-eq-pointer\n                 style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] tracking-wider text-white/80">${label.toUpperCase()}</div>\n          <div class="text-[10px] text-white/60" data-eq-readout="${st}:${band}">${formatDb(knobToDb(v))}</div>\n        </div>\n      `
 }
-function filterKnobHTML(st){
-  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
-  const ang=knobAngle(v)
-  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
+function filterKnobHTML(st) {
+  const v = (stemFilterValues[st] || {}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const ang = knobAngle(v)
+  const mode = (stemFilterValues[st] || {}).mode || 'lowpass'
   return `\n        <div class="flex items-center gap-2">\n          <div class="flex flex-col items-center select-none">\n            <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n                 data-filter-knob data-stem="${st}" data-value="${v}" title="Filter Cutoff: drag to adjust">\n              <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n              <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                   data-filter-pointer\n                   style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n            </div>\n            <div class="mt-1 text-[10px] tracking-wider text-white/80">CUTOFF</div>\n            <div class="text-[10px] text-white/60" data-filter-readout="${st}"></div>\n          </div>\n          <button class="h-6 px-2 rounded-md border border-white/15 bg-white/80 text-black text-[10px] font-semibold tracking-wider hover:bg-white active:translate-y-[1px] transition"\n                  data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}" title="Toggle LP/HP">\n            ${mode === 'lowpass' ? 'LP' : 'HP'}\n          </button>\n        </div>\n      `
 }
-function headerActionButtonsHTML(st){
+function headerActionButtonsHTML(st) {
   return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `
 }
 
@@ -2021,7 +1879,7 @@ function headerActionButtonsHTML(st){
 function headerActionButtonsMobileHTML(st) {
   return `\n        <div class="flex items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `
 }
-function createBuilderStemCard(st, cfg){
+function createBuilderStemCard(st, cfg) {
   const card = document.createElement('div')
   // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
   card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
@@ -2098,37 +1956,37 @@ function createBuilderStemCard(st, cfg){
     // the take even when its volume is set to zero.  Visual feedback
     // for volume changes is provided exclusively in the edit modal.
 
-      // On small screens, show the number indicator within the header row; hide it on
-      // desktop so that it can be shown in the top-right corner of the card.
-      const numEl = card.querySelector(`[data-card-number="${st}"]`)
-      if (numEl) numEl.classList.add('sm:hidden')
+    // On small screens, show the number indicator within the header row; hide it on
+    // desktop so that it can be shown in the top-right corner of the card.
+    const numEl = card.querySelector(`[data-card-number="${st}"]`)
+    if (numEl) numEl.classList.add('sm:hidden')
 
-      // Make the card relative so absolute positioning inside works for desktop indicators
-      card.classList.add('relative')
+    // Make the card relative so absolute positioning inside works for desktop indicators
+    card.classList.add('relative')
 
-      // Create a desktop-only number indicator positioned at the top right of the card.
-      const desktopNum = document.createElement('span')
-      desktopNum.setAttribute('data-card-number-desktop', st)
-      desktopNum.textContent = String(idx)
-      // Position with extra padding on desktop (sm:top-5 sm:right-5) so the number indicator isn't flush
-      // against the edges. Hidden on mobile (sm:hidden applied on the header indicator instead).
-      desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2 sm:top-5 sm:right-5'
-      card.appendChild(desktopNum)
+    // Create a desktop-only number indicator positioned at the top right of the card.
+    const desktopNum = document.createElement('span')
+    desktopNum.setAttribute('data-card-number-desktop', st)
+    desktopNum.textContent = String(idx)
+    // Position with extra padding on desktop (sm:top-5 sm:right-5) so the number indicator isn't flush
+    // against the edges. Hidden on mobile (sm:hidden applied on the header indicator instead).
+    desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2 sm:top-5 sm:right-5'
+    card.appendChild(desktopNum)
 
-      // Adjust the edit label overlay within the waveform container.  Always show it (remove hover-based
-      // opacity) and scale its size responsively.  On mobile the text is smaller; on desktop it is
-      // larger and bold white.  Remove the default fade classes to avoid relying on hover state.
-      {
-        const overlayEl = card.querySelector('.relative .pointer-events-none')
-        if (overlayEl) {
-          // Remove fade and original size classes
-          overlayEl.classList.remove('opacity-0', 'group-hover:opacity-100', 'text-white/70', 'text-[10px]')
-          // Always fully visible
-          overlayEl.classList.add('opacity-100')
-          // Use smaller text on mobile (approx 25% smaller) and larger bold text on desktop
-          overlayEl.classList.add('text-white/70', 'text-[8px]', 'sm:text-[20px]', 'sm:font-bold', 'sm:text-white')
-        }
+    // Adjust the edit label overlay within the waveform container.  Always show it (remove hover-based
+    // opacity) and scale its size responsively.  On mobile the text is smaller; on desktop it is
+    // larger and bold white.  Remove the default fade classes to avoid relying on hover state.
+    {
+      const overlayEl = card.querySelector('.relative .pointer-events-none')
+      if (overlayEl) {
+        // Remove fade and original size classes
+        overlayEl.classList.remove('opacity-0', 'group-hover:opacity-100', 'text-white/70', 'text-[10px]')
+        // Always fully visible
+        overlayEl.classList.add('opacity-100')
+        // Use smaller text on mobile (approx 25% smaller) and larger bold text on desktop
+        overlayEl.classList.add('text-white/70', 'text-[8px]', 'sm:text-[20px]', 'sm:font-bold', 'sm:text-white')
       }
+    }
   }
 
   updateHistoryBadge(st)
@@ -2148,8 +2006,8 @@ function initializeStemControlValues() {
   Object.entries(stemConfigs).forEach(([st, cfg]) => {
     stemControlValues[st] = {}
     stemMuteStates[st] = false
-      // Initialise endpoint stretch factor for each stem (1.0 = no stretch)
-      endpointFactors[st] = 1
+    // Initialise endpoint stretch factor for each stem (1.0 = no stretch)
+    endpointFactors[st] = 1
     if (!stemEqValues[st]) stemEqValues[st] = { low: 75, mid: 75, high: 75 }
     if (!stemFilterValues[st]) stemFilterValues[st] = { mode: 'lowpass', cutoff: defCutKnob }
     if (cfg.controls) {
@@ -2166,14 +2024,14 @@ function initializeStemControlValues() {
 }
 
 /* ---------- Mixer glow ---------- */
-function isStemActuallyPlaying(st){ return isPlaying && !!stemNodes[st]?.source && !stemMuteStates[st] && (!soloedStem || soloedStem === st) }
-function updateMixerGlow(st){ const card=document.querySelector(`[data-mix-card="${st}"]`); if(!card) return; card.classList.toggle('sg-glow', isStemActuallyPlaying(st)) }
-function updateAllMixerGlows(){ Object.keys(stemConfigs).forEach(updateMixerGlow) }
+function isStemActuallyPlaying(st) { return isPlaying && !!stemNodes[st]?.source && !stemMuteStates[st] && (!soloedStem || soloedStem === st) }
+function updateMixerGlow(st) { const card = document.querySelector(`[data-mix-card="${st}"]`); if (!card) return; card.classList.toggle('sg-glow', isStemActuallyPlaying(st)) }
+function updateAllMixerGlows() { Object.keys(stemConfigs).forEach(updateMixerGlow) }
 
 /* ---------- Toggle visuals (Mute/Solo) ---------- */
-function setToggleVisual(el, active){ if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
-function reflectMuteSoloButtons(st){
-  const muted  = !!stemMuteStates[st]
+function setToggleVisual(el, active) { if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
+function reflectMuteSoloButtons(st) {
+  const muted = !!stemMuteStates[st]
   const soloed = (soloedStem === st)
   // Update all mute buttons on the instrument card (desktop and mobile)
   document.querySelectorAll(`[data-stem="${st}"] [data-action="mute-stem"]`).forEach(btn => setToggleVisual(btn, muted))
@@ -2185,55 +2043,55 @@ function reflectMuteSoloButtons(st){
 }
 
 /* ---------- Volume link ---------- */
-function setVolumeUnified(st, newVal){
-  const v=Math.max(0, Math.min(100, Math.round(Number(newVal)||0)))
-  stemControlValues[st].volume=v
+function setVolumeUnified(st, newVal) {
+  const v = Math.max(0, Math.min(100, Math.round(Number(newVal) || 0)))
+  stemControlValues[st].volume = v
 
   // Update legacy card volume slider if present
-  const cardSlider=document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
+  const cardSlider = document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
   if (cardSlider) {
-    cardSlider.value=v
-    const display=cardSlider.parentElement?.querySelector('span:last-child')
-    const cfg=stemConfigs[st]?.controls?.volume
-    if (display && cfg) display.textContent=`${v}${cfg.unit}`
+    cardSlider.value = v
+    const display = cardSlider.parentElement?.querySelector('span:last-child')
+    const cfg = stemConfigs[st]?.controls?.volume
+    if (display && cfg) display.textContent = `${v}${cfg.unit}`
   }
   // Update new mixer volume slider if present; value display is handled via tooltip
-  const mixSlider=document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
+  const mixSlider = document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
   if (mixSlider) {
-    mixSlider.value=String(v)
+    mixSlider.value = String(v)
   }
 
   if (isPlaying && stemNodes[st]?.gain) {
-    const vol=v/100
-    const muted=stemMuteStates[st]
-    const blocked=(soloedStem && soloedStem !== st)
+    const vol = v / 100
+    const muted = stemMuteStates[st]
+    const blocked = (soloedStem && soloedStem !== st)
     if (!muted && !blocked) {
-      const p=stemNodes[st].gain.gain, t=audioContext.currentTime
+      const p = stemNodes[st].gain.gain, t = audioContext.currentTime
       p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(vol, t + 0.01)
     }
   }
 }
 
 /* ---------- Master state helpers ---------- */
-function getRootText(){
-  const base=stemControlValues.master?.rootBase || 'A'
-  const acc =stemControlValues.master?.accidental || 'natural'
-  return acc==='sharp'?`${base}#` : acc==='flat'?`${base}b` : base
+function getRootText() {
+  const base = stemControlValues.master?.rootBase || 'A'
+  const acc = stemControlValues.master?.accidental || 'natural'
+  return acc === 'sharp' ? `${base}#` : acc === 'flat' ? `${base}b` : base
 }
-function getMasterForPrompt(){
+function getMasterForPrompt() {
   return {
     tempo: clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO),
-    bars:  stemControlValues.master?.bars ?? DEFAULT_BARS,
-    root:  getRootText(),
-    mode:  stemControlValues.master?.mode || 'Minor'
+    bars: stemControlValues.master?.bars ?? DEFAULT_BARS,
+    root: getRootText(),
+    mode: stemControlValues.master?.mode || 'Minor'
   }
 }
 
 /* ---------- Mixer (Docked tray) ---------- */
-function volumeKnobHTML(st){
-  const v=stemControlValues[st]?.volume ?? 80
-  const label=stemConfigs[st]?.name || st
-  const ang=knobAngle(v)
+function volumeKnobHTML(st) {
+  const v = stemControlValues[st]?.volume ?? 80
+  const label = stemConfigs[st]?.name || st
+  const ang = knobAngle(v)
   const idx = STEM_ORDER.indexOf(st) + 1
   return `\n        <div class="sg-mix-card relative flex flex-col items-center justify-center rounded-xl border border-white/15 bg-white/10 p-2 aspect-square select-none"\n             data-mix-card="${st}">\n          <span data-mix-number="${st}" class="absolute left-1 top-1 flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>\n          <div class="text-[10px] mb-1 text-white/85">${label}</div>\n          <div class="relative w-12 h-12 rounded-full border border-white/25 bg-white/10 shadow-inner cursor-[ns-resize]"\n               data-mix-knob data-stem="${st}" data-value="${v}" title="${label} Volume">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-4 bg-white/90 rounded pointer-events-none"\n                 data-mix-pointer style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] text-white/80"><span data-mix-readout="${st}">${v}</span>%</div>\n          <div class="mt-1 flex gap-1">\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>\n          </div>\n        </div>\n      `
 }
@@ -2244,9 +2102,9 @@ function volumeKnobHTML(st){
 // controls cutoff frequency.  Mute and Solo buttons are included
 // along with the channel number.  Use data attributes to attach
 // event handlers.
-function mixChannelRowHTML(st){
+function mixChannelRowHTML(st) {
   const name = stemConfigs[st]?.name || st
-  const idx  = STEM_ORDER.indexOf(st) + 1
+  const idx = STEM_ORDER.indexOf(st) + 1
   // Retrieve current state values; initialise to defaults (50 => 0 dB) if undefined
   const volVal = stemControlValues[st]?.volume ?? 50
   const eq = stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
@@ -2301,8 +2159,8 @@ function mixChannelRowHTML(st){
     </div>
   `
 }
-function buildFloatingMixerPanel(){
-  const tray=document.getElementById('mixerTray')
+function buildFloatingMixerPanel() {
+  const tray = document.getElementById('mixerTray')
   if (!tray) return
   let grid = tray.querySelector('#mixerGrid')
   // Create the grid element if it doesn't exist
@@ -2323,8 +2181,8 @@ function buildFloatingMixerPanel(){
   STEM_ORDER.forEach(updateMixerGlow)
   STEM_ORDER.forEach(updateCardNumberColor)
 }
-function setMixerOpen(open){
-  const tray=document.getElementById('mixerTray')
+function setMixerOpen(open) {
+  const tray = document.getElementById('mixerTray')
   if (!tray) return
   // Expand the mixer to full viewport height when open; collapse to zero when closed
   tray.style.maxHeight = open ? '100vh' : '0px'
@@ -2334,7 +2192,7 @@ function setMixerOpen(open){
   if (toggleBtn) {
     // Update the desktop label only.  The mobile label remains 'mixer' regardless of state.
     const desktopSpan = toggleBtn.querySelector('span.hidden.sm\\:inline')
-    const mobileSpan  = toggleBtn.querySelector('span.inline.sm\\:hidden')
+    const mobileSpan = toggleBtn.querySelector('span.inline.sm\\:hidden')
     if (desktopSpan) desktopSpan.textContent = open ? 'close mixer' : 'open mixer'
     // Do not modify the mobile label (mobileSpan) so it stays 'mixer'
     toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
@@ -2362,17 +2220,17 @@ function setMixerOpen(open){
     if (closeBtn) closeBtn.classList.add('hidden')
   }
 }
-function toggleMixerOpen(){
-  const tray=document.getElementById('mixerTray')
+function toggleMixerOpen() {
+  const tray = document.getElementById('mixerTray')
   if (!tray) return
   const open = tray.dataset.open === '1'
   setMixerOpen(!open)
 }
 
 /* ---------- Hotkey helpers ---------- */
-function toggleMute(st){
+function toggleMute(st) {
   stemMuteStates[st] = !stemMuteStates[st]
-  const vol = (stemControlValues[st]?.volume ?? 80)/100
+  const vol = (stemControlValues[st]?.volume ?? 80) / 100
   const target = stemMuteStates[st] ? 0 : vol
   if (stemNodes[st]?.gain) {
     const p = stemNodes[st].gain.gain, t = audioContext.currentTime
@@ -2390,7 +2248,7 @@ function toggleMute(st){
 // the app no longer exposes a master tempo slider or readout.
 
 // new helper functions for card numbers and history indicators
-function updateHistoryIndicator(st){
+function updateHistoryIndicator(st) {
   ensureStemHistory(st)
   const count = stemHistory[st]?.length || 0
   const active = (stemActiveIndex[st] != null && stemActiveIndex[st] >= 0) ? (stemActiveIndex[st] + 1) : 0
@@ -2412,7 +2270,7 @@ function updateTempoIndicator(st) {
   }
   el.textContent = `tempo: ${tempo}`
 }
-function updateCardNumberColor(st){
+function updateCardNumberColor(st) {
   const nTakes = (stemHistory[st]?.length || 0)
   const muted = stemMuteStates[st]
   const color = (nTakes === 0 || muted) ? '#ef4444' : '#ffffff'
@@ -2427,13 +2285,13 @@ function updateCardNumberColor(st){
     mixNumEl.style.borderColor = color
   }
 }
-function updateMutedBorder(st){
+function updateMutedBorder(st) {
   const card = document.querySelector(`[data-stem="${st}"]`)
   if (card) {
     if (stemMuteStates[st]) card.classList.add('sg-muted-border')
     else card.classList.remove('sg-muted-border')
   }
-  const mixCard=document.querySelector(`[data-mix-card="${st}"]`)
+  const mixCard = document.querySelector(`[data-mix-card="${st}"]`)
   if (mixCard) {
     if (stemMuteStates[st]) mixCard.classList.add('sg-muted-border')
     else mixCard.classList.remove('sg-muted-border')
@@ -2464,15 +2322,26 @@ function setupEventListeners() {
   // Download all button: prompt the user to confirm downloading all files
   const downloadAllBtn = document.getElementById('downloadAllBtn')
   if (downloadAllBtn) {
-    downloadAllBtn.addEventListener('click', () => {
-      openDownloadConfirmModal()
+    downloadAllBtn.addEventListener('click', async () => {
+      // Check if user can download (requires email confirmation)
+      const { canUserDownload } = await import('./Auth/selectionPage.js')
+      const canDownload = await canUserDownload()
+      
+      if (canDownload) {
+        // User can download, proceed with download
+        openDownloadConfirmModal()
+      } else {
+        // User cannot download, show restriction modal
+        const { showDownloadRestrictionModal } = await import('./Auth/selectionPage.js')
+        showDownloadRestrictionModal()
+      }
     })
   }
 
   // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
   const genCancelBtn = document.getElementById('generateSettingsCancelBtn')
-  const genStartBtn  = document.getElementById('generateSettingsStartBtn')
-  const genOverlay   = document.getElementById('generateSettingsOverlay')
+  const genStartBtn = document.getElementById('generateSettingsStartBtn')
+  const genOverlay = document.getElementById('generateSettingsOverlay')
   if (genCancelBtn) genCancelBtn.addEventListener('click', () => hideGenerateSettingsModal())
   if (genOverlay) genOverlay.addEventListener('click', () => hideGenerateSettingsModal())
   if (genStartBtn) genStartBtn.addEventListener('click', () => { applyGenerateSettingsAndStart() })
@@ -2504,7 +2373,7 @@ function setupEventListeners() {
   document.addEventListener('keydown', async (e) => {
     const ae = document.activeElement
     const tag = (ae && ae.tagName) || ''
-    const editing = (ae && (ae.isContentEditable || ['INPUT','TEXTAREA','SELECT'].includes(tag)))
+    const editing = (ae && (ae.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)))
     if (editing) return
 
     // Space: toggle transport
@@ -2586,7 +2455,7 @@ function setupEventListeners() {
 
   // Master Volume: controls the global output gain.  Updates the text display and ramps the master gain.
   const masterVolSlider = document.getElementById('masterVolumeSlider')
-  const masterVolValue  = document.getElementById('masterVolumeValue')
+  const masterVolValue = document.getElementById('masterVolumeValue')
   if (masterVolSlider) {
     // Initialize the slider display based on the current masterGain value, if available
     if (masterVolValue && typeof masterGain?.gain?.value === 'number') {
@@ -2663,7 +2532,7 @@ function setupEventListeners() {
         g.setValueAtTime(g.value, now)
         const muted = stemMuteStates[st]
         const soloedOther = (soloedStem && soloedStem !== st)
-        const val = (muted || soloedOther) ? 0 : (v/100)
+        const val = (muted || soloedOther) ? 0 : (v / 100)
         g.linearRampToValueAtTime(val, now + 0.01)
       }
       return
@@ -2719,7 +2588,7 @@ function setupEventListeners() {
     } else if (sliderEl.dataset.mixFilter === 'cutoff') {
       // Show frequency
       const hz = knobToFreq(val)
-      text = hz >= 1000 ? `${(hz/1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
+      text = hz >= 1000 ? `${(hz / 1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
     }
     sliderTooltipEl.textContent = text
     // Position tooltip relative to pointer
@@ -2772,7 +2641,7 @@ function setupEventListeners() {
   function applyDialButtonStep(btn) {
     if (!btn) return
     const type = btn.getAttribute('data-dial-type')
-    const st   = btn.getAttribute('data-stem')
+    const st = btn.getAttribute('data-stem')
     const stepAttr = btn.getAttribute('data-dial-step')
     const step = stepAttr ? parseFloat(stepAttr) || 0 : 0
     if (!type || !st || !step) return
@@ -2839,13 +2708,13 @@ function setupEventListeners() {
 
   // EQ knob gestures
   let activeEqKnob = null, startX = 0, startY = 0, startVal = 0
-  function onEqMove(e){ if(!activeEqKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,startVal+delta*0.5)); setEqValue(activeEqKnob.stem, activeEqKnob.band, v) }
-  function onEqUp(){ activeEqKnob=null; window.removeEventListener('pointermove',onEqMove); window.removeEventListener('pointerup',onEqUp) }
+  function onEqMove(e) { if (!activeEqKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, startVal + delta * 0.5)); setEqValue(activeEqKnob.stem, activeEqKnob.band, v) }
+  function onEqUp() { activeEqKnob = null; window.removeEventListener('pointermove', onEqMove); window.removeEventListener('pointerup', onEqUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-eq-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); const val=Number(k.getAttribute('data-value'))||EQ_DEFAULT
+    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); const val = Number(k.getAttribute('data-value')) || EQ_DEFAULT
     if (e.shiftKey) { setEqValue(st, band, 0); return }
-    activeEqKnob={stem:st, band}; startX=e.clientX??0; startY=e.clientY??0; startVal=val
+    activeEqKnob = { stem: st, band }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; startVal = val
     window.addEventListener('pointermove', onEqMove); window.addEventListener('pointerup', onEqUp)
   })
   document.addEventListener('dblclick', e => {
@@ -2855,13 +2724,13 @@ function setupEventListeners() {
 
   // Filter knob gestures
   let activeFilterKnob = null, fStartVal = 0
-  function onFilterMove(e){ if(!activeFilterKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,fStartVal+delta*0.5)); setFilterCutoff(activeFilterKnob.stem, v) }
-  function onFilterUp(){ activeFilterKnob=null; window.removeEventListener('pointermove',onFilterMove); window.removeEventListener('pointerup',onFilterUp) }
+  function onFilterMove(e) { if (!activeFilterKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, fStartVal + delta * 0.5)); setFilterCutoff(activeFilterKnob.stem, v) }
+  function onFilterUp() { activeFilterKnob = null; window.removeEventListener('pointermove', onFilterMove); window.removeEventListener('pointerup', onFilterUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-filter-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value'))||freqToKnob(FILTER_DEFAULT_HZ)
+    const st = k.getAttribute('data-stem'); const val = Number(k.getAttribute('data-value')) || freqToKnob(FILTER_DEFAULT_HZ)
     if (e.shiftKey) { setFilterCutoff(st, freqToKnob(FILTER_DEFAULT_HZ)); return }
-    activeFilterKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; fStartVal=val
+    activeFilterKnob = { stem: st }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; fStartVal = val
     window.addEventListener('pointermove', onFilterMove); window.addEventListener('pointerup', onFilterUp)
   })
   document.addEventListener('dblclick', e => {
@@ -2871,13 +2740,13 @@ function setupEventListeners() {
 
   // Mixer knobs
   let activeMixKnob = null, mStartVal = 0
-  function onMixMove(e){ if(!activeMixKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,mStartVal+delta*0.5)); setVolumeUnified(activeMixKnob.stem, v) }
-  function onMixUp(){ activeMixKnob=null; window.removeEventListener('pointermove',onMixMove); window.removeEventListener('pointerup',onMixUp) }
+  function onMixMove(e) { if (!activeMixKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, mStartVal + delta * 0.5)); setVolumeUnified(activeMixKnob.stem, v) }
+  function onMixUp() { activeMixKnob = null; window.removeEventListener('pointermove', onMixMove); window.removeEventListener('pointerup', onMixUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-mix-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value')) || (stemControlValues[st]?.volume ?? 80)
+    const st = k.getAttribute('data-stem'); const val = Number(k.getAttribute('data-value')) || (stemControlValues[st]?.volume ?? 80)
     if (e.shiftKey) { setVolumeUnified(st, 0); return }
-    activeMixKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; mStartVal=val
+    activeMixKnob = { stem: st }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; mStartVal = val
     window.addEventListener('pointermove', onMixMove); window.addEventListener('pointerup', onMixUp)
   })
   document.addEventListener('dblclick', e => {
@@ -3070,7 +2939,7 @@ function setupEventListeners() {
     const target = e.target
     if (!target || !target.getAttribute) return
     const action = target.getAttribute('data-action')
-    const st     = target.getAttribute('data-stem')
+    const st = target.getAttribute('data-stem')
     if (!st || !action) return
     if (action === 'adjust-volume') {
       handleVolumeSlider(st, target.value)
@@ -3089,71 +2958,71 @@ function setupEventListeners() {
 }
 
 /* ---------- EQ/Filter setters ---------- */
-function setEqValue(st, band, newVal){
-  const v=Math.max(0, Math.min(100, Math.round(newVal)))
+function setEqValue(st, band, newVal) {
+  const v = Math.max(0, Math.min(100, Math.round(newVal)))
   stemEqValues[st] = { ...(stemEqValues[st] || {}), [band]: v }
-  const knob=document.querySelector(`[data-eq-knob][data-stem="${st}"][data-band="${band}"]`)
+  const knob = document.querySelector(`[data-eq-knob][data-stem="${st}"][data-band="${band}"]`)
   if (knob) updateEqKnobVisual(knob, v)
   updateEqReadout(st, band)
-  const eq=stemNodes[st]?.eq
+  const eq = stemNodes[st]?.eq
   if (eq) applyEqValuesToNodes(eq, stemEqValues[st])
 }
-function setFilterCutoff(st, newVal){
-  const v=Math.max(0, Math.min(100, Math.round(newVal)))
+function setFilterCutoff(st, newVal) {
+  const v = Math.max(0, Math.min(100, Math.round(newVal)))
   stemFilterValues[st] = { ...(stemFilterValues[st] || {}), cutoff: v }
-  const knob=document.querySelector(`[data-filter-knob][data-stem="${st}"]`)
+  const knob = document.querySelector(`[data-filter-knob][data-stem="${st}"]`)
   if (knob) updateFilterKnobVisual(knob, v)
   updateFilterReadout(st)
-  const filter=stemNodes[st]?.filter
+  const filter = stemNodes[st]?.filter
   if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
 }
-function toggleFilterMode(st){
-  const current=(stemFilterValues[st]||{}).mode || 'lowpass'
-  const next=current==='lowpass' ? 'highpass' : 'lowpass'
+function toggleFilterMode(st) {
+  const current = (stemFilterValues[st] || {}).mode || 'lowpass'
+  const next = current === 'lowpass' ? 'highpass' : 'lowpass'
   stemFilterValues[st] = { ...(stemFilterValues[st] || {}), mode: next }
   updateFilterModeButton(st)
-  const filter=stemNodes[st]?.filter
+  const filter = stemNodes[st]?.filter
   if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
 }
 
 /* =========================================================
    History UI
    ========================================================= */
-function updateHistoryBadge(st){
-  const badgeEls=document.querySelectorAll(`[data-history-count="${st}"]`)
-  const n=stemHistory[st]?.length || 0
-  badgeEls.forEach(badge => { badge.textContent=n; badge.style.opacity = n > 0 ? '1' : '0.4' })
+function updateHistoryBadge(st) {
+  const badgeEls = document.querySelectorAll(`[data-history-count="${st}"]`)
+  const n = stemHistory[st]?.length || 0
+  badgeEls.forEach(badge => { badge.textContent = n; badge.style.opacity = n > 0 ? '1' : '0.4' })
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
 }
-function toggleHistoryDrawer(st, forceOpen=null){
-  const drawer=document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
-  const isOpen=drawer.classList.contains('open')
-  const open=forceOpen===null ? !isOpen : !!forceOpen
+function toggleHistoryDrawer(st, forceOpen = null) {
+  const drawer = document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
+  const isOpen = drawer.classList.contains('open')
+  const open = forceOpen === null ? !isOpen : !!forceOpen
   drawer.classList.toggle('open', open)
   drawer.style.maxHeight = open ? '160px' : '0px'
   if (open) renderHistoryDrawer(st)
 }
-function renderHistoryDrawer(st){
-  const list=document.querySelector(`[data-history-list="${st}"]`); if (!list) return
+function renderHistoryDrawer(st) {
+  const list = document.querySelector(`[data-history-list="${st}"]`); if (!list) return
   ensureStemHistory(st)
-  list.innerHTML=''
-  const takes=stemHistory[st]
+  list.innerHTML = ''
+  const takes = stemHistory[st]
   if (!takes.length) { list.innerHTML = `<div class="text-xs text-white/60 px-2 py-6">No takes yet. Create some!</div>`; return }
-  const active=stemActiveIndex[st]
+  const active = stemActiveIndex[st]
   takes.forEach((take, i) => {
-    const item=document.createElement('button')
-    item.className=`relative shrink-0 w-28 h-16 rounded-md border ${i===active?'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]':'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
+    const item = document.createElement('button')
+    item.className = `relative shrink-0 w-28 h-16 rounded-md border ${i === active ? 'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]' : 'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
     item.setAttribute('data-take-index', i)
     item.setAttribute('data-stem', st)
-    item.title=`v${i+1} • ${take.tempo} BPM • ${take.bars} bars`
+    item.title = `v${i + 1} • ${take.tempo} BPM • ${take.bars} bars`
 
-    const c=document.createElement('canvas'); c.width=112; c.height=64; c.className='w-full h-full rounded-md'
+    const c = document.createElement('canvas'); c.width = 112; c.height = 64; c.className = 'w-full h-full rounded-md'
     item.appendChild(c)
 
-    const meta=document.createElement('div')
-    meta.className='absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
-    meta.textContent=`v${i+1} • ${take.tempo} • ${take.bars}b`
+    const meta = document.createElement('div')
+    meta.className = 'absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
+    meta.textContent = `v${i + 1} • ${take.tempo} • ${take.bars}b`
     item.appendChild(meta)
 
     list.appendChild(item)
@@ -3164,27 +3033,27 @@ function renderHistoryDrawer(st){
     drawTinyWaveform(c, take.raw)
   })
 }
-function selectStemVersion(st, index){
+function selectStemVersion(st, index) {
   ensureStemHistory(st)
-  const takes=stemHistory[st]; if (!takes || index<0 || index>=takes.length) return
-  stemActiveIndex[st]=index
-  const take=takes[index]
+  const takes = stemHistory[st]; if (!takes || index < 0 || index >= takes.length) return
+  stemActiveIndex[st] = index
+  const take = takes[index]
   // Use the stored tempo and bar count from the take itself to build a
   // loop that matches the original generation.  Do not reference the current
   // master tempo, as each stem may have been generated at a different BPM.
-  const tempo  = take.tempo
-  const bars   = take.bars
-  stemRaw[st]  = take.raw
+  const tempo = take.tempo
+  const bars = take.bars
+  stemRaw[st] = take.raw
   // Loop directly from the raw audio; do not rebuild loop based on tempo
   stemLoop[st] = take.raw
   // Record the loop duration for this stem
   stemLoopDuration[st] = take.raw.duration
-  const canvas=document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
-    const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+    const cfg = stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
   }
-  const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
-  if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${bars} bars)`
+  const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
+  if (statusEl) statusEl.textContent = `Selected v${index + 1} (${tempo} BPM • ${bars} bars)`
   renderHistoryDrawer(st)
   // Restore the saved endpoint factor for this take (if present).  If not present, default to 1.
   {
@@ -3205,27 +3074,104 @@ function selectStemVersion(st, index){
 /* =========================================================
    App init + navigation
    ========================================================= */
-function showPage(pageId){
-  const pages=['login-page', 'selection-page', 'techno-generator-page']
-  pages.forEach(id => { const page=document.getElementById(id); if (page) page.classList.add('hidden') })
-  const targetPage=document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
+function showPage(pageId) {
+  const pages = ['login-page', 'selection-page', 'techno-generator-page', 'reset-password-page', 'confirm-email-page', 'profile-page']
+  pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
+  const targetPage = document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
 
-  // Show bottom player only on Studio page
-  const playerBar=document.getElementById('playerBar')
-  const showDock = pageId === 'techno-generator-page'
-  if (playerBar) playerBar.classList.toggle('hidden', !showDock)
-  if (!showDock) setMixerOpen(false)
+    // Show studio header only on studio pages (techno-generator-page)
+    const studioHeader = document.getElementById('studioHeader')
+    const showStudioHeader = pageId === 'techno-generator-page'
+    if (studioHeader) studioHeader.classList.toggle('hidden', !showStudioHeader)
+
+    // Show bottom player only on Studio page
+    const playerBar = document.getElementById('playerBar')
+    const showDock = pageId === 'techno-generator-page'
+    if (playerBar) playerBar.classList.toggle('hidden', !showDock)
+    if (!showDock) setMixerOpen(false)
+    
+    // Show guest mode notice on techno generator page if user is not authenticated
+    if (pageId === 'techno-generator-page') {
+      updateGuestModeNotice()
+    }
 }
-function setupNavigationListeners(){
-  const loginBtn = document.getElementById('loginBtn')
-  if (loginBtn) loginBtn.addEventListener('click', () => { showPage('selection-page') })
+
+
+/**
+ * Update guest mode notice visibility based on authentication status
+ */
+async function updateGuestModeNotice() {
+  const guestModeNotice = document.getElementById('guestModeNotice')
+  if (!guestModeNotice) return
+  
+  const user = getAuthGuard().getCurrentUser()
+  if (user) {
+    // User is authenticated, hide guest mode notice
+    guestModeNotice.classList.add('hidden')
+  } else {
+    // User is in guest mode, show notice
+    guestModeNotice.classList.remove('hidden')
+  }
+}
+
+// Make showPage globally accessible
+window.showPage = showPage
+function setupNavigationListeners() {
+  // Note: loginBtn is now handled by setupLoginPage() in Auth/loginPage.js
   const launchTechno = document.getElementById('launchTechno')
-  if (launchTechno) launchTechno.addEventListener('click', () => { showPage('techno-generator-page'); initTechnoGenerator() })
-  const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => {})
-  const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => {})
+  if (launchTechno) launchTechno.addEventListener('click', () => { 
+    showPage('techno-generator-page'); 
+    initTechnoGenerator() 
+  })
+  const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => { })
+  const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => { })
 }
-function initTechnoGenerator(){
-  console.log('🎛️ Initializing Techno Generator…')
+
+function setupRouteHandling() {
+  // Handle hash changes for routing
+  window.addEventListener('hashchange', handleHashChange)
+  
+  // Handle initial hash on page load
+  handleHashChange()
+  
+}
+
+function handleHashChange() {
+  const hash = window.location.hash.substring(1) // Remove the # symbol
+  
+  switch (hash) {
+    case 'login':
+      showPage('login-page')
+      break
+    case 'selection':
+      showPage('selection-page')
+      break
+    case 'studio':
+    case 'techno-generator':
+      showPage('techno-generator-page')
+      initTechnoGenerator()
+      break
+    case 'reset-password':
+      showPage('reset-password-page')
+      break
+    case 'confirm-email':
+      showPage('confirm-email-page')
+      break
+    case 'profile':
+      showPage('profile-page')
+      break
+    default:
+      // Default to selection page if no valid hash
+      if (!hash) {
+        showPage('selection-page')
+      }
+      break
+  }
+}
+
+
+
+function initTechnoGenerator() {
   injectGlobalStyles()
   initializeStemControlValues()
 
@@ -3285,19 +3231,108 @@ function initTechnoGenerator(){
   // before generating any stems.  The modal will only appear once
   // per session.
   showSessionSetupModal()
-  console.log('✅ App ready (session ' + SESSION_TAG + ')')
 }
 
-export async function initApp(){
-  console.log('🎬 Initializing App Navigation System…')
-  setupNavigationListeners()
-  // Start directly on the genre selection page instead of the login page
-  showPage('selection-page')
-  window.lucide?.createIcons()
-  setupHelpModal()
-  // Initialise the user menu in the header
-  setupUserMenu()
-  console.log('✅ Navigation system ready')
+export async function initApp() {
+
+
+  try {
+    // Initialize authentication guard
+    await initializeAuthGuard()
+
+    // Set up auth state change listener
+    addAuthListener((event, session, user) => {
+      // handleAuthStateChange(event, session, user)  
+    })
+
+    // Set up navigation listeners
+    setupNavigationListeners()
+    // setupRouteHandling()
+
+    // Set up UI components
+    window.lucide?.createIcons()
+    setupHelpModal()
+    // setupUserMenu() // Moved to dynamic rendering in selectionPage.js
+    setupLoginPage()
+    setupResetPasswordPage()
+    setupSelectionPage()
+    setupProfilePage()
+
+    // Determine initial page based on URL hash first, then auth state
+    const hash = window.location.hash.substring(1)
+    const authGuard = getAuthGuard()
+    const isAuthenticated = authGuard.isAuthenticated
+    
+    if (hash) {
+      // If there's a hash, use hash-based routing
+      handleHashChange()
+    } else {
+      // If no hash, show selection page by default
+      showPage('selection-page')
+    }
+
+    // console.log('✅ Navigation system ready')
+  } catch (error) {
+    console.error('❌ App initialization error:', error)
+    // Fallback to login page if auth initialization fails
+    showPage('login-page')
+  }
+}
+
+/**
+ * Handle authentication state changes
+ */
+async function handleAuthStateChange(event, session, user) {
+  try {
+    if (event === 'SIGNED_IN' && user) {
+
+      // Initialize user profile
+      await initializeUserProfile(user)
+
+      // Update user menu with user info
+      await updateUserMenu()
+
+      // Dispatch auth state change event for other components
+      window.dispatchEvent(new CustomEvent('authStateChanged', { 
+        detail: { event, session, user } 
+      }))
+
+      // Update guest mode notice if on techno generator page
+      updateGuestModeNotice()
+
+      // Only navigate if we're not already on the selection page and there's no hash
+      const currentHash = window.location.hash.substring(1)
+      const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
+      
+      if (!currentHash && currentPage !== 'selection-page') {
+        showPage('selection-page')
+      } else {
+      }
+    } else if (event === 'SIGNED_OUT') {
+
+      // Clear user menu
+      await updateUserMenu()
+
+      // Dispatch auth state change event for other components
+      window.dispatchEvent(new CustomEvent('authStateChanged', { 
+        detail: { event, session: null, user: null } 
+      }))
+
+      // Update guest mode notice if on techno generator page
+      updateGuestModeNotice()
+
+      // Only navigate if we're not already on the login page and there's no hash
+      const currentHash = window.location.hash.substring(1)
+      const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
+      
+      if (!currentHash && currentPage !== 'login-page') {
+        showPage('login-page')
+      } else {
+      }
+    }
+  } catch (error) {
+    console.error('Error handling auth state change:', error)
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -3318,44 +3353,13 @@ function customHeaderActionButtonsMobileHTML(st) {
 /* =========================================================
    Global styles
    ========================================================= */
-function injectGlobalStyles(){
-  if (document.getElementById('sg-global-styles')) return
-  const style=document.createElement('style')
-  style.id='sg-global-styles'
-  style.textContent=
-    `@keyframes soft-pulse-glow {\n      0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.28), 0 0 16px rgba(255,255,255,0.12); transform: translateY(0) scale(1); }\n      50%      { box-shadow: 0 0 0 12px rgba(255,255,255,0), 0 0 22px rgba(255,255,255,0.22); transform: translateY(-0.5px) scale(1.012); }\n    }\n    #playBtn { animation: soft-pulse-glow 2.6s ease-in-out infinite; transition: transform 160ms ease, box-shadow 160ms ease; will-change: transform, box-shadow; }\n    #playBtn:hover { transform: translateY(-1px) scale(1.02); }\n    #playBtn:active { transform: translateY(0); }\n    .sg-mix-card.sg-glow { animation: soft-pulse-glow 2.6s ease-in-out infinite; }\n    .sg-toggle-active { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); }`;
-  document.head.appendChild(style)
-}
+// injectGlobalStyles moved to ./UI/styles.js
 
 /* =========================================================
    Help Modal setup
    ========================================================= */
-function setupHelpModal(){
-  const helpBtn = document.getElementById('helpBtn')
-  const helpModal = document.getElementById('helpModal')
-  const overlay = document.getElementById('helpModalOverlay')
-  const closeBtn = document.getElementById('helpModalCloseBtn')
-  if (!helpModal) return
-  function openModal(){
-    helpModal.classList.remove('hidden')
-    requestAnimationFrame(() => {
-      helpModal.style.opacity = '1'
-    })
-    // Disable body scroll while help modal is open
-    document.body.style.overflow = 'hidden'
-  }
-  function closeModal(){
-    helpModal.style.opacity = '0'
-    setTimeout(() => {
-      helpModal.classList.add('hidden')
-      // Restore body scroll when help modal is closed
-      document.body.style.overflow = ''
-    }, 300)
-  }
-  if (helpBtn) helpBtn.addEventListener('click', openModal)
-  if (overlay) overlay.addEventListener('click', closeModal)
-  if (closeBtn) closeBtn.addEventListener('click', closeModal)
-}
+// moved to ./UI/helpModal.js
+// setupHelpModal moved to ./UI/helpModal.js
 
 // -----------------------------------------------------------------------------
 // Note: The default headerActionButtonsMobileHTML defined earlier is retained.
@@ -3390,17 +3394,17 @@ function buildGenerateSettingsContent(st) {
     if (c.type === 'knob') {
       // Use a taller track for mobile (h-3) and add touch-action-none to prevent page scrolling while dragging.
       html += `<div class="flex items-center gap-2">\n` +
-              `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
-              // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
-              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
-              `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
-              `</div>`
+        `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
+        // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
+        `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
+        `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
+        `</div>`
     } else if (c.type === 'toggle') {
       const checked = val ? 'checked' : ''
       html += `<label class="flex items-center gap-2 text-xs text-white/90">\n` +
-              `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
-              `  <span>${c.label}</span>\n` +
-              `</label>`
+        `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
+        `  <span>${c.label}</span>\n` +
+        `</label>`
     }
   }
   return html
@@ -3650,7 +3654,7 @@ function handleDialPointerDown(e) {
   const dial = e.target.closest('.infinite-dial')
   if (!dial) return
   const type = dial.getAttribute('data-dial-type')
-  const st   = dial.getAttribute('data-stem')
+  const st = dial.getAttribute('data-stem')
   if (!type || !st) return
   dialState.active = true
   dialState.dial = dial
@@ -3746,7 +3750,7 @@ function handleDialWheel(e) {
   const dial = e.target.closest('.infinite-dial')
   if (!dial) return
   const type = dial.getAttribute('data-dial-type')
-  const st   = dial.getAttribute('data-stem')
+  const st = dial.getAttribute('data-stem')
   if (!type || !st) return
   let currentVal, newVal
   if (type === 'volume') {

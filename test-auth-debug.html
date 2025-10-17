@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Debug Test - 343 Labs AI Music Studio</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1e293b;
+            color: white;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .header h1 {
+            background: linear-gradient(135deg, #8b5cf6, #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-size: 2.5rem;
+            margin: 0;
+        }
+        .test-section {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .test-button {
+            background: linear-gradient(135deg, #8b5cf6, #ec4899);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            margin: 5px;
+        }
+        .test-button:hover {
+            transform: translateY(-2px);
+        }
+        .status {
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+        }
+        .status.success {
+            background-color: rgba(34, 197, 94, 0.2);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            color: #22c55e;
+        }
+        .status.error {
+            background-color: rgba(239, 68, 68, 0.2);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #ef4444;
+        }
+        .status.info {
+            background-color: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #3b82f6;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            font-size: 14px;
+        }
+        .input-group input::placeholder {
+            color: rgba(255, 255, 255, 0.5);
+        }
+        .code-block {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 14px;
+            margin: 10px 0;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>343 Labs AI Music Studio</h1>
+            <p>Authentication Debug Test</p>
+        </div>
+
+        <div class="test-section">
+            <h2>Test Different Authentication Methods</h2>
+            <p>Let's test which authentication method works with your Edge Function:</p>
+            
+            <div class="input-group">
+                <label for="apiKey">API Key:</label>
+                <input type="text" id="apiKey" placeholder="Enter your API key">
+            </div>
+            
+            <button class="test-button" onclick="testMethod1()">
+                Test Method 1: apikey only
+            </button>
+            <button class="test-button" onclick="testMethod2()">
+                Test Method 2: Authorization Bearer
+            </button>
+            <button class="test-button" onclick="testMethod3()">
+                Test Method 3: Both headers
+            </button>
+            
+            <div id="testResults"></div>
+        </div>
+
+        <div class="test-section">
+            <h2>Current Configuration</h2>
+            <div id="configDisplay" class="code-block">
+                Loading configuration...
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h2>Manual Test</h2>
+            <p>Copy this code to your browser console to test manually:</p>
+            <div class="code-block" id="manualTestCode">
+                // Replace YOUR_API_KEY with your actual key
+                fetch('https://fsdknzsgdzlexyjallmy.supabase.co/functions/v1/send-email', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': 'YOUR_API_KEY'
+                  },
+                  body: JSON.stringify({
+                    to: 'test@example.com',
+                    subject: 'Test Email',
+                    html: '<h1>Test</h1>'
+                  })
+                })
+                .then(response => response.json())
+                .then(data => console.log('Success:', data))
+                .catch(error => console.error('Error:', error))
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const ENDPOINT = 'https://fsdknzsgdzlexyjallmy.supabase.co/functions/v1/send-email';
+        
+        function displayConfiguration() {
+            const configDisplay = document.getElementById('configDisplay');
+            const apiKey = import.meta.env.VITE_EMAIL_SERVICE_KEY || 'Not set';
+            const endpoint = import.meta.env.VITE_EMAIL_SERVICE_URL || 'Not set';
+            
+            configDisplay.innerHTML = `
+                VITE_EMAIL_SERVICE_URL: ${endpoint}<br>
+                VITE_EMAIL_SERVICE_KEY: ${apiKey ? 'Set' : 'Not set'}
+            `;
+        }
+
+        async function testMethod1() {
+            const apiKey = document.getElementById('apiKey').value || import.meta.env.VITE_EMAIL_SERVICE_KEY;
+            if (!apiKey) {
+                showResult('Please enter an API key', 'error');
+                return;
+            }
+
+            showResult('Testing Method 1: apikey only...', 'info');
+            
+            try {
+                const response = await fetch(ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'apikey': apiKey
+                    },
+                    body: JSON.stringify({
+                        to: 'test@example.com',
+                        subject: 'Test Email',
+                        html: '<h1>Test</h1>'
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showResult(`✅ Method 1 Success: ${JSON.stringify(data)}`, 'success');
+                } else {
+                    showResult(`❌ Method 1 Failed: ${data.error || response.statusText}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Method 1 Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testMethod2() {
+            const apiKey = document.getElementById('apiKey').value || import.meta.env.VITE_EMAIL_SERVICE_KEY;
+            if (!apiKey) {
+                showResult('Please enter an API key', 'error');
+                return;
+            }
+
+            showResult('Testing Method 2: Authorization Bearer...', 'info');
+            
+            try {
+                const response = await fetch(ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`
+                    },
+                    body: JSON.stringify({
+                        to: 'test@example.com',
+                        subject: 'Test Email',
+                        html: '<h1>Test</h1>'
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showResult(`✅ Method 2 Success: ${JSON.stringify(data)}`, 'success');
+                } else {
+                    showResult(`❌ Method 2 Failed: ${data.error || response.statusText}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Method 2 Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testMethod3() {
+            const apiKey = document.getElementById('apiKey').value || import.meta.env.VITE_EMAIL_SERVICE_KEY;
+            if (!apiKey) {
+                showResult('Please enter an API key', 'error');
+                return;
+            }
+
+            showResult('Testing Method 3: Both headers...', 'info');
+            
+            try {
+                const response = await fetch(ENDPOINT, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'apikey': apiKey
+                    },
+                    body: JSON.stringify({
+                        to: 'test@example.com',
+                        subject: 'Test Email',
+                        html: '<h1>Test</h1>'
+                    })
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showResult(`✅ Method 3 Success: ${JSON.stringify(data)}`, 'success');
+                } else {
+                    showResult(`❌ Method 3 Failed: ${data.error || response.statusText}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ Method 3 Error: ${error.message}`, 'error');
+            }
+        }
+
+        function showResult(message, type) {
+            const resultsDiv = document.getElementById('testResults');
+            resultsDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        // Initialize on page load
+        displayConfiguration();
+    </script>
+</body>
+</html>

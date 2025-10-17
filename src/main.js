@@ -1,6 +1,7 @@
 import './style.css'
 import { initApp } from './app.js'
 import { checkAudioContextSampleRate } from './debug-audio.js'
+import { loadTemplates } from './loadTemplates.js'
 
 // Enharmonic toggle functionality
 function initEnharmonicToggle() {
@@ -100,22 +101,53 @@ function waitForLibraries() {
 
 // Initialize when both DOM and libraries are ready
 document.addEventListener('DOMContentLoaded', async () => {
-  console.log('DOM loaded, waiting for CDN libraries...');
+  
+  
   try {
+
+    const templatesLoaded = await loadTemplates();
+    if (!templatesLoaded) {
+        console.error('❌ Failed to load templates, stopping initialization');
+      return;
+    }
+    
     await waitForLibraries();
-    console.log('CDN libraries loaded, initializing app...');
     
     // Initialize enharmonic toggle functionality
     initEnharmonicToggle();
     
     initApp();
   } catch (error) {
-    console.error('App initialization failed:', error);
+    console.error('❌ App initialization failed:', error);
+    console.error('Error details:', error.stack);
+    
+    // Show error in UI
+    const appRoot = document.getElementById('app-root');
+    if (appRoot) {
+      appRoot.innerHTML = `
+        <div class="min-h-screen bg-zinc-900 text-white flex items-center justify-center p-4">
+          <div class="text-center max-w-md">
+            <h1 class="text-2xl font-bold mb-4 text-red-500">App Initialization Error</h1>
+            <p class="text-white/60 mb-4">There was an error loading the application</p>
+            <div class="bg-red-900/20 border border-red-500/30 rounded-lg p-3 mb-4 text-left">
+              <p class="text-xs text-red-400 font-mono break-all">${error.message}</p>
+            </div>
+            <button onclick="location.reload()" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">
+              Reload Page
+            </button>
+          </div>
+        </div>
+      `;
+    }
+    
     // Fallback: try to init without external libraries
-    setTimeout(() => {
-      console.log('Trying fallback initialization...');
-      initEnharmonicToggle();
-      initApp();
+    setTimeout(async () => {
+      // Try to load templates again in fallback
+      const templatesLoaded = await loadTemplates();
+      if (templatesLoaded) {
+        initEnharmonicToggle();
+        initApp();
+      }
     }, 2000);
   }
 });

@@ -1,0 +1,181 @@
+<!-- Email Confirmation Preview Page -->
+<div id="confirm-email-page" class="hidden min-h-screen flex flex-col">
+  <!-- Header -->
+  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <!-- Logo Section -->
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+          <i data-lucide="music" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            343 Labs
+          </h1>
+          <p class="text-xs text-white/60">AI Music Studio</p>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="hidden md:flex items-center space-x-8">
+        <a href="#features" class="text-white/70 hover:text-white transition">Features</a>
+        <a href="#how-it-works" class="text-white/70 hover:text-white transition">How It Works</a>
+        <a href="#pricing" class="text-white/70 hover:text-white transition">Pricing</a>
+        <a href="#contact" class="text-white/70 hover:text-white transition">Contact</a>
+      </nav>
+
+      <!-- Login Button -->
+      <button id="landingLoginBtn" class="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105">
+        Login
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <div class="flex-1 flex items-center justify-center p-4">
+    <div class="max-w-6xl w-full">
+      <!-- Page Header -->
+      <div class="text-center mb-8">
+        <h1 class="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+          343 Labs AI Music Studio
+        </h1>
+        <p class="text-xl text-white/60 mb-8">
+          Email Template Preview
+        </p>
+      </div>
+
+    <!-- Preview Controls -->
+    <div class="glass card-border rounded-2xl p-6 mb-8">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-white">Email Templates</h2>
+        <div class="flex gap-4">
+          <button id="previewConfirmation" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">
+            Confirmation Email
+          </button>
+          <button id="previewPasswordReset" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">
+            Password Reset
+          </button>
+          <button id="previewWelcome" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">
+            Welcome Email
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Email Preview Container -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <!-- Desktop Preview -->
+      <div class="glass card-border rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">Desktop Preview</h3>
+          <div class="flex items-center text-sm text-white/60">
+            <i data-lucide="monitor" class="w-4 h-4 mr-2"></i>
+            Desktop
+          </div>
+        </div>
+        <div class="bg-white rounded-lg overflow-hidden shadow-lg">
+          <iframe 
+            id="desktopPreview" 
+            class="w-full h-96 border-0"
+            src="about:blank"
+            sandbox="allow-same-origin"
+          ></iframe>
+        </div>
+      </div>
+
+      <!-- Mobile Preview -->
+      <div class="glass card-border rounded-2xl p-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-white">Mobile Preview</h3>
+          <div class="flex items-center text-sm text-white/60">
+            <i data-lucide="smartphone" class="w-4 h-4 mr-2"></i>
+            Mobile
+          </div>
+        </div>
+        <div class="bg-white rounded-lg overflow-hidden shadow-lg max-w-sm mx-auto">
+          <iframe 
+            id="mobilePreview" 
+            class="w-full h-96 border-0"
+            src="about:blank"
+            sandbox="allow-same-origin"
+          ></iframe>
+        </div>
+      </div>
+    </div>
+
+    <!-- Template Information -->
+    <div class="glass card-border rounded-2xl p-6 mt-8">
+      <h3 class="text-lg font-semibold text-white mb-4">Template Information</h3>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div>
+          <h4 class="text-sm font-medium text-white/70 mb-2">Confirmation Email</h4>
+          <p class="text-sm text-white/60">Sent when users sign up to verify their email address</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-medium text-white/70 mb-2">Password Reset</h4>
+          <p class="text-sm text-white/60">Sent when users request to reset their password</p>
+        </div>
+        <div>
+          <h4 class="text-sm font-medium text-white/70 mb-2">Welcome Email</h4>
+          <p class="text-sm text-white/60">Sent after successful email confirmation</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Back to Login -->
+    <div class="text-center mt-8">
+      <a
+        href="#login"
+        class="text-sm text-purple-400 hover:text-purple-300 transition"
+      >
+        ← Back to Login
+      </a>
+    </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Email Preview Logic
+document.addEventListener('DOMContentLoaded', function() {
+  const previewConfirmation = document.getElementById('previewConfirmation')
+  const previewPasswordReset = document.getElementById('previewPasswordReset')
+  const previewWelcome = document.getElementById('previewWelcome')
+  const desktopPreview = document.getElementById('desktopPreview')
+  const mobilePreview = document.getElementById('mobilePreview')
+
+  // Load email template
+  function loadEmailTemplate(templateName) {
+    const templatePath = `src/pages/EmailTemplates/${templateName}.html`
+    
+    // Update iframe sources
+    desktopPreview.src = templatePath
+    mobilePreview.src = templatePath
+    
+    // Update active button
+    [previewConfirmation, previewPasswordReset, previewWelcome].forEach(btn => {
+      btn.classList.remove('bg-purple-500/80', 'border-purple-500')
+      btn.classList.add('bg-white/5', 'border-white/10')
+    })
+    
+    event.target.classList.remove('bg-white/5', 'border-white/10')
+    event.target.classList.add('bg-purple-500/80', 'border-purple-500')
+  }
+
+  // Event listeners
+  previewConfirmation.addEventListener('click', (e) => {
+    loadEmailTemplate('confirmation')
+  })
+  
+  previewPasswordReset.addEventListener('click', (e) => {
+    loadEmailTemplate('password-reset')
+  })
+  
+  previewWelcome.addEventListener('click', (e) => {
+    loadEmailTemplate('welcome')
+  })
+
+  // Load confirmation email by default
+  loadEmailTemplate('confirmation')
+})
+</script>

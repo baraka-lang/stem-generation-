@@ -34,3 +34,51 @@ export function bufferToWavAndDownload(buffer, filename) {
   const wav = encodeWAV(buffer)
   triggerDownload(wav, filename)
 }
+
+// ---------------- Download confirmation modal helpers ----------------
+let __downloadAllHandler = null
+
+export function setDownloadAllHandler(handler){
+  __downloadAllHandler = typeof handler === 'function' ? handler : null
+}
+
+export function openDownloadConfirmModal() {
+  const modal = document.getElementById('downloadConfirmModal')
+  if (!modal) return
+  const spinner = document.getElementById('downloadConfirmSpinner')
+  const label = document.getElementById('downloadConfirmLabel')
+  if (spinner) spinner.classList.add('hidden')
+  if (label) label.textContent = 'Download'
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    modal.firstElementChild?.classList.remove('scale-95')
+    modal.firstElementChild?.classList.add('scale-100')
+  })
+}
+
+export function closeDownloadConfirmModal() {
+  const modal = document.getElementById('downloadConfirmModal')
+  if (!modal) return
+  modal.style.opacity = '0'
+  modal.firstElementChild?.classList.remove('scale-100')
+  modal.firstElementChild?.classList.add('scale-95')
+  setTimeout(() => { modal.classList.add('hidden') }, 200)
+}
+
+export function confirmDownloadAll() {
+  const spinner = document.getElementById('downloadConfirmSpinner')
+  const label = document.getElementById('downloadConfirmLabel')
+  if (spinner && label) {
+    spinner.classList.remove('hidden')
+    label.textContent = 'Downloading'
+  }
+  if (__downloadAllHandler) {
+    try { __downloadAllHandler() } catch (e) { console.error(e) }
+  }
+  if (spinner && label) {
+    spinner.classList.add('hidden')
+    label.textContent = 'Download'
+  }
+  closeDownloadConfirmModal()
+}

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Email Edge Function</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .success { background-color: #d4edda; border-color: #c3e6cb; }
+        .error { background-color: #f8d7da; border-color: #f5c6cb; }
+        button { padding: 10px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .result { margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Email Edge Function Test</h1>
+    
+    <div class="test-section">
+        <h2>Test 1: Welcome Email</h2>
+        <p>Test sending a welcome email via the Edge Function</p>
+        <button onclick="testWelcomeEmail()">Send Welcome Email</button>
+        <div id="welcome-result" class="result" style="display: none;"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 2: Password Reset Email</h2>
+        <p>Test sending a password reset email via the Edge Function</p>
+        <button onclick="testPasswordResetEmail()">Send Password Reset Email</button>
+        <div id="reset-result" class="result" style="display: none;"></div>
+    </div>
+
+    <div class="test-section">
+        <h2>Test 3: Confirmation Email</h2>
+        <p>Test sending a confirmation email via the Edge Function</p>
+        <button onclick="testConfirmationEmail()">Send Confirmation Email</button>
+        <div id="confirmation-result" class="result" style="display: none;"></div>
+    </div>
+
+    <script type="module">
+        // Import the email service
+        import { sendWelcomeEmail, sendPasswordResetEmail, sendConfirmationEmail } from './src/Config/emailService.js';
+
+        // Make functions available globally
+        window.testWelcomeEmail = async function() {
+            const resultDiv = document.getElementById('welcome-result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = 'Sending welcome email...';
+            
+            try {
+                const result = await sendWelcomeEmail('test@example.com');
+                if (result.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `✅ Success: ${JSON.stringify(result.data)}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ Error: ${result.error}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ Exception: ${error.message}`;
+            }
+        };
+
+        window.testPasswordResetEmail = async function() {
+            const resultDiv = document.getElementById('reset-result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = 'Sending password reset email...';
+            
+            try {
+                const result = await sendPasswordResetEmail('test@example.com', 'https://app.stemflow.app/reset-password?token=test123');
+                if (result.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `✅ Success: ${JSON.stringify(result.data)}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ Error: ${result.error}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ Exception: ${error.message}`;
+            }
+        };
+
+        window.testConfirmationEmail = async function() {
+            const resultDiv = document.getElementById('confirmation-result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = 'Sending confirmation email...';
+            
+            try {
+                const result = await sendConfirmationEmail('test@example.com', 'https://app.stemflow.app/confirm-email?token=test123');
+                if (result.success) {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `✅ Success: ${JSON.stringify(result.data)}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ Error: ${result.error}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ Exception: ${error.message}`;
+            }
+        };
+    </script>
+</body>
+</html>

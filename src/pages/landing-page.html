@@ -1,0 +1,281 @@
+<!-- Landing Page -->
+<div id="landing-page" class="min-h-screen flex flex-col">
+  <!-- Header -->
+  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <!-- Logo Section -->
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+          <i data-lucide="music" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            343 Labs
+          </h1>
+          <p class="text-xs text-white/60">AI Music Studio</p>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="hidden md:flex items-center space-x-8">
+        <a href="#features" class="text-white/70 hover:text-white transition">Features</a>
+        <a href="#how-it-works" class="text-white/70 hover:text-white transition">How It Works</a>
+        <a href="#pricing" class="text-white/70 hover:text-white transition">Pricing</a>
+        <a href="#contact" class="text-white/70 hover:text-white transition">Contact</a>
+      </nav>
+
+      <!-- Login Button -->
+      <button id="landingLoginBtn" class="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105">
+        Login
+      </button>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="flex-1 flex items-center justify-center px-4 py-16">
+    <div class="max-w-6xl mx-auto text-center">
+      <!-- Main Headline -->
+      <h1 class="text-6xl md:text-8xl font-bold mb-6 bg-gradient-to-r from-purple-400 via-pink-500 to-purple-600 bg-clip-text text-transparent leading-tight">
+        Create Professional<br>
+        <span class="text-white">AI Music</span>
+      </h1>
+      
+      <!-- Subtitle -->
+      <p class="text-xl md:text-2xl text-white/70 mb-8 max-w-3xl mx-auto leading-relaxed">
+        Generate high-quality music stems with cutting-edge AI technology. 
+        Perfect for producers, artists, and creators who want professional results in minutes.
+      </p>
+
+      <!-- CTA Buttons -->
+      <div class="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12">
+        <button id="enterStudioBtn" class="px-8 py-4 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-2xl text-white font-bold text-lg transition-all duration-300 hover:scale-105 shadow-2xl hover:shadow-purple-500/25">
+          <i data-lucide="play" class="w-5 h-5 mr-2 inline"></i>
+          Enter Studio
+        </button>
+        <button id="watchDemoBtn" class="px-8 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-white font-medium text-lg transition-all duration-300 hover:scale-105">
+          <i data-lucide="play-circle" class="w-5 h-5 mr-2 inline"></i>
+          Watch Demo
+        </button>
+      </div>
+
+      <!-- Stats -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mx-auto">
+        <div class="text-center">
+          <div class="text-3xl font-bold text-white mb-2">10K+</div>
+          <div class="text-white/60">Stems Generated</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-white mb-2">500+</div>
+          <div class="text-white/60">Active Producers</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-white mb-2">99%</div>
+          <div class="text-white/60">Satisfaction Rate</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section id="features" class="py-20 px-4">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16">
+        <h2 class="text-4xl md:text-5xl font-bold text-white mb-6">
+          Powerful AI Music Generation
+        </h2>
+        <p class="text-xl text-white/70 max-w-3xl mx-auto">
+          Our advanced AI understands music theory, genre conventions, and production techniques to create professional-quality stems.
+        </p>
+      </div>
+
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <!-- Feature 1 -->
+        <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div class="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-purple-500 to-pink-600 rounded-2xl flex items-center justify-center">
+            <i data-lucide="zap" class="w-8 h-8 text-white"></i>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Lightning Fast</h3>
+          <p class="text-white/70 leading-relaxed">
+            Generate professional stems in under 30 seconds. No more waiting hours for renders or complex setups.
+          </p>
+        </div>
+
+        <!-- Feature 2 -->
+        <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div class="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-2xl flex items-center justify-center">
+            <i data-lucide="brain" class="w-8 h-8 text-white"></i>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">AI-Powered</h3>
+          <p class="text-white/70 leading-relaxed">
+            Advanced machine learning models trained on millions of professional tracks for authentic sound generation.
+          </p>
+        </div>
+
+        <!-- Feature 3 -->
+        <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div class="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl flex items-center justify-center">
+            <i data-lucide="download" class="w-8 h-8 text-white"></i>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Export Ready</h3>
+          <p class="text-white/70 leading-relaxed">
+            Download stems in high-quality formats. Perfect for your DAW, streaming platforms, or live performances.
+          </p>
+        </div>
+
+        <!-- Feature 4 -->
+        <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div class="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-orange-500 to-red-600 rounded-2xl flex items-center justify-center">
+            <i data-lucide="sliders" class="w-8 h-8 text-white"></i>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Customizable</h3>
+          <p class="text-white/70 leading-relaxed">
+            Fine-tune tempo, key, style, and mood. Get exactly the sound you're looking for with detailed controls.
+          </p>
+        </div>
+
+        <!-- Feature 5 -->
+        <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div class="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-pink-500 to-rose-600 rounded-2xl flex items-center justify-center">
+            <i data-lucide="music-4" class="w-8 h-8 text-white"></i>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Multiple Genres</h3>
+          <p class="text-white/70 leading-relaxed">
+            From techno to hip-hop, house to ambient. Our AI understands and generates authentic sounds across genres.
+          </p>
+        </div>
+
+        <!-- Feature 6 -->
+        <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div class="w-16 h-16 mx-auto mb-6 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center">
+            <i data-lucide="shield-check" class="w-8 h-8 text-white"></i>
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Royalty-Free</h3>
+          <p class="text-white/70 leading-relaxed">
+            All generated content is 100% royalty-free. Use your stems commercially without any legal concerns.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works Section -->
+  <section id="how-it-works" class="py-20 px-4 bg-white/5">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-16">
+        <h2 class="text-4xl md:text-5xl font-bold text-white mb-6">
+          How It Works
+        </h2>
+        <p class="text-xl text-white/70 max-w-3xl mx-auto">
+          Create professional music in three simple steps
+        </p>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-8">
+        <!-- Step 1 -->
+        <div class="text-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-purple-500 to-pink-600 rounded-full flex items-center justify-center text-2xl font-bold text-white">
+            1
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Choose Your Genre</h3>
+          <p class="text-white/70 leading-relaxed">
+            Select from our growing library of music genres. Each optimized for authentic sound generation.
+          </p>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="text-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-blue-500 to-cyan-600 rounded-full flex items-center justify-center text-2xl font-bold text-white">
+            2
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Customize Settings</h3>
+          <p class="text-white/70 leading-relaxed">
+            Set tempo, key, mood, and style preferences. Our AI will generate stems that match your vision.
+          </p>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="text-center">
+          <div class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center text-2xl font-bold text-white">
+            3
+          </div>
+          <h3 class="text-2xl font-bold text-white mb-4">Generate & Download</h3>
+          <p class="text-white/70 leading-relaxed">
+            Watch as AI creates your stems in real-time. Download high-quality files ready for your projects.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="py-20 px-4">
+    <div class="max-w-4xl mx-auto text-center">
+      <h2 class="text-4xl md:text-5xl font-bold text-white mb-6">
+        Ready to Create?
+      </h2>
+      <p class="text-xl text-white/70 mb-8 max-w-2xl mx-auto">
+        Join thousands of producers who are already creating amazing music with AI. 
+        Start your musical journey today.
+      </p>
+      <button id="ctaEnterStudioBtn" class="px-12 py-4 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-2xl text-white font-bold text-xl transition-all duration-300 hover:scale-105 shadow-2xl hover:shadow-purple-500/25">
+        <i data-lucide="music" class="w-6 h-6 mr-3 inline"></i>
+        Start Creating Now
+      </button>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="py-12 px-4 border-t border-white/10">
+    <div class="max-w-6xl mx-auto">
+      <div class="grid md:grid-cols-4 gap-8">
+        <!-- Brand -->
+        <div class="md:col-span-2">
+          <div class="flex items-center space-x-3 mb-4">
+            <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+              <i data-lucide="music" class="w-6 h-6 text-white"></i>
+            </div>
+            <div>
+              <h3 class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+                343 Labs
+              </h3>
+              <p class="text-sm text-white/60">AI Music Studio</p>
+            </div>
+          </div>
+          <p class="text-white/70 max-w-md leading-relaxed">
+            Empowering creators with cutting-edge AI technology to generate professional-quality music stems.
+          </p>
+        </div>
+
+        <!-- Quick Links -->
+        <div>
+          <h4 class="text-lg font-semibold text-white mb-4">Quick Links</h4>
+          <ul class="space-y-2">
+            <li><a href="#features" class="text-white/70 hover:text-white transition">Features</a></li>
+            <li><a href="#how-it-works" class="text-white/70 hover:text-white transition">How It Works</a></li>
+            <li><a href="#pricing" class="text-white/70 hover:text-white transition">Pricing</a></li>
+            <li><a href="#contact" class="text-white/70 hover:text-white transition">Contact</a></li>
+          </ul>
+        </div>
+
+        <!-- Support -->
+        <div>
+          <h4 class="text-lg font-semibold text-white mb-4">Support</h4>
+          <ul class="space-y-2">
+            <li><a href="#" class="text-white/70 hover:text-white transition">Help Center</a></li>
+            <li><a href="#" class="text-white/70 hover:text-white transition">Documentation</a></li>
+            <li><a href="#" class="text-white/70 hover:text-white transition">Community</a></li>
+            <li><a href="#" class="text-white/70 hover:text-white transition">Status</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="border-t border-white/10 mt-8 pt-8 text-center">
+        <p class="text-white/60">
+          © 2024 343 Labs. All rights reserved. | 
+          <a href="#" class="hover:text-white transition">Privacy Policy</a> | 
+          <a href="#" class="hover:text-white transition">Terms of Service</a>
+        </p>
+      </div>
+    </div>
+  </footer>
+</div>
