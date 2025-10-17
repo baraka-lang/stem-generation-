@@ -217,44 +217,7 @@ export function setupLoginPage() {
     }
   })
 
-  // Simple password toggle using event delegation
-  document.addEventListener('click', (e) => {
-    // Check if clicked element is a password toggle button
-    if (e.target.closest('[id*="toggle"]') && e.target.closest('[id*="Password"]')) {
-      const button = e.target.closest('[id*="toggle"]')
-      const buttonId = button.id
-      
-      // Find the input field (look for password input near the button)
-      const inputContainer = button.closest('.relative')
-      if (inputContainer) {
-        const passwordInput = inputContainer.querySelector('input[type="password"], input[type="text"]')
-        const eyeIcon = button.querySelector('[data-lucide="eye"]')
-        const eyeOffIcon = button.querySelector('[data-lucide="eye-off"]')
-        
-        if (passwordInput && eyeIcon && eyeOffIcon) {
-          e.preventDefault()
-          
-          const isPassword = passwordInput.type === 'password'
-          passwordInput.type = isPassword ? 'text' : 'password'
-          
-          // Toggle icons
-          if (isPassword) {
-            eyeIcon.classList.add('hidden')
-            eyeOffIcon.classList.remove('hidden')
-          } else {
-            eyeIcon.classList.remove('hidden')
-            eyeOffIcon.classList.add('hidden')
-          }
-          
-          // Update aria-label
-          button.setAttribute('aria-label', 
-            isPassword ? 'Hide password' : 'Show password')
-        }
-      }
-    }
-  })
-
-  // All password toggles are now handled by the simple event delegation above
+  // Password toggle functionality removed due to complexity issues
 
   // Forgot password button
   if (forgotPasswordBtn) {
