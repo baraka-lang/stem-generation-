@@ -15,44 +15,44 @@ import { initializeUserProfile } from './userProfile.js'
 function validatePassword() {
   const passwordInput = document.getElementById('signupPassword')
   const confirmPasswordInput = document.getElementById('signupConfirmPassword')
-  
+
   // Early return if input elements don't exist
   if (!passwordInput || !confirmPasswordInput) {
     return false
   }
-  
+
   const password = passwordInput.value || ''
   const confirmPassword = confirmPasswordInput.value || ''
-  
+
   // Get requirement elements
   const lengthEl = document.getElementById('password-length')
   const lowercaseEl = document.getElementById('password-lowercase')
   const uppercaseEl = document.getElementById('password-uppercase')
   const numberEl = document.getElementById('password-number')
-  
+
   const signupFormContainer = document.getElementById('signupFormContainer')
-  
+
   // Only proceed if all elements are found
   if (!lengthEl || !lowercaseEl || !uppercaseEl || !numberEl) {
     return false
   }
-  
+
   // Check requirements
   const hasMinLength = password.length >= 6
   const hasLowercase = /[a-z]/.test(password)
   const hasUppercase = /[A-Z]/.test(password)
   const hasNumber = /[0-9]/.test(password)
-  
+
   // Update visual indicators immediately
   updateRequirementIndicator(lengthEl, hasMinLength)
   updateRequirementIndicator(lowercaseEl, hasLowercase)
   updateRequirementIndicator(uppercaseEl, hasUppercase)
   updateRequirementIndicator(numberEl, hasNumber)
-  
+
   // Check if password is valid
   const isValid = hasMinLength && hasLowercase && hasUppercase && hasNumber
   const passwordsMatch = password === confirmPassword && confirmPassword.length > 0
-  
+
   // Update password match indicator
   const passwordMatchEl = document.getElementById('password-match')
   if (passwordMatchEl) {
@@ -63,13 +63,13 @@ function validatePassword() {
       passwordMatchEl.classList.add('hidden')
     }
   }
-  
+
   // Update submit button state
   const signupSubmitBtn = document.getElementById('signupSubmitBtn')
   if (signupSubmitBtn) {
     signupSubmitBtn.disabled = !isValid || !passwordsMatch
   }
-  
+
   return isValid && passwordsMatch
 }
 
@@ -81,8 +81,8 @@ function updateRequirementIndicator(element, isValid) {
     console.warn('updateRequirementIndicator: element not found')
     return
   }
-  
-  
+
+
   // Find the icon element - Lucide converts i elements to svg elements
   let icon = element.querySelector('svg[data-lucide]')
   if (!icon) {
@@ -97,11 +97,11 @@ function updateRequirementIndicator(element, isValid) {
     // Last resort - any i element
     icon = element.querySelector('i')
   }
-  
+
   if (!icon) {
     return
   }
-  
+
   // Update the element's visual state
   if (isValid) {
     // Valid - green checkmark
@@ -114,24 +114,89 @@ function updateRequirementIndicator(element, isValid) {
     icon.setAttribute('data-lucide', 'x')
     icon.setAttribute('class', 'lucide lucide-x w-3 h-3 mr-2')
   }
-  
+
   // Update Lucide icons
   if (window.lucide && typeof window.lucide.createIcons === 'function') {
     window.lucide.createIcons()
   }
 }
 
+/**
+ * Setup password toggle functionality for all password fields
+ */
+function setupPasswordToggles() {
+  console.log('Setting up password toggles...')
+
+  // Login password toggle
+  const toggleLoginPassword = document.getElementById('toggleLoginPassword')
+  const loginPasswordInput = document.getElementById('loginPassword')
+  const loginEyeIcon = document.getElementById('loginEyeIcon')
+  const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
+
+  console.log('Login toggle elements:', {
+    toggleLoginPassword,
+    loginPasswordInput,
+    loginEyeIcon,
+    loginEyeOffIcon
+  })
+
+  if (toggleLoginPassword && loginPasswordInput && loginEyeIcon && loginEyeOffIcon) {
+    console.log('Adding login password toggle listener')
+    toggleLoginPassword.addEventListener('click', (e) => {
+      e.preventDefault()
+      console.log('Login password toggle clicked hhh')
+      const isPassword = loginPasswordInput.type === 'password'
+      loginPasswordInput.type = isPassword ? 'text' : 'password'
+      loginEyeIcon.classList.toggle('hidden', !isPassword)
+      loginEyeOffIcon.classList.toggle('hidden', isPassword)
+      console.log('Password type changed to:', loginPasswordInput.type)
+    })
+  } else {
+    console.warn('Login password toggle elements not found')
+  }
+
+  // Signup password toggle
+  const toggleSignupPassword = document.getElementById('toggleSignupPasswordSignupPage')
+  const signupPasswordInput = document.getElementById('signupPassword')
+  const signupEyeIcon = document.getElementById('signupEyeIcon')
+  const signupEyeOffIcon = document.getElementById('signupEyeOffIcon')
+
+  if (toggleSignupPassword && signupPasswordInput && signupEyeIcon && signupEyeOffIcon) {
+    toggleSignupPassword.addEventListener('click', () => {
+      const isPassword = signupPasswordInput.type === 'password'
+      signupPasswordInput.type = isPassword ? 'text' : 'password'
+      signupEyeIcon.classList.toggle('hidden', !isPassword)
+      signupEyeOffIcon.classList.toggle('hidden', isPassword)
+    })
+  }
+
+  // Signup confirm password toggle
+  const toggleSignupConfirmPassword = document.getElementById('toggleSignupConfirmPasswordSignupPage')
+  const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
+  const confirmEyeIcon = document.getElementById('confirmEyeIcon')
+  const confirmEyeOffIcon = document.getElementById('confirmEyeOffIcon')
+
+  if (toggleSignupConfirmPassword && signupConfirmPasswordInput && confirmEyeIcon && confirmEyeOffIcon) {
+    toggleSignupConfirmPassword.addEventListener('click', () => {
+      const isPassword = signupConfirmPasswordInput.type === 'password'
+      signupConfirmPasswordInput.type = isPassword ? 'text' : 'password'
+      confirmEyeIcon.classList.toggle('hidden', !isPassword)
+      confirmEyeOffIcon.classList.toggle('hidden', isPassword)
+    })
+  }
+}
+
 export function setupLoginPage() {
-  
+
   // Get form elements
   const loginForm = document.getElementById('loginForm')
   const loginBtn = document.getElementById('loginBtn')
   const loginBtnText = document.getElementById('loginBtnText')
   const loginBtnSpinner = document.getElementById('loginBtnSpinner')
-  
+
   const signUpBtn = document.getElementById('signUpBtn')
   const forgotPasswordBtn = document.getElementById('forgotPasswordBtn')
-  
+
   const errorMessage = document.getElementById('loginErrorMessage')
   const errorText = document.getElementById('loginErrorText')
   const successMessage = document.getElementById('loginSuccessMessage')
@@ -147,7 +212,7 @@ export function setupLoginPage() {
   const signupSubmitBtnText = document.getElementById('signupSubmitBtnText')
   const signupSubmitBtnSpinner = document.getElementById('signupSubmitBtnSpinner')
   const backToLoginBtn = document.getElementById('backToLoginBtn')
-  
+
   const signupErrorMessage = document.getElementById('signupErrorMessage')
   const signupErrorText = document.getElementById('signupErrorText')
   const signupSuccessMessage = document.getElementById('signupSuccessMessage')
@@ -160,7 +225,7 @@ export function setupLoginPage() {
   const resetSubmitBtn = document.getElementById('forgotPasswordSubmitBtn')
   const resetBtnText = document.getElementById('resetBtnText')
   const resetBtnSpinner = document.getElementById('resetBtnSpinner')
-  
+
   const resetErrorMessage = document.getElementById('resetErrorMessage')
   const resetErrorText = document.getElementById('resetErrorText')
   const resetSuccessMessage = document.getElementById('resetSuccessMessage')
@@ -216,8 +281,99 @@ export function setupLoginPage() {
       validatePassword()
     }
   })
+    
+  // Password toggle functionality - use event delegation for reliability
+  setupPasswordToggles()
 
-  // Password toggle functionality removed due to complexity issues
+  // Set up event delegation for all password toggles
+  document.addEventListener('click', (e) => {
+    // Login password toggle
+    const loginToggleBtn = e.target.closest('#toggleLoginPassword')
+    if (loginToggleBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      console.log('Login password toggle clicked')
+
+      const loginPasswordInput = document.getElementById('loginPassword')
+      const isPassword = loginPasswordInput.type === 'password'
+        loginPasswordInput.type = isPassword ? 'text' : 'password'
+        loginToggleBtn.style.color = isPassword ? 'cyan' : 'white'
+      const loginEyeIcon = document.getElementById('loginEyeIcon')
+      const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
+
+      if (loginPasswordInput && loginEyeIcon && loginEyeOffIcon) {
+        
+        loginEyeIcon.classList.toggle('hidden', !isPassword)
+        loginEyeOffIcon.classList.toggle('hidden', isPassword)
+        console.log('Login password toggled, new type:', loginPasswordInput.type)
+
+        // Refresh Lucide icons after toggling
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons()
+        }
+      } else {
+        // console.error('Login password toggle elements not found')
+      }
+
+      return
+    }
+
+    // Signup password toggle
+    const signupToggleBtn = e.target.closest('#toggleSignupPasswordSignupPage')
+    if (signupToggleBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      console.log('Signup password toggle clicked')
+
+      const signupPasswordInput = document.getElementById('signupPassword')
+      const signupEyeIcon = document.getElementById('signupEyeIcon')
+      const signupEyeOffIcon = document.getElementById('signupEyeOffIcon')
+
+      if (signupPasswordInput && signupEyeIcon && signupEyeOffIcon) {
+        const isPassword = signupPasswordInput.type === 'password'
+        signupPasswordInput.type = isPassword ? 'text' : 'password'
+        signupEyeIcon.classList.toggle('hidden', !isPassword)
+        signupEyeOffIcon.classList.toggle('hidden', isPassword)
+        console.log('Signup password toggled, new type:', signupPasswordInput.type)
+
+        // Refresh Lucide icons after toggling
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons()
+        }
+      } else {
+        console.error('Signup password toggle elements not found')
+      }
+      return
+    }
+
+    // Signup confirm password toggle
+    const confirmToggleBtn = e.target.closest('#toggleSignupConfirmPasswordSignupPage')
+    if (confirmToggleBtn) {
+      e.preventDefault()
+      e.stopPropagation()
+      console.log('Signup confirm password toggle clicked')
+
+      const confirmPasswordInput = document.getElementById('signupConfirmPassword')
+      const confirmEyeIcon = document.getElementById('confirmEyeIcon')
+      const confirmEyeOffIcon = document.getElementById('confirmEyeOffIcon')
+   const isPassword = confirmPasswordInput.type === 'password'
+        confirmPasswordInput.type = isPassword ? 'text' : 'password'
+      if (confirmPasswordInput && confirmEyeIcon && confirmEyeOffIcon) {
+     
+        confirmEyeIcon.classList.toggle('hidden', !isPassword)
+        confirmEyeOffIcon.classList.toggle('hidden', isPassword)
+        console.log('Signup confirm password toggled, new type:', confirmPasswordInput.type)
+
+        // Refresh Lucide icons after toggling
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons()
+        }
+      } else {
+        console.error('Signup confirm password toggle elements not found')
+      }
+      return
+    }
+  })
 
   // Forgot password button
   if (forgotPasswordBtn) {
@@ -240,7 +396,7 @@ export function setupLoginPage() {
     resetEmailInput.addEventListener('input', () => {
       const email = resetEmailInput.value.trim()
       const isValidEmail = email.length > 0 && email.includes('@')
-      
+
       if (resetSubmitBtn) {
         resetSubmitBtn.disabled = !isValidEmail
       }
@@ -288,10 +444,10 @@ export function setupLoginPage() {
       if (user) {
         // Initialize user profile
         await initializeUserProfile(user)
-        
+
         showSuccess('Login successful! Redirecting...')
-        
-       
+
+
         document.location.href = '/'
       }
     } catch (error) {
@@ -344,7 +500,7 @@ export function setupLoginPage() {
         } else {
           showSignupSuccess('Account already exists! Please check your email and click the verification link to confirm your account.')
         }
-        
+
         // Clear form
         document.getElementById('signupEmail').value = ''
         document.getElementById('fullName').value = ''
@@ -382,7 +538,7 @@ export function setupLoginPage() {
       }
 
       showResetSuccess('Password reset email sent! Check your inbox.')
-      
+
       // Close modal after success
       setTimeout(() => {
         hideForgotPasswordModal()
@@ -437,12 +593,12 @@ export function setupLoginPage() {
     if (signupFormContainer) signupFormContainer.classList.remove('hidden')
     if (loginFormContainer) loginFormContainer.classList.add('hidden')
     hideSignupMessages()
-    
+
     // Initialize password validation when signup form is shown
     setTimeout(() => {
       validatePassword()
     }, 50)
-    
+
     // Password toggles are now handled by event delegation - no setup needed
   }
 
@@ -569,17 +725,17 @@ export function setupLoginPage() {
    */
   function checkSupabaseConfiguration() {
     const demoModeNotice = document.getElementById('demoModeNotice')
-    
+
     if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
       if (demoModeNotice) {
         demoModeNotice.classList.remove('hidden')
       }
-      
+
       // Disable login/signup/reset buttons in demo mode
       if (loginBtn) loginBtn.disabled = true
       if (signupSubmitBtn) signupSubmitBtn.disabled = true
       if (resetSubmitBtn) resetSubmitBtn.disabled = true
-      
+
       console.warn('⚠️ Supabase not configured - authentication disabled')
     }
   }
@@ -589,7 +745,7 @@ export function setupLoginPage() {
    */
   function getErrorMessage(error) {
     const message = error.message.toLowerCase()
-    
+
     if (message.includes('invalid login credentials')) {
       return 'Invalid email or password'
     }
@@ -608,7 +764,7 @@ export function setupLoginPage() {
     if (message.includes('password should contain at least one character of each')) {
       return 'Password must contain at least one uppercase letter, one lowercase letter, and one number'
     }
-    
+
     return error.message || 'An error occurred'
   }
 
@@ -620,8 +776,32 @@ export function setupLoginPage() {
       setTimeout(waitForLucide, 200)
     }
   }
-  
+
   // Start waiting for Lucide
   setTimeout(waitForLucide, 500)
+
+  // Set up MutationObserver to re-initialize password toggles when login page becomes visible
+  const loginPage = document.getElementById('login-page')
+  if (loginPage) {
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+          const isVisible = !loginPage.classList.contains('hidden')
+          if (isVisible) {
+            console.log('Login page became visible, re-initializing password toggles')
+            // Re-initialize password toggles when page becomes visible
+            setTimeout(() => {
+              setupPasswordToggles()
+            }, 100)
+          }
+        }
+      })
+    })
+
+    observer.observe(loginPage, {
+      attributes: true,
+      attributeFilter: ['class']
+    })
+  }
 
 }
