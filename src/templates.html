@@ -9,9 +9,15 @@
       <button id="helpBtn" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
         <i data-lucide="help-circle" class="w-4 h-4"></i>
       </button>
-      <!-- User menu button: circular avatar icon triggers dropdown -->
+      <!-- User menu button: circular avatar icon triggers dropdown (shown when authenticated) -->
       <button id="userMenuBtn" class="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10" aria-haspopup="true" aria-expanded="false" title="User menu">
         <i data-lucide="user" class="w-4 h-4"></i>
+      </button>
+      
+      <!-- Login button (shown when not authenticated) -->
+      <button id="loginBtn" class="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white text-sm font-medium transition-all duration-300 hover:scale-105 hidden" title="Sign in">
+        <i data-lucide="log-in" class="w-4 h-4 mr-2"></i>
+        Sign In
       </button>
       <!-- Dropdown menu for user actions.  Position it below the avatar and
            give it a solid dark background instead of the semi-transparent

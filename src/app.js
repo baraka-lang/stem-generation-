@@ -36,7 +36,7 @@ import {
 } from './Config/constants.js'
 import { knobToDb, formatDb, knobAngle } from './Utilities/index.js'
 import { getColorRGB, drawWaveform, drawTinyWaveform } from './Utilities/waveform.js'
-import { setupUserMenu, updateUserMenu } from './UI/userMenu.js'
+import { setupUserMenu, updateUserMenu, updateUserMenuVisibility } from './UI/userMenu.js'
 import { initializeAuthGuard, addAuthListener } from './Auth/authGuard.js'
 import { setupLoginPage } from './Auth/loginPage.js'
 import { setupResetPasswordPage } from './Auth/resetPasswordPage.js'
@@ -1951,9 +1951,7 @@ function createBuilderStemCard(st, cfg) {
       historySpan.remove()
     }
 
-    // Do not scale the waveform vertically based on volume.  The card's
-    // waveform remains at full height so that the user can always click
-    // the take even when its volume is set to zero.  Visual feedback
+  
     // for volume changes is provided exclusively in the edit modal.
 
     // On small screens, show the number indicator within the header row; hide it on
@@ -3253,6 +3251,7 @@ export async function initApp() {
     window.lucide?.createIcons()
     setupHelpModal()
     setupUserMenu() // Setup main header user menu
+    updateUserMenuVisibility() // Set initial visibility based on auth state
     setupLoginPage()
     setupResetPasswordPage()
     setupSelectionPage()
@@ -3291,6 +3290,9 @@ async function handleAuthStateChange(event, session, user) {
 
       // Update user menu with user info
       await updateUserMenu()
+      
+      // Show user menu since user is now authenticated
+      updateUserMenuVisibility()
 
       // Dispatch auth state change event for other components
       window.dispatchEvent(new CustomEvent('authStateChanged', { 
@@ -3312,6 +3314,9 @@ async function handleAuthStateChange(event, session, user) {
 
       // Clear user menu
       await updateUserMenu()
+      
+      // Hide user menu since user is no longer authenticated
+      updateUserMenuVisibility()
 
       // Dispatch auth state change event for other components
       window.dispatchEvent(new CustomEvent('authStateChanged', { 
