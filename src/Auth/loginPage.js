@@ -217,6 +217,81 @@ export function setupLoginPage() {
     }
   })
 
+  // Password visibility toggle for login form
+  const toggleLoginPasswordBtn = document.getElementById('toggleLoginPassword')
+  const loginPasswordInput = document.getElementById('loginPassword')
+  
+  if (toggleLoginPasswordBtn && loginPasswordInput) {
+    toggleLoginPasswordBtn.addEventListener('click', () => {
+      const isPassword = loginPasswordInput.type === 'password'
+      loginPasswordInput.type = isPassword ? 'text' : 'password'
+      
+      // Update icon
+      const icon = toggleLoginPasswordBtn.querySelector('i[data-lucide]')
+      if (icon) {
+        icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
+        // Update Lucide icons
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons()
+        }
+      }
+      
+      // Update aria-label
+      toggleLoginPasswordBtn.setAttribute('aria-label', 
+        isPassword ? 'Hide password' : 'Show password')
+    })
+  }
+
+  // Password visibility toggle for signup form
+  const toggleSignupPasswordBtn = document.getElementById('toggleSignupPassword')
+  const signupPasswordInput = document.getElementById('signupPassword')
+  
+  if (toggleSignupPasswordBtn && signupPasswordInput) {
+    toggleSignupPasswordBtn.addEventListener('click', () => {
+      const isPassword = signupPasswordInput.type === 'password'
+      signupPasswordInput.type = isPassword ? 'text' : 'password'
+      
+      // Update icon
+      const icon = toggleSignupPasswordBtn.querySelector('i[data-lucide]')
+      if (icon) {
+        icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
+        // Update Lucide icons
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons()
+        }
+      }
+      
+      // Update aria-label
+      toggleSignupPasswordBtn.setAttribute('aria-label', 
+        isPassword ? 'Hide password' : 'Show password')
+    })
+  }
+
+  // Password visibility toggle for confirm password field
+  const toggleSignupConfirmPasswordBtn = document.getElementById('toggleSignupConfirmPassword')
+  const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
+  
+  if (toggleSignupConfirmPasswordBtn && signupConfirmPasswordInput) {
+    toggleSignupConfirmPasswordBtn.addEventListener('click', () => {
+      const isPassword = signupConfirmPasswordInput.type === 'password'
+      signupConfirmPasswordInput.type = isPassword ? 'text' : 'password'
+      
+      // Update icon
+      const icon = toggleSignupConfirmPasswordBtn.querySelector('i[data-lucide]')
+      if (icon) {
+        icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
+        // Update Lucide icons
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+          window.lucide.createIcons()
+        }
+      }
+      
+      // Update aria-label
+      toggleSignupConfirmPasswordBtn.setAttribute('aria-label', 
+        isPassword ? 'Hide password' : 'Show password')
+    })
+  }
+
   // Forgot password button
   if (forgotPasswordBtn) {
     forgotPasswordBtn.addEventListener('click', () => {
