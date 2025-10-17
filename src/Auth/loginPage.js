@@ -290,6 +290,7 @@ export function setupLoginPage() {
   }
 
   // Password visibility toggle for signup form
+  // Note: This is inside the hidden signup form, so we'll set it up when signup form becomes visible
   function setupSignupPasswordToggle() {
     const toggleSignupPasswordBtn = document.getElementById('toggleSignupPassword')
     const signupPasswordInput = document.getElementById('signupPassword')
@@ -332,7 +333,7 @@ export function setupLoginPage() {
       })
       return true; // Success
     } else {
-      console.error('Signup password toggle elements not found:', {
+      console.log('Signup password toggle elements not found (expected - signup form is hidden):', {
         toggleSignupPasswordBtn: !!toggleSignupPasswordBtn,
         signupPasswordInput: !!signupPasswordInput,
         signupEyeIcon: !!signupEyeIcon,
@@ -342,26 +343,12 @@ export function setupLoginPage() {
     }
   }
 
-  // Try to setup immediately, if fails, retry with intervals
-  if (!setupSignupPasswordToggle()) {
-    let retryCount = 0;
-    const maxRetries = 50; // Try for 5 seconds (50 * 100ms)
-    
-    const retryInterval = setInterval(() => {
-      retryCount++;
-      console.log(`Retrying signup password toggle setup (attempt ${retryCount}/${maxRetries})`);
-      
-      if (setupSignupPasswordToggle()) {
-        console.log('Signup password toggle setup successful on retry');
-        clearInterval(retryInterval);
-      } else if (retryCount >= maxRetries) {
-        console.error('Failed to setup signup password toggle after maximum retries');
-        clearInterval(retryInterval);
-      }
-    }, 100);
-  }
+  // Set up signup password toggle when signup form becomes visible
+  // We'll call this from the signup form show/hide logic
+  window.setupSignupPasswordToggle = setupSignupPasswordToggle;
 
   // Password visibility toggle for confirm password field
+  // Note: This is inside the hidden signup form, so we'll set it up when signup form becomes visible
   function setupConfirmPasswordToggle() {
     const toggleSignupConfirmPasswordBtn = document.getElementById('toggleSignupConfirmPassword')
     const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
@@ -404,7 +391,7 @@ export function setupLoginPage() {
       })
       return true; // Success
     } else {
-      console.error('Confirm password toggle elements not found:', {
+      console.log('Confirm password toggle elements not found (expected - signup form is hidden):', {
         toggleSignupConfirmPasswordBtn: !!toggleSignupConfirmPasswordBtn,
         signupConfirmPasswordInput: !!signupConfirmPasswordInput,
         confirmEyeIcon: !!confirmEyeIcon,
@@ -414,24 +401,9 @@ export function setupLoginPage() {
     }
   }
 
-  // Try to setup immediately, if fails, retry with intervals
-  if (!setupConfirmPasswordToggle()) {
-    let retryCount = 0;
-    const maxRetries = 50; // Try for 5 seconds (50 * 100ms)
-    
-    const retryInterval = setInterval(() => {
-      retryCount++;
-      console.log(`Retrying confirm password toggle setup (attempt ${retryCount}/${maxRetries})`);
-      
-      if (setupConfirmPasswordToggle()) {
-        console.log('Confirm password toggle setup successful on retry');
-        clearInterval(retryInterval);
-      } else if (retryCount >= maxRetries) {
-        console.error('Failed to setup confirm password toggle after maximum retries');
-        clearInterval(retryInterval);
-      }
-    }, 100);
-  }
+  // Set up confirm password toggle when signup form becomes visible
+  // We'll call this from the signup form show/hide logic
+  window.setupConfirmPasswordToggle = setupConfirmPasswordToggle;
 
   // Forgot password button
   if (forgotPasswordBtn) {
@@ -656,6 +628,18 @@ export function setupLoginPage() {
     setTimeout(() => {
       validatePassword()
     }, 50)
+    
+    // Set up signup and confirm password toggles now that signup form is visible
+    setTimeout(() => {
+      if (window.setupSignupPasswordToggle) {
+        console.log('Setting up signup password toggle after signup form is shown');
+        window.setupSignupPasswordToggle();
+      }
+      if (window.setupConfirmPasswordToggle) {
+        console.log('Setting up confirm password toggle after signup form is shown');
+        window.setupConfirmPasswordToggle();
+      }
+    }, 100)
   }
 
   /**
