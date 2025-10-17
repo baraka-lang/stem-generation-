@@ -219,7 +219,7 @@ export function setupLoginPage() {
 
   // Password visibility toggle for login form
   function setupLoginPasswordToggle() {
-    const toggleLoginPasswordBtn = document.getElementById('toggleLoginPassword')
+    const toggleLoginPasswordBtn = document.getElementById('toggleLoginPasswordLoginPage')
     const loginPasswordInput = document.getElementById('loginPassword')
     const loginEyeIcon = document.getElementById('loginEyeIcon')
     const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
@@ -292,7 +292,7 @@ export function setupLoginPage() {
   // Password visibility toggle for signup form
   // Note: This is inside the hidden signup form, so we'll set it up when signup form becomes visible
   function setupSignupPasswordToggle() {
-    const toggleSignupPasswordBtn = document.getElementById('toggleSignupPassword')
+    const toggleSignupPasswordBtn = document.getElementById('toggleSignupPasswordSignupPage')
     const signupPasswordInput = document.getElementById('signupPassword')
     const signupEyeIcon = document.getElementById('signupEyeIcon')
     const signupEyeOffIcon = document.getElementById('signupEyeOffIcon')
@@ -350,7 +350,7 @@ export function setupLoginPage() {
   // Password visibility toggle for confirm password field
   // Note: This is inside the hidden signup form, so we'll set it up when signup form becomes visible
   function setupConfirmPasswordToggle() {
-    const toggleSignupConfirmPasswordBtn = document.getElementById('toggleSignupConfirmPassword')
+    const toggleSignupConfirmPasswordBtn = document.getElementById('toggleSignupConfirmPasswordSignupPage')
     const signupConfirmPasswordInput = document.getElementById('signupConfirmPassword')
     const confirmEyeIcon = document.getElementById('confirmEyeIcon')
     const confirmEyeOffIcon = document.getElementById('confirmEyeOffIcon')
