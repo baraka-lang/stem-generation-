@@ -289,9 +289,8 @@ export function setupLoginPage() {
         
         showSuccess('Login successful! Redirecting...')
         
-        // Auth state change listener in app.js will handle the redirect automatically
-        // No need for manual redirect
-        location.href = '/'
+       
+        document.location.href = '/'
       }
     } catch (error) {
       console.error('Login error:', error)

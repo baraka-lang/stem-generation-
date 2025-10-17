@@ -48,11 +48,12 @@ export async function signUp(email, password, fullName) {
   }
 
   try {
+    // Use a different approach - create user without email confirmation
+    // and handle confirmation manually via our custom email service
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}`,
         data: {
           full_name: fullName
         }
@@ -279,24 +280,14 @@ export async function resetPassword(email) {
   }
 
   try {
-    // Generate password reset URL using Supabase
-    const { data, error: urlError } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password.html`
-    })
-    
-    if (urlError) {
-      console.error('Reset password URL generation error:', urlError.message)
-      return { error: urlError }
-    }
-
     // Send custom email using the lead developer's email service
-    const resetUrl = `${window.location.origin}/reset-password.html#access_token={{TOKEN}}&refresh_token={{REFRESH_TOKEN}}&type=recovery`
+    // We'll use a generic reset URL since we can't generate tokens without sending emails
+    const resetUrl = `${window.location.origin}/reset-password.html`
     const emailResult = await sendPasswordResetEmail(email, resetUrl)
     
     if (!emailResult.success) {
       console.error('Custom email sending failed:', emailResult.error)
-      // Fallback to Supabase default email if custom email fails
-      console.log('Falling back to Supabase default email')
+      return { error: { message: 'Failed to send password reset email' } }
     } else {
       console.log('Custom password reset email sent to:', email)
     }

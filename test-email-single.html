@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Single Email Test</title>
+</head>
+<body>
+    <h1>Single Email Test</h1>
+    <p>This test will help verify that only one email is sent (from your custom Edge Function, not from Supabase)</p>
+    
+    <form id="testForm">
+        <div>
+            <label>Email:</label>
+            <input type="email" id="testEmail" value="test@example.com" required>
+        </div>
+        <div>
+            <label>Password:</label>
+            <input type="password" id="testPassword" value="TestPassword123" required>
+        </div>
+        <div>
+            <label>Full Name:</label>
+            <input type="text" id="testName" value="Test User" required>
+        </div>
+        <button type="submit">Test Signup (Should send only 1 email)</button>
+    </form>
+    
+    <div id="result"></div>
+
+    <script type="module">
+        import { signUp } from './src/Auth/index.js';
+
+        document.getElementById('testForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const resultDiv = document.getElementById('result');
+            const email = document.getElementById('testEmail').value;
+            const password = document.getElementById('testPassword').value;
+            const fullName = document.getElementById('testName').value;
+            
+            resultDiv.innerHTML = 'Testing signup...<br>';
+            
+            try {
+                const result = await signUp(email, password, fullName);
+                
+                if (result.error) {
+                    resultDiv.innerHTML += `❌ Error: ${result.error.message}<br>`;
+                } else {
+                    resultDiv.innerHTML += `✅ Signup successful!<br>`;
+                    resultDiv.innerHTML += `User: ${result.user?.email}<br>`;
+                    resultDiv.innerHTML += `New User: ${result.isNewUser}<br>`;
+                    resultDiv.innerHTML += `<strong>Check your email - you should receive only 1 confirmation email from your custom Edge Function!</strong>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML += `❌ Exception: ${error.message}<br>`;
+            }
+        });
+    </script>
+</body>
+</html>
