@@ -25,10 +25,10 @@ export function setupLandingPage() {
     })
   }
 
-  // Login button - redirect to login page
+  // Demo button - redirect to techno generator page
   if (landingLoginBtn) {
     landingLoginBtn.addEventListener('click', () => {
-      navigateToLogin()
+      navigateToDemo()
     })
   }
 
@@ -52,6 +52,13 @@ export function setupLandingPage() {
 function navigateToSelection() {
   // Allow guest access - go directly to selection page
   window.location.hash = '#selection'
+}
+
+/**
+ * Navigate to techno generator page (demo)
+ */
+function navigateToDemo() {
+  window.location.hash = '#techno-generator-page'
 }
 
 /**

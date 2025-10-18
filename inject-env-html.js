@@ -65,7 +65,7 @@ function main() {
         const envVars = loadEnvFile();
         
         console.log('Reading reset-password.html...');
-        const htmlPath = path.join(process.cwd(), 'reset-password.html');
+        const htmlPath = path.join(process.cwd(), 'public', 'reset-password.html');
         let htmlContent = fs.readFileSync(htmlPath, 'utf8');
         
         console.log('Injecting environment variables...');

@@ -73,7 +73,7 @@ function setupLoginButton() {
   loginBtn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    console.log('🔑 Login button clicked')
+    console.log('🔑 Login button clicked - navigating to login page')
     
     // Navigate to login page
     if (typeof window.showPage === 'function') {

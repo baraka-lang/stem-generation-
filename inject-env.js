@@ -79,7 +79,7 @@ function main() {
         console.log('Generating reset-password-config.js...');
         const configContent = generateConfigFile(envVars);
         
-        const configPath = path.join(process.cwd(), 'reset-password-config.js');
+        const configPath = path.join(process.cwd(), 'public', 'reset-password-config.js');
         fs.writeFileSync(configPath, configContent);
         
         console.log('✅ reset-password-config.js updated successfully');
