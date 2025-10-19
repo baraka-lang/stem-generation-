@@ -283,6 +283,9 @@ export async function resetPassword(email) {
     // Use the custom email service to send password reset email
     // This will call the Edge Function which handles the email sending
     const resetUrl = `${window.location.origin}/reset-password.html`
+    console.log('Reset URL being sent:', resetUrl)
+    
+    // Call the Edge Function with the expected format
     const emailResult = await sendPasswordResetEmail(email, resetUrl)
     
     if (!emailResult.success) {
