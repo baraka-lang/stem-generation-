@@ -227,34 +227,59 @@ export function setupResetPasswordPage() {
     hideMessages()
 
     try {
-      // Extract token from URL hash
-      const hashParams = new URLSearchParams(window.location.hash.substring(1))
-      const accessToken = hashParams.get('access_token')
-      const refreshToken = hashParams.get('refresh_token')
+      // Extract custom token from URL parameters
+      const urlParams = new URLSearchParams(window.location.search)
+      const customToken = urlParams.get('token')
+      const email = urlParams.get('email')
 
-      if (!accessToken || !refreshToken) {
+      if (!customToken || !email) {
         showError('Invalid reset link. Please request a new password reset.')
         return
       }
 
-      // Set the session with the tokens from the reset link
-      const { error: sessionError } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken
-      })
-
-      if (sessionError) {
-        showError('Invalid or expired reset link. Please request a new password reset.')
+      // Decode and validate the custom token
+      try {
+        const tokenData = JSON.parse(atob(customToken))
+        
+        // Check if token is expired (1 hour)
+        const tokenAge = Date.now() - tokenData.timestamp
+        const oneHour = 60 * 60 * 1000
+        
+        if (tokenAge > oneHour) {
+          showError('Reset link has expired. Please request a new password reset.')
+          return
+        }
+        
+        // Verify email matches
+        if (tokenData.email !== email) {
+          showError('Invalid reset link. Please request a new password reset.')
+          return
+        }
+        
+        // Verify token type
+        if (tokenData.type !== 'password_reset') {
+          showError('Invalid reset link. Please request a new password reset.')
+          return
+        }
+      } catch (error) {
+        showError('Invalid reset link. Please request a new password reset.')
         return
       }
 
-      // Update the user's password
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: password
+      // Call our Edge Function to update the password using Supabase client
+      const { data, error } = await supabase.functions.invoke('send-email', {
+        body: {
+          emailType: 'password_update',
+          email: email,
+          data: {
+            newPassword: password,
+            token: customToken
+          }
+        }
       })
 
-      if (updateError) {
-        showError(getErrorMessage(updateError))
+      if (error) {
+        showError(error.message || 'Failed to update password')
         return
       }
 

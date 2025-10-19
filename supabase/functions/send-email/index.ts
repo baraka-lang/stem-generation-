@@ -6,7 +6,7 @@
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Max-Age': '86400'
 };
@@ -48,8 +48,176 @@ async function loadEmailTemplate(templateName: string): Promise<string> {
     return templateContent;
   } catch (error) {
     console.error(`Failed to load template ${templateName}:`, error);
-    throw new Error(`Template ${templateName} not found`);
+    // Fallback to inline templates if file loading fails
+    return getInlineTemplate(templateName);
   }
+}
+
+/**
+ * Get inline email template HTML content as fallback
+ */
+function getInlineTemplate(templateName: string): string {
+  if (templateName === 'password-reset.html') {
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reset Your Password - 343 Labs AI Music Studio</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; }
+        .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #8b5cf6, #ec4899); padding: 40px 20px; text-align: center; }
+        .logo { color: #ffffff; font-size: 32px; font-weight: bold; margin: 0 0 8px 0; }
+        .tagline { color: rgba(255, 255, 255, 0.9); font-size: 16px; margin: 0; }
+        .content { padding: 40px 30px; }
+        .title { font-size: 24px; font-weight: bold; color: #1e293b; margin: 0 0 16px 0; text-align: center; }
+        .message { font-size: 16px; line-height: 1.6; color: #64748b; margin: 0 0 32px 0; text-align: center; }
+        .button-container { text-align: center; margin: 32px 0; }
+        .reset-button { display: inline-block; background: linear-gradient(135deg, #8b5cf6, #ec4899); color: #ffffff; text-decoration: none; padding: 16px 32px; border-radius: 12px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); }
+        .reset-button:hover { transform: translateY(-2px); }
+        .footer { background-color: #f1f5f9; padding: 30px; text-align: center; border-top: 1px solid #e2e8f0; }
+        .footer-text { font-size: 14px; color: #64748b; margin: 0 0 16px 0; }
+        .security-notice { background-color: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 16px; margin: 24px 0; font-size: 14px; color: #92400e; }
+        .warning-notice { background-color: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px; padding: 16px; margin: 24px 0; font-size: 14px; color: #dc2626; }
+        @media (max-width: 600px) { .email-container { margin: 0; } .content { padding: 30px 20px; } .header { padding: 30px 20px; } .logo { font-size: 28px; } .title { font-size: 20px; } }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1 class="logo">343 Labs AI Music Studio</h1>
+            <p class="tagline">Create professional-quality stems with AI-powered music generation</p>
+        </div>
+        <div class="content">
+            <h2 class="title">Reset Your Password</h2>
+            <p class="message">We received a request to reset your password for your 343 Labs AI Music Studio account. Click the button below to create a new password.</p>
+            <div class="button-container">
+                <a href="{{RESET_LINK}}" class="reset-button">Reset Password</a>
+            </div>
+            <div class="warning-notice">
+                <strong>Important:</strong> This password reset link will expire in 1 hour for security reasons.
+            </div>
+            <div class="security-notice">
+                <strong>Security Notice:</strong> If you didn't request this password reset, please ignore this email.
+            </div>
+        </div>
+        <div class="footer">
+            <p class="footer-text">This email was sent to {{USER_EMAIL}} because a password reset was requested for your account.</p>
+            <p class="footer-text">© 2024 343 Labs. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>`;
+  }
+  
+  if (templateName === 'confirmation.html') {
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirm Your Email - 343 Labs AI Music Studio</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; }
+        .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #8b5cf6, #ec4899); padding: 40px 20px; text-align: center; }
+        .logo { color: #ffffff; font-size: 32px; font-weight: bold; margin: 0 0 8px 0; }
+        .tagline { color: rgba(255, 255, 255, 0.9); font-size: 16px; margin: 0; }
+        .content { padding: 40px 30px; }
+        .title { font-size: 24px; font-weight: bold; color: #1e293b; margin: 0 0 16px 0; text-align: center; }
+        .message { font-size: 16px; line-height: 1.6; color: #64748b; margin: 0 0 32px 0; text-align: center; }
+        .button-container { text-align: center; margin: 32px 0; }
+        .confirm-button { display: inline-block; background: linear-gradient(135deg, #8b5cf6, #ec4899); color: #ffffff; text-decoration: none; padding: 16px 32px; border-radius: 12px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); }
+        .confirm-button:hover { transform: translateY(-2px); }
+        .footer { background-color: #f1f5f9; padding: 30px; text-align: center; border-top: 1px solid #e2e8f0; }
+        .footer-text { font-size: 14px; color: #64748b; margin: 0 0 16px 0; }
+        @media (max-width: 600px) { .email-container { margin: 0; } .content { padding: 30px 20px; } .header { padding: 30px 20px; } .logo { font-size: 28px; } .title { font-size: 20px; } }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1 class="logo">343 Labs AI Music Studio</h1>
+            <p class="tagline">Create professional-quality stems with AI-powered music generation</p>
+        </div>
+        <div class="content">
+            <h2 class="title">Confirm Your Email</h2>
+            <p class="message">Thank you for registering with 343 Labs AI Music Studio! To activate your account, please confirm your email address by clicking the button below.</p>
+            <div class="button-container">
+                <a href="{{CONFIRMATION_LINK}}" class="confirm-button">Confirm Email</a>
+            </div>
+            <p class="message">If you did not create an account, please ignore this email.</p>
+        </div>
+        <div class="footer">
+            <p class="footer-text">This email was sent to {{USER_EMAIL}} to confirm your account.</p>
+            <p class="footer-text">© 2024 343 Labs. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>`;
+  }
+  
+  if (templateName === 'welcome.html') {
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to 343 Labs AI Music Studio</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; }
+        .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #8b5cf6, #ec4899); padding: 40px 20px; text-align: center; }
+        .logo { color: #ffffff; font-size: 32px; font-weight: bold; margin: 0 0 8px 0; }
+        .tagline { color: rgba(255, 255, 255, 0.9); font-size: 16px; margin: 0; }
+        .content { padding: 40px 30px; }
+        .title { font-size: 24px; font-weight: bold; color: #1e293b; margin: 0 0 16px 0; text-align: center; }
+        .message { font-size: 16px; line-height: 1.6; color: #64748b; margin: 0 0 32px 0; text-align: center; }
+        .button-container { text-align: center; margin: 32px 0; }
+        .welcome-button { display: inline-block; background: linear-gradient(135deg, #8b5cf6, #ec4899); color: #ffffff; text-decoration: none; padding: 16px 32px; border-radius: 12px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3); }
+        .welcome-button:hover { transform: translateY(-2px); }
+        .footer { background-color: #f1f5f9; padding: 30px; text-align: center; border-top: 1px solid #e2e8f0; }
+        .footer-text { font-size: 14px; color: #64748b; margin: 0 0 16px 0; }
+        @media (max-width: 600px) { .email-container { margin: 0; } .content { padding: 30px 20px; } .header { padding: 30px 20px; } .logo { font-size: 28px; } .title { font-size: 20px; } }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h1 class="logo">343 Labs AI Music Studio</h1>
+            <p class="tagline">Create professional-quality stems with AI-powered music generation</p>
+        </div>
+        <div class="content">
+            <h2 class="title">Welcome to 343 Labs!</h2>
+            <p class="message">Your account has been successfully created and verified. Welcome to 343 Labs AI Music Studio!</p>
+            <p class="message">We're excited to have you. Start creating professional-quality stems with our AI-powered music generation.</p>
+            <div class="button-container">
+                <a href="{{APP_URL}}" class="welcome-button">Go to Studio</a>
+            </div>
+            <p class="message">If you have any questions, feel free to contact our support team.</p>
+        </div>
+        <div class="footer">
+            <p class="footer-text">This email was sent to {{USER_EMAIL}} to welcome you to 343 Labs.</p>
+            <p class="footer-text">© 2024 343 Labs. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>`;
+  }
+  
+  // Default fallback
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+      <h2 style="color: #8b5cf6;">Email from 343 Labs AI Music Studio</h2>
+      <p>Hello {{USER_EMAIL}},</p>
+      <p>This is an email from 343 Labs AI Music Studio.</p>
+      <p>Best regards,<br>343 Labs Team</p>
+    </div>
+  `;
 }
 
 /**
@@ -71,24 +239,41 @@ function replaceTemplateVariables(template: string, data: any): string {
  */
 async function sendEmail(to: string, subject: string, htmlContent: string): Promise<void> {
   try {
-    // In a real implementation, you would use Supabase's email service
-    // or integrate with a service like SendGrid, Resend, or AWS SES
+    console.log('sendEmail called with:', { to, subject, htmlLength: htmlContent.length });
     
-    // For now, we'll log the email details
-    console.log('Email would be sent:', {
-      to,
-      subject,
-      htmlLength: htmlContent.length
+    const resendApiKey = Deno.env.get('RESEND_API_KEY');
+    console.log('Resend API key check:', resendApiKey ? 'Found' : 'Not found');
+    
+    if (!resendApiKey) {
+      console.error('RESEND_API_KEY not found in environment variables');
+      throw new Error('RESEND_API_KEY not configured in Edge Function environment variables');
+    }
+    
+    console.log('Resend API key found, making request to Resend API...');
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${resendApiKey}`
+      },
+      body: JSON.stringify({
+        from: '343 Labs <noreply@stemflow.app>',
+        to: [to],
+        subject: subject,
+        html: htmlContent
+      })
     });
-    
-    // TODO: Implement actual email sending
-    // Example with Supabase's email service:
-    // const { error } = await supabase.functions.invoke('send-email', {
-    //   body: { to, subject, html: htmlContent }
-    // });
-    
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Resend API error: ${response.status} - ${errorData.message || response.statusText}`);
+    }
+
+    const result = await response.json();
+    console.log('Email sent successfully via Resend:', result);
   } catch (error) {
-    console.error('Failed to send email:', error);
+    console.error('Failed to send email via Resend:', error);
     throw new Error('Email sending failed');
   }
 }
@@ -111,14 +296,30 @@ async function handleConfirmationEmail(data: any): Promise<void> {
  * Handle password reset email
  */
 async function handlePasswordResetEmail(data: any): Promise<void> {
+  try {
+    // Generate proper password reset URL with tokens
+    const resetUrl = await generatePasswordResetUrl(data.user?.email || data.email, data.reset_url);
+    
+    // Update the data with the actual reset URL containing tokens
+    const emailData = {
+      ...data,
+      reset_url: resetUrl
+    };
+    
   const template = await loadEmailTemplate(emailTemplates.password_reset.template);
-  const htmlContent = replaceTemplateVariables(template, data);
+    const htmlContent = replaceTemplateVariables(template, emailData);
   
   await sendEmail(
     data.user?.email || data.email,
     emailTemplates.password_reset.subject,
     htmlContent
   );
+    
+    console.log('Password reset email sent successfully to:', data.user?.email || data.email);
+  } catch (error) {
+    console.error('Failed to send password reset email:', error);
+    throw error;
+  }
 }
 
 /**
@@ -136,6 +337,84 @@ async function handleWelcomeEmail(data: any): Promise<void> {
 }
 
 /**
+ * Handle password update request
+ */
+async function handlePasswordUpdate(email: string, newPassword: string, token: string): Promise<void> {
+  try {
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (!supabaseUrl || !supabaseServiceKey) {
+      throw new Error('Supabase configuration missing');
+    }
+
+    // Validate the token
+    const tokenData = JSON.parse(atob(token));
+    
+    // Check if token is expired (1 hour)
+    const tokenAge = Date.now() - tokenData.timestamp;
+    const oneHour = 60 * 60 * 1000;
+    
+    if (tokenAge > oneHour) {
+      throw new Error('Reset token has expired');
+    }
+    
+    // Verify email matches
+    if (tokenData.email !== email) {
+      throw new Error('Invalid reset token');
+    }
+    
+    // Verify token type
+    if (tokenData.type !== 'password_reset') {
+      throw new Error('Invalid reset token');
+    }
+
+    // Update the user's password using Supabase Admin API
+    const response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseServiceKey,
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to fetch users');
+    }
+
+    const users = await response.json();
+    const user = users.users.find((u: any) => u.email === email);
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Update the password
+    const updateResponse = await fetch(`${supabaseUrl}/auth/v1/admin/users/${user.id}`, {
+      method: 'PUT',
+      headers: {
+        'apikey': supabaseServiceKey,
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        password: newPassword
+      })
+    });
+
+    if (!updateResponse.ok) {
+      throw new Error('Failed to update password');
+    }
+
+    console.log('Password updated successfully for user:', email);
+  } catch (error) {
+    console.error('Error updating password:', error);
+    throw error;
+  }
+}
+
+/**
  * Generate password reset URL with Supabase tokens
  */
 async function generatePasswordResetUrl(email: string, baseUrl: string): Promise<string> {
@@ -147,33 +426,26 @@ async function generatePasswordResetUrl(email: string, baseUrl: string): Promise
       throw new Error('Supabase configuration missing');
     }
 
-    // Use Supabase Admin API to generate password reset token
-    const response = await fetch(`${supabaseUrl}/auth/v1/recover`, {
-      method: 'POST',
-      headers: {
-        'apikey': supabaseServiceKey,
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    // Create a custom token with email and timestamp
+    const tokenData = {
         email: email,
-        options: {
-          redirectTo: baseUrl
-        }
-      })
-    });
+      timestamp: Date.now(),
+      type: 'password_reset'
+    };
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Failed to generate reset token: ${error}`);
-    }
-
-    // Supabase will send the email with the proper reset URL
-    // We return the base URL for the template
-    return baseUrl;
+    // Encode the token data
+    const token = btoa(JSON.stringify(tokenData));
+    
+    // Create the reset URL with our custom token
+    const resetUrl = `${baseUrl}?token=${token}&email=${encodeURIComponent(email)}`;
+    
+    console.log('Generated custom reset URL:', resetUrl);
+    return resetUrl;
   } catch (error) {
     console.error('Error generating password reset URL:', error);
-    throw error;
+    // Fallback to the base URL if token generation fails
+    console.log('Falling back to base URL:', baseUrl);
+    return baseUrl;
   }
 }
 
@@ -187,11 +459,14 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    // Temporarily disable authentication for testing
+    console.log('Request received, processing...');
+    
     const body = await req.json();
     
     // Check if this is a direct email request (not a webhook)
     if (body.emailType && body.email) {
-      console.log('Direct email request:', { emailType: body.emailType, email: body.email });
+      console.log('Direct email request:', { emailType: body.emailType, email: body.email, data: body.data });
       
       // Handle direct email sending
       let templateName: string;
@@ -210,15 +485,26 @@ Deno.serve(async (req: Request) => {
           // Generate proper password reset URL with tokens
           if (body.data?.reset_url) {
             try {
-              await generatePasswordResetUrl(body.email, body.data.reset_url);
-              // The actual reset URL will be sent by Supabase
-              // We use the provided URL as a fallback in the template
+              const resetUrl = await generatePasswordResetUrl(body.email, body.data.reset_url);
+              // Update the email data with the actual reset URL containing tokens
+              emailData.reset_url = resetUrl;
+              console.log('Generated reset URL:', resetUrl);
             } catch (error) {
               console.error('Failed to generate reset URL, using provided URL:', error);
               // Fall back to the provided URL
             }
           }
           break;
+        case 'password_update':
+          // Handle password update request
+          await handlePasswordUpdate(body.email, body.data.newPassword, body.data.token);
+          return new Response(
+            JSON.stringify({ success: true, message: 'Password updated successfully' }),
+            { 
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              status: 200 
+            }
+          );
         case 'welcome':
           templateName = emailTemplates.welcome.template;
           subject = emailTemplates.welcome.subject;
@@ -227,18 +513,29 @@ Deno.serve(async (req: Request) => {
           throw new Error('Invalid email type');
       }
 
+      console.log('Loading template:', templateName);
       const template = await loadEmailTemplate(templateName);
-      const htmlContent = replaceTemplateVariables(template, emailData);
+      console.log('Template loaded, length:', template.length);
       
-      await sendEmail(body.email, subject, htmlContent);
+      const htmlContent = replaceTemplateVariables(template, emailData);
+      console.log('Template processed, HTML length:', htmlContent.length);
+      console.log('Sending email to:', body.email, 'Subject:', subject);
+      
+      try {
+        await sendEmail(body.email, subject, htmlContent);
+        console.log('Email sent successfully to:', body.email);
 
-      return new Response(
-        JSON.stringify({ success: true, message: 'Email sent successfully' }),
-        { 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200 
-        }
-      );
+        return new Response(
+          JSON.stringify({ success: true, message: 'Email sent successfully' }),
+          { 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            status: 200 
+          }
+        );
+      } catch (emailError) {
+        console.error('Failed to send email:', emailError);
+        throw new Error(`Failed to send email: ${emailError.message}`);
+      }
     }
 
     // Handle webhook events (original functionality)
@@ -313,6 +610,16 @@ Deno.serve(async (req: Request) => {
         }
         break;
 
+      case 'PASSWORD_RECOVERY':
+        // Password reset request - send custom password reset email
+        console.log('Sending password reset email for user:', record.email);
+        await handlePasswordResetEmail({
+          user: record,
+          email: record.email,
+          reset_url: `${Deno.env.get('APP_URL')}/reset-password.html`
+        });
+        break;
+
       default:
         console.log('Unhandled event type:', type);
     }
@@ -327,11 +634,13 @@ Deno.serve(async (req: Request) => {
 
   } catch (error) {
     console.error('Edge function error:', error);
+    console.error('Error stack:', error.stack);
     
     return new Response(
       JSON.stringify({ 
         success: false, 
-        error: error.message || 'Internal server error' 
+        error: error.message || 'Internal server error',
+        details: error.toString()
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

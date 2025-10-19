@@ -1,7 +1,14 @@
 /**
- * Email Service
- * Handles calling the custom email sending Edge Function.
- */
+ * Email Service
+ * Handles calling the custom email sending Edge Function.
+ */
+
+import { createClient } from '@supabase/supabase-js'
+
+// Initialize Supabase client for Edge Function calls
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 // Email service configuration
 const EMAIL_SERVICE_CONFIG = {
@@ -29,34 +36,33 @@ const EMAIL_SERVICE_CONFIG = {
    * @param {Object} [data={}] - An object containing template-specific data, like a confirmation_url or reset_url.
    * @returns {Promise<{success: boolean, error?: string}>}
    */
-  export async function sendCustomEmail(templateType, email, data = {}) {
-    // Check if the email service is configured; if not, return an error.
-    if (!EMAIL_SERVICE_CONFIG.useCustomService) {
-      console.warn('Custom email service is not configured. Set VITE_EMAIL_SERVICE_URL to use it.');
-      return { success: false, error: 'Email service not configured' };
-    }
-  
-    try {
-      // This is the payload that the Deno Edge Function expects.
-      const requestBody = {
-        emailType: templateType,
-        email: email,
-        data: data
-      };
-  
-      console.log('Calling email service with payload:', requestBody);
-  
-      // Call the Edge Function endpoint.
-      const response = await fetch(EMAIL_SERVICE_CONFIG.endpoint, {
-        method: 'POST',
-        mode: 'cors',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${EMAIL_SERVICE_CONFIG.apiKey}`,
-          'apikey': EMAIL_SERVICE_CONFIG.apiKey
-        },
-        body: JSON.stringify(requestBody)
-      });
+  export async function sendCustomEmail(templateType, email, emailData = {}) {
+   // Check if the email service is configured; if not, return an error.
+   if (!EMAIL_SERVICE_CONFIG.useCustomService) {
+     console.warn('Custom email service is not configured. Set VITE_EMAIL_SERVICE_URL to use it.');
+     return { success: false, error: 'Email service not configured' };
+   }
+
+   try {
+     // This is the payload that the Deno Edge Function expects.
+     const requestBody = {
+       emailType: templateType,
+       email: email,
+       data: emailData
+     };
+
+     console.log('Calling email service with payload:', requestBody);
+
+    // Use Supabase client to call the Edge Function
+    const { data: responseData, error } = await supabase.functions.invoke('send-email', {
+      body: requestBody
+    });
+
+    if (error) {
+      throw new Error(error.message || 'Failed to call Edge Function');
+    }
+
+    const response = { ok: true, json: () => Promise.resolve(responseData) };
   
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
