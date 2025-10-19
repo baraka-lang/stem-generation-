@@ -8,8 +8,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "inject-env": "node inject-env.js",
-    "inject-env-html": "node inject-env-html.js",
-    "build:reset": "npm run inject-env-html && npm run build"
+    "inject-env-html": "node inject-env-html.cjs",
+    "build:reset": "npm run inject-env-html && npm run build",
+    "build:secure": "vite build"
   },
   "devDependencies": {
     "vite": "^5.4.2"

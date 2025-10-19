@@ -224,38 +224,24 @@ export function setupLoginPage() {
       validatePassword()
     }
   })
-    
+
   // Password toggle functionality - use event delegation for reliability
   setupPasswordToggles()
 
   // Set up event delegation for all password toggles
   document.addEventListener('click', (e) => {
     // Login password toggle
-    const loginToggleBtn = e.target.closest('#toggleLoginPassword')
+    const loginToggleBtn = e.target.closest('#toggleLoginPasswordss')
     if (loginToggleBtn) {
       e.preventDefault()
       e.stopPropagation()
-      console.log('Login password toggle clicked')
 
-      const loginPasswordInput = document.getElementById('loginPassword')
-      const loginEyeIcon = document.getElementById('loginEyeIcon')
-      const loginEyeOffIcon = document.getElementById('loginEyeOffIcon')
 
-      if (loginPasswordInput && loginEyeIcon && loginEyeOffIcon) {
-        const isPassword = loginPasswordInput.type === 'password'
-        loginPasswordInput.type = isPassword ? 'text' : 'password'
-        loginEyeIcon.classList.toggle('hidden', !isPassword)
-        loginEyeOffIcon.classList.toggle('hidden', isPassword)
-        console.log('Login password toggled, new type:', loginPasswordInput.type)
-
-        // Refresh Lucide icons after toggling
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons()
-        }
-      } else {
-        console.error('Login password toggle elements not found')
-      }
-
+      const loginPasswordInput = document.getElementsByClassName('loginPasswordss')[0]
+      const isPassword = loginPasswordInput.type === 'password'
+      loginPasswordInput.type = isPassword ? 'text' : 'password'
+      loginToggleBtn.style.color = 'cyan'
+      
       return
     }
 

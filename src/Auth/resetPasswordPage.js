@@ -4,6 +4,8 @@
  */
 
 import { supabase } from './index.js'
+import { resetPasswordConfig } from '../Config/resetPasswordConfig.js'
+
 
 /**
  * Validate password in real-time and update visual indicators
@@ -21,10 +23,10 @@ function validatePassword() {
   const confirmPassword = confirmPasswordInput.value || ''
   
   // Get requirement elements
-  const lengthEl = document.getElementById('password-length')
-  const lowercaseEl = document.getElementById('password-lowercase')
-  const uppercaseEl = document.getElementById('password-uppercase')
-  const numberEl = document.getElementById('password-number')
+  const lengthEl = document.getElementById('password-length-reset')
+  const lowercaseEl = document.getElementById('password-lowercase-reset')
+  const uppercaseEl = document.getElementById('password-uppercase-reset')
+  const numberEl = document.getElementById('password-number-reset')
   
   // Only proceed if all elements are found
   if (!lengthEl || !lowercaseEl || !uppercaseEl || !numberEl) {
@@ -48,7 +50,7 @@ function validatePassword() {
   const passwordsMatch = password === confirmPassword && confirmPassword.length > 0
   
   // Update password match indicator
-  const passwordMatchEl = document.getElementById('password-match')
+  const passwordMatchEl = document.getElementById('password-match-reset')
   if (passwordMatchEl) {
     if (confirmPassword.length > 0) {
       updateRequirementIndicator(passwordMatchEl, passwordsMatch)
@@ -146,6 +148,55 @@ export function setupResetPasswordPage() {
   document.addEventListener('input', (e) => {
     if (e.target.id === 'newPassword' || e.target.id === 'confirmPassword') {
       validatePassword()
+    }
+  })
+
+  // Password visibility toggles
+  document.addEventListener('click', (e) => {
+    // New password toggle
+    const newPasswordToggle = e.target.closest('#toggleNewPassword')
+    if (newPasswordToggle) {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      const newPasswordInput = document.getElementById('newPassword')
+      if (newPasswordInput) {
+        const isPassword = newPasswordInput.type === 'password'
+        newPasswordInput.type = isPassword ? 'text' : 'password'
+        
+        // Update icon
+        const icon = newPasswordToggle.querySelector('i[data-lucide]')
+        if (icon) {
+          icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
+          if (window.lucide && typeof window.lucide.createIcons === 'function') {
+            window.lucide.createIcons()
+          }
+        }
+      }
+      return
+    }
+
+    // Confirm password toggle
+    const confirmPasswordToggle = e.target.closest('#toggleConfirmPassword')
+    if (confirmPasswordToggle) {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      const confirmPasswordInput = document.getElementById('confirmPassword')
+      if (confirmPasswordInput) {
+        const isPassword = confirmPasswordInput.type === 'password'
+        confirmPasswordInput.type = isPassword ? 'text' : 'password'
+        
+        // Update icon
+        const icon = confirmPasswordToggle.querySelector('i[data-lucide]')
+        if (icon) {
+          icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
+          if (window.lucide && typeof window.lucide.createIcons === 'function') {
+            window.lucide.createIcons()
+          }
+        }
+      }
+      return
     }
   })
 
@@ -267,7 +318,7 @@ export function setupResetPasswordPage() {
   function checkSupabaseConfiguration() {
     const demoModeNotice = document.getElementById('demoModeNotice')
     
-    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+    if (resetPasswordConfig.showDemoMode) {
       if (demoModeNotice) {
         demoModeNotice.classList.remove('hidden')
       }
