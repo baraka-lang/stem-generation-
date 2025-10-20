@@ -3135,9 +3135,10 @@ function setupRouteHandling() {
 }
 
 function handleHashChange() {
-  const hash = window.location.hash.substring(1) // Remove the # symbol
+  const rawHash = window.location.hash.substring(1) // Remove the # symbol
+  const baseRoute = rawHash.split('?')[0].replace(/\/$/, '') // support params like reset-password?x=1
   
-  switch (hash) {
+  switch (baseRoute) {
     case 'login':
       showPage('login-page')
       break
@@ -3159,8 +3160,13 @@ function handleHashChange() {
       showPage('profile-page')
       break
     default:
+      // If the hash contains auth params, route to the reset page
+      if (/access_token|type=recovery|token=/.test(rawHash)) {
+        showPage('reset-password-page')
+        break
+      }
       // Default to selection page if no valid hash
-      if (!hash) {
+      if (!baseRoute) {
         showPage('selection-page')
       }
       break
@@ -3245,7 +3251,8 @@ export async function initApp() {
 
     // Set up navigation listeners
     setupNavigationListeners()
-    // setupRouteHandling()
+    // Enable hash-based routing for deep links like #reset-password?access_token=...
+    setupRouteHandling()
 
     // Set up UI components
     window.lucide?.createIcons()
