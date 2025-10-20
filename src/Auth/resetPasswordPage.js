@@ -312,12 +312,13 @@ export function setupResetPasswordPage() {
       }
 
       // Fallback: custom token flow via Edge Function (legacy)
-      // Parse parameters from hash instead of search
-      const hashPart = window.location.hash.split('?')[1] || ''
+      // Parse parameters from hash - handle format: #reset-password?token=...&email=...
+      const hashParts = window.location.hash.split('?')
+      const hashPart = hashParts.length > 1 ? hashParts[1] : ''
       const urlParams = new URLSearchParams(hashPart)
       const customToken = urlParams.get('token')
       const email = urlParams.get('email')
-      console.log('[spa-reset] url params', { hasToken: !!customToken, email })
+      console.log('[spa-reset] url params', { hasToken: !!customToken, email, fullHash: window.location.hash })
 
       if (!customToken || !email) {
         showError('Invalid reset link. Please request a new password reset.')
