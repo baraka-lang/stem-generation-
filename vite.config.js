@@ -1,5 +1,5 @@
 import { defineConfig, loadEnv } from 'vite'
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { resolve } from 'path'
 
 // Plugin to inject environment variables into HTML files
@@ -11,6 +11,10 @@ function injectEnvPlugin(env) {
       const htmlPath = resolve(__dirname, 'public/reset-password.html')
       
       try {
+        if (!existsSync(htmlPath)) {
+          console.log('ℹ️ reset-password.html not found, skipping env injection')
+          return
+        }
         let htmlContent = readFileSync(htmlPath, 'utf8')
         
         // Create the config injection script
