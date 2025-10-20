@@ -12,22 +12,22 @@ const supabase = createClient(supabaseUrl, supabaseKey)
 
 // Email service configuration
 const EMAIL_SERVICE_CONFIG = {
-    // The URL of your Deno Edge Function, set in your environment variables
-    endpoint: import.meta.env.VITE_EMAIL_SERVICE_URL || '',
-    // Optional API key if you were to add authentication to your edge function
-    apiKey: import.meta.env.VITE_EMAIL_SERVICE_KEY || '',
-    
-    // A flag to determine if the custom service is configured
-    useCustomService: !!import.meta.env.VITE_EMAIL_SERVICE_URL,
-    
-    // Email template types that correspond to the types in the Edge Function
-    templates: {
-      CONFIRMATION: 'confirmation',
-      PASSWORD_RESET: 'password_reset', 
-      WELCOME: 'welcome',
-      EMAIL_CHANGE: 'email_change'
-    }
-  };
+   // The URL of your Deno Edge Function, set in your environment variables
+   endpoint: import.meta.env.VITE_EMAIL_SERVICE_URL || '',
+   // Optional API key if you were to add authentication to your edge function
+   apiKey: import.meta.env.VITE_EMAIL_SERVICE_KEY || '',
+   
+   // A flag to determine if the custom service is configured
+   useCustomService: !!import.meta.env.VITE_EMAIL_SERVICE_URL,
+   
+   // Email template types that correspond to the types in the Edge Function
+   templates: {
+     CONFIRMATION: 'confirmation',
+     PASSWORD_RESET: 'password_reset', 
+     WELCOME: 'welcome',
+     EMAIL_CHANGE: 'email_change'
+   }
+ };
   
   /**
    * Sends an email by calling the custom Edge Function.

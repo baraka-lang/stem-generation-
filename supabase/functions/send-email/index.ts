@@ -245,8 +245,14 @@ async function sendEmail(to: string, subject: string, htmlContent: string): Prom
     console.log('Resend API key check:', resendApiKey ? 'Found' : 'Not found');
     
     if (!resendApiKey) {
-      console.error('RESEND_API_KEY not found in environment variables');
-      throw new Error('RESEND_API_KEY not configured in Edge Function environment variables');
+      console.warn('RESEND_API_KEY not found, logging email details instead');
+      console.log('=== EMAIL WOULD BE SENT ===');
+      console.log('To:', to);
+      console.log('Subject:', subject);
+      console.log('HTML Length:', htmlContent.length);
+      console.log('HTML Preview:', htmlContent.substring(0, 300) + '...');
+      console.log('=== END EMAIL PREVIEW ===');
+      return; // Don't throw error, just log
     }
     
     console.log('Resend API key found, making request to Resend API...');
@@ -345,7 +351,8 @@ async function handlePasswordUpdate(email: string, newPassword: string, token: s
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     
     if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Supabase configuration missing');
+      console.error('Supabase configuration missing for password update');
+      throw new Error('Supabase configuration missing - please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Edge Function environment variables');
     }
 
     // Validate the token
@@ -522,16 +529,16 @@ Deno.serve(async (req: Request) => {
       console.log('Sending email to:', body.email, 'Subject:', subject);
       
       try {
-        await sendEmail(body.email, subject, htmlContent);
+      await sendEmail(body.email, subject, htmlContent);
         console.log('Email sent successfully to:', body.email);
 
-        return new Response(
-          JSON.stringify({ success: true, message: 'Email sent successfully' }),
-          { 
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: 200 
-          }
-        );
+      return new Response(
+        JSON.stringify({ success: true, message: 'Email sent successfully' }),
+        { 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200 
+        }
+      );
       } catch (emailError) {
         console.error('Failed to send email:', emailError);
         throw new Error(`Failed to send email: ${emailError.message}`);

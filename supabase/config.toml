@@ -15,6 +15,7 @@ extra_search_path = ["public", "extensions"]
 # for accidental or malicious requests.
 max_rows = 1000
 
+
 [db]
 # Port to use for the local database URL.
 port = 54322
@@ -108,10 +109,9 @@ content_path = "./supabase/functions/send-email/EmailTemplates/confirmation.html
 subject = "Confirm Your Email Change - 343 Labs AI Music Studio"
 content_path = "./supabase/functions/send-email/EmailTemplates/confirmation.html"
 
+# This section is for defining individual functions.
+# It should be empty if you aren't setting function-specific configs.
 [functions]
-enabled = true
-# Port to use for the Edge Functions server.
-port = 54325
 
 [analytics]
 enabled = false
