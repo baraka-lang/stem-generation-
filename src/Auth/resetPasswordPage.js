@@ -232,6 +232,8 @@ export function setupResetPasswordPage() {
     const password = document.getElementById('newPassword')?.value
     const confirmPassword = document.getElementById('confirmPassword')?.value
     console.log('[spa-reset] input presence', { hasPassword: !!password, hasConfirm: !!confirmPassword })
+    console.log('[spa-reset] current hash:', window.location.hash)
+    console.log('[spa-reset] current search:', window.location.search)
 
     if (!password || !confirmPassword) {
       showError('Please fill in all fields')

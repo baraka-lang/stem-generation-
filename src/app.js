@@ -3141,6 +3141,12 @@ function handleHashChange() {
   const baseRoute = rawHash.split('?')[0].replace(/\/$/, '') // support params like reset-password?x=1
   try { console.log('[router] baseRoute=', baseRoute) } catch {}
   
+  // Check for Supabase password reset parameters in hash
+  const hashParams = new URLSearchParams(rawHash.split('?')[1] || '')
+  const hasResetToken = hashParams.get('token') || hashParams.get('access_token')
+  const hasResetEmail = hashParams.get('email')
+  try { console.log('[router] reset params in hash:', { hasToken: !!hasResetToken, hasEmail: !!hasResetEmail }) } catch {}
+  
   switch (baseRoute) {
     case 'login':
       showPage('login-page')
@@ -3154,6 +3160,7 @@ function handleHashChange() {
       initTechnoGenerator()
       break
     case 'reset-password':
+      try { console.log('[router] showing reset-password-page') } catch {}
       showPage('reset-password-page')
       break
     case 'confirm-email':
