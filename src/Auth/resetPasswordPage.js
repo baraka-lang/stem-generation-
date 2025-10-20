@@ -134,6 +134,9 @@ export function setupResetPasswordPage() {
       showDemoMode: resetPasswordConfig.showDemoMode
     })
     console.log('[spa-reset] supabase present:', !!supabase)
+    
+    // Check for reset token on page load
+    checkForResetToken()
   // Get form elements
   const resetPasswordForm = document.getElementById('resetPasswordForm')
   const resetSubmitBtn = document.getElementById('resetSubmitBtn')
@@ -311,12 +314,19 @@ export function setupResetPasswordPage() {
       }
 
       // Fallback: custom token flow via Edge Function (legacy)
-      // Parse parameters from hash instead of search
-      const hashPart = window.location.hash.split('?')[1] || ''
-      const urlParams = new URLSearchParams(hashPart)
+      // Parse parameters from hash - handle both formats
+      let urlParams
+      if (window.location.hash.includes('?')) {
+        // Format: #reset-password?token=...&email=...
+        const hashPart = window.location.hash.split('?')[1] || ''
+        urlParams = new URLSearchParams(hashPart)
+      } else {
+        // Format: #?token=...&email=...
+        urlParams = new URLSearchParams(window.location.hash.substring(1))
+      }
       const customToken = urlParams.get('token')
       const email = urlParams.get('email')
-      console.log('[spa-reset] url params', { hasToken: !!customToken, email })
+      console.log('[spa-reset] url params', { hasToken: !!customToken, email, fullHash: window.location.hash })
 
       if (!customToken || !email) {
         showError('Invalid reset link. Please request a new password reset.')
@@ -428,6 +438,72 @@ export function setupResetPasswordPage() {
   function hideMessages() {
     if (errorMessage) errorMessage.classList.add('hidden')
     if (successMessage) successMessage.classList.add('hidden')
+  }
+
+  /**
+   * Check for reset token on page load and validate it
+   */
+  function checkForResetToken() {
+    console.log('[spa-reset] Checking for reset token...')
+    console.log('[spa-reset] Current hash:', window.location.hash)
+    
+    // Parse parameters from hash
+    let urlParams
+    if (window.location.hash.includes('?')) {
+      const hashPart = window.location.hash.split('?')[1] || ''
+      urlParams = new URLSearchParams(hashPart)
+    } else {
+      urlParams = new URLSearchParams(window.location.hash.substring(1))
+    }
+    
+    const customToken = urlParams.get('token')
+    const email = urlParams.get('email')
+    
+    console.log('[spa-reset] Parsed token data:', { 
+      hasToken: !!customToken, 
+      email: email,
+      tokenLength: customToken ? customToken.length : 0
+    })
+    
+    if (customToken && email) {
+      try {
+        // Decode and validate the token
+        const tokenData = JSON.parse(atob(customToken))
+        console.log('[spa-reset] Decoded token:', tokenData)
+        
+        // Check if token is expired (1 hour)
+        const tokenAge = Date.now() - tokenData.timestamp
+        const oneHour = 60 * 60 * 1000
+        
+        if (tokenAge > oneHour) {
+          console.warn('[spa-reset] Token expired, age:', tokenAge / (60 * 1000), 'minutes')
+          showError('Reset link has expired. Please request a new password reset.')
+          return
+        }
+        
+        // Verify email matches
+        if (tokenData.email !== email) {
+          console.warn('[spa-reset] Email mismatch:', tokenData.email, 'vs', email)
+          showError('Invalid reset link. Please request a new password reset.')
+          return
+        }
+        
+        // Verify token type
+        if (tokenData.type !== 'password_reset') {
+          console.warn('[spa-reset] Invalid token type:', tokenData.type)
+          showError('Invalid reset link. Please request a new password reset.')
+          return
+        }
+        
+        console.log('[spa-reset] Token is valid! Ready for password reset.')
+        
+      } catch (error) {
+        console.error('[spa-reset] Token decode/validate error:', error)
+        showError('Invalid reset link. Please request a new password reset.')
+      }
+    } else {
+      console.log('[spa-reset] No valid token found in URL')
+    }
   }
 
   /**
