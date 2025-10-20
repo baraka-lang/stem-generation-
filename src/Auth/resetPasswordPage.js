@@ -122,6 +122,7 @@ function updateRequirementIndicator(element, isValid) {
 
 export function setupResetPasswordPage() {
   console.group('[spa-reset] setupResetPasswordPage')
+  console.log('[spa-reset] setupResetPasswordPage called at:', new Date().toISOString())
   try {
     window.addEventListener('hashchange', () => {
       console.log('[spa-reset] hashchange ->', window.location.hash)
@@ -160,9 +161,20 @@ export function setupResetPasswordPage() {
   checkSupabaseConfiguration()
 
   // Reset password form submission
+  console.log('[spa-reset] Adding submit event listener to form:', resetPasswordForm)
   resetPasswordForm.addEventListener('submit', async (e) => {
     e.preventDefault()
     console.log('[spa-reset] submit handler invoked')
+    console.log('[spa-reset] current hash:', window.location.hash)
+    console.log('[spa-reset] current search:', window.location.search)
+    await handlePasswordReset()
+  })
+  
+  // Also add click listener to button as backup
+  console.log('[spa-reset] Adding click event listener to button:', resetSubmitBtn)
+  resetSubmitBtn.addEventListener('click', async (e) => {
+    e.preventDefault()
+    console.log('[spa-reset] button click handler invoked')
     console.log('[spa-reset] current hash:', window.location.hash)
     console.log('[spa-reset] current search:', window.location.search)
     await handlePasswordReset()
