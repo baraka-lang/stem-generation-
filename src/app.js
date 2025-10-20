@@ -3073,6 +3073,7 @@ function selectStemVersion(st, index) {
    App init + navigation
    ========================================================= */
 function showPage(pageId) {
+  try { console.log('[router] showPage ->', pageId) } catch {}
   const pages = ['login-page', 'selection-page', 'techno-generator-page', 'reset-password-page', 'confirm-email-page', 'profile-page']
   pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
   const targetPage = document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
@@ -3136,7 +3137,9 @@ function setupRouteHandling() {
 
 function handleHashChange() {
   const rawHash = window.location.hash.substring(1) // Remove the # symbol
+  try { console.log('[router] handleHashChange rawHash=', rawHash) } catch {}
   const baseRoute = rawHash.split('?')[0].replace(/\/$/, '') // support params like reset-password?x=1
+  try { console.log('[router] baseRoute=', baseRoute) } catch {}
   
   switch (baseRoute) {
     case 'login':

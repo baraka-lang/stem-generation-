@@ -123,6 +123,9 @@ function updateRequirementIndicator(element, isValid) {
 export function setupResetPasswordPage() {
   console.group('[spa-reset] setupResetPasswordPage')
   try {
+    window.addEventListener('hashchange', () => {
+      console.log('[spa-reset] hashchange ->', window.location.hash)
+    })
     console.log('[spa-reset] config', {
       supabaseUrl: resetPasswordConfig.supabaseUrl,
       hasAnonKey: !!resetPasswordConfig.supabaseKey && resetPasswordConfig.supabaseKey !== 'your-anon-key',
@@ -160,6 +163,8 @@ export function setupResetPasswordPage() {
   resetPasswordForm.addEventListener('submit', async (e) => {
     e.preventDefault()
     console.log('[spa-reset] submit handler invoked')
+    console.log('[spa-reset] current hash:', window.location.hash)
+    console.log('[spa-reset] current search:', window.location.search)
     await handlePasswordReset()
   })
 
@@ -248,7 +253,50 @@ export function setupResetPasswordPage() {
     hideMessages()
 
     try {
-      // Extract custom token from URL parameters
+      // First, prefer Supabase recovery flow if tokens exist in hash
+      const rawHash = window.location.hash
+      const hashParams = new URLSearchParams(rawHash.startsWith('#') ? rawHash.substring(1) : rawHash)
+      const accessToken = hashParams.get('access_token')
+      const refreshToken = hashParams.get('refresh_token')
+      console.log('[spa-reset] hash tokens', { hasAccess: !!accessToken, hasRefresh: !!refreshToken })
+
+      if (accessToken && refreshToken) {
+        console.time('[spa-reset] setSession')
+        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken
+        })
+        console.timeEnd('[spa-reset] setSession')
+        console.log('[spa-reset] setSession result', { sessionData, sessionError })
+
+        if (sessionError) {
+          showError('Invalid or expired reset link. Please request a new password reset.')
+          console.groupEnd()
+          return
+        }
+
+        console.time('[spa-reset] updateUser')
+        const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
+        console.timeEnd('[spa-reset] updateUser')
+        console.log('[spa-reset] updateUser result', { updateData, updateError })
+
+        if (updateError) {
+          showError(updateError.message || 'Failed to update password')
+          console.groupEnd()
+          return
+        }
+
+        showSuccess('Password updated successfully! Redirecting...')
+        setTimeout(() => {
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          console.log('[spa-reset] redirecting to', redirectUrl)
+          window.location.href = redirectUrl
+        }, 1500)
+        console.groupEnd()
+        return
+      }
+
+      // Fallback: custom token flow via Edge Function (legacy)
       const urlParams = new URLSearchParams(window.location.search)
       const customToken = urlParams.get('token')
       const email = urlParams.get('email')
