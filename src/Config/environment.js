@@ -79,7 +79,7 @@ export const urlGenerators = {
    */
   generateResetPasswordUrl: (token, type = 'recovery') => {
     const baseUrl = config.baseUrl;
-    return `${baseUrl}/reset-password.html?token=${token}&type=${type}`;
+    return `${baseUrl}/reset-password#?token=${token}&type=${type}`;
   },
   
   /**
@@ -123,7 +123,7 @@ export const supabaseConfig = {
   // Environment-specific settings
   auth: {
     redirectTo: `${config.baseUrl}/profile.html`,
-    passwordResetUrl: `${config.baseUrl}/reset-password.html`,
+    passwordResetUrl: `${config.baseUrl}/#reset-password`,
     confirmationUrl: `${config.baseUrl}/confirm-email.html`
   }
 };

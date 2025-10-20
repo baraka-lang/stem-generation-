@@ -282,7 +282,7 @@ export async function resetPassword(email) {
   try {
     // Use the custom email service to send password reset email
     // This will call the Edge Function which handles the email sending
-    const resetUrl = `${import.meta.env.VITE_APP_URL}/reset-password.html`
+    const resetUrl = `${import.meta.env.VITE_APP_URL}/#reset-password`
     console.log('Reset URL being sent:', resetUrl)
     
     // Call the Edge Function with the expected format
