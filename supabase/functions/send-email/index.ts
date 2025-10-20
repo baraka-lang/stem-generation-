@@ -599,7 +599,7 @@ Deno.serve(async (req: Request) => {
           await handleConfirmationEmail({
             user: record,
             email: record.email,
-            confirmation_url: `${Deno.env.get('APP_URL')}/reset-password.html#access_token={{TOKEN}}&refresh_token={{REFRESH_TOKEN}}&type=recovery`
+            confirmation_url: `${Deno.env.get('APP_URL')}/#reset-password#access_token={{TOKEN}}&refresh_token={{REFRESH_TOKEN}}&type=recovery`
           });
         } else if (record?.email_confirmed_at !== null) {
           console.log('Skipping email for already confirmed user:', record.email, 'Created:', userCreatedAt);
@@ -623,7 +623,7 @@ Deno.serve(async (req: Request) => {
         await handlePasswordResetEmail({
           user: record,
           email: record.email,
-          reset_url: `${Deno.env.get('APP_URL')}/reset-password.html`
+          reset_url: `${Deno.env.get('APP_URL')}/#reset-password`
         });
         break;
 

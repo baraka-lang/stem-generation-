@@ -6,6 +6,11 @@
 import { supabase } from './index.js'
 import { resetPasswordConfig } from '../Config/resetPasswordConfig.js'
 
+// Debug: module load
+if (typeof window !== 'undefined') {
+  console.log('[spa-reset] module loaded')
+}
+
 
 /**
  * Validate password in real-time and update visual indicators
@@ -116,6 +121,15 @@ function updateRequirementIndicator(element, isValid) {
 }
 
 export function setupResetPasswordPage() {
+  console.group('[spa-reset] setupResetPasswordPage')
+  try {
+    console.log('[spa-reset] config', {
+      supabaseUrl: resetPasswordConfig.supabaseUrl,
+      hasAnonKey: !!resetPasswordConfig.supabaseKey && resetPasswordConfig.supabaseKey !== 'your-anon-key',
+      redirectUrl: resetPasswordConfig.redirectUrl,
+      showDemoMode: resetPasswordConfig.showDemoMode
+    })
+    console.log('[spa-reset] supabase present:', !!supabase)
   // Get form elements
   const resetPasswordForm = document.getElementById('resetPasswordForm')
   const resetSubmitBtn = document.getElementById('resetSubmitBtn')
@@ -128,7 +142,11 @@ export function setupResetPasswordPage() {
   const successText = document.getElementById('resetSuccessText')
 
   if (!resetPasswordForm || !resetSubmitBtn) {
-    console.warn('Reset password form elements not found')
+    console.warn('[spa-reset] Reset password form elements not found', {
+      hasForm: !!resetPasswordForm,
+      hasBtn: !!resetSubmitBtn
+    })
+    console.groupEnd()
     return
   }
 
@@ -141,6 +159,7 @@ export function setupResetPasswordPage() {
   // Reset password form submission
   resetPasswordForm.addEventListener('submit', async (e) => {
     e.preventDefault()
+    console.log('[spa-reset] submit handler invoked')
     await handlePasswordReset()
   })
 
@@ -204,8 +223,10 @@ export function setupResetPasswordPage() {
    * Handle password reset
    */
   async function handlePasswordReset() {
+    console.group('[spa-reset] handlePasswordReset')
     const password = document.getElementById('newPassword')?.value
     const confirmPassword = document.getElementById('confirmPassword')?.value
+    console.log('[spa-reset] input presence', { hasPassword: !!password, hasConfirm: !!confirmPassword })
 
     if (!password || !confirmPassword) {
       showError('Please fill in all fields')
@@ -231,6 +252,7 @@ export function setupResetPasswordPage() {
       const urlParams = new URLSearchParams(window.location.search)
       const customToken = urlParams.get('token')
       const email = urlParams.get('email')
+      console.log('[spa-reset] url params', { hasToken: !!customToken, email })
 
       if (!customToken || !email) {
         showError('Invalid reset link. Please request a new password reset.')
@@ -240,6 +262,7 @@ export function setupResetPasswordPage() {
       // Decode and validate the custom token
       try {
         const tokenData = JSON.parse(atob(customToken))
+        console.log('[spa-reset] tokenData', tokenData)
         
         // Check if token is expired (1 hour)
         const tokenAge = Date.now() - tokenData.timestamp
@@ -262,11 +285,13 @@ export function setupResetPasswordPage() {
           return
         }
       } catch (error) {
+        console.error('[spa-reset] token decode/validate error', error)
         showError('Invalid reset link. Please request a new password reset.')
         return
       }
 
       // Call our Edge Function to update the password using Supabase client
+      console.time('[spa-reset] supabase.functions.invoke send-email')
       const { data, error } = await supabase.functions.invoke('send-email', {
         body: {
           emailType: 'password_update',
@@ -277,6 +302,8 @@ export function setupResetPasswordPage() {
           }
         }
       })
+      console.timeEnd('[spa-reset] supabase.functions.invoke send-email')
+      console.log('[spa-reset] function result', { data, error })
 
       if (error) {
         showError(error.message || 'Failed to update password')
@@ -287,14 +314,16 @@ export function setupResetPasswordPage() {
       
       // Redirect to login after a short delay
       setTimeout(() => {
+        console.log('[spa-reset] redirecting to #login')
         window.location.hash = '#login'
       }, 2000)
 
     } catch (error) {
-      console.error('Password reset error:', error)
+      console.error('[spa-reset] Password reset error:', error)
       showError('An unexpected error occurred')
     } finally {
       setLoading(false)
+      console.groupEnd()
     }
   }
 
@@ -386,4 +415,9 @@ export function setupResetPasswordPage() {
   
   // Start waiting for Lucide
   setTimeout(waitForLucide, 500)
+  } catch (e) {
+    console.error('[spa-reset] setup failure', e)
+  } finally {
+    console.groupEnd()
+  }
 }
