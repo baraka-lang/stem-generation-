@@ -270,6 +270,7 @@ export function setupResetPasswordPage() {
     try {
       // First, prefer Supabase recovery flow if tokens exist in hash
       const rawHash = window.location.hash
+      console.log('[spa-reset] Raw hash:', rawHash)
       const hashParams = new URLSearchParams(rawHash.startsWith('#') ? rawHash.substring(1) : rawHash)
       const accessToken = hashParams.get('access_token')
       const refreshToken = hashParams.get('refresh_token')
@@ -313,8 +314,11 @@ export function setupResetPasswordPage() {
 
       // Fallback: custom token flow via Edge Function (legacy)
       // Parse parameters from hash - handle format: #reset-password?token=...&email=...
+      console.log('[spa-reset] Trying custom token flow...')
       const hashParts = window.location.hash.split('?')
+      console.log('[spa-reset] Hash parts:', hashParts)
       const hashPart = hashParts.length > 1 ? hashParts[1] : ''
+      console.log('[spa-reset] Hash part after ?:', hashPart)
       const urlParams = new URLSearchParams(hashPart)
       const customToken = urlParams.get('token')
       const email = urlParams.get('email')
@@ -333,23 +337,31 @@ export function setupResetPasswordPage() {
         // Check if token is expired (1 hour)
         const tokenAge = Date.now() - tokenData.timestamp
         const oneHour = 60 * 60 * 1000
+        console.log('[spa-reset] Token age check:', { tokenAge, oneHour, isExpired: tokenAge > oneHour })
         
         if (tokenAge > oneHour) {
+          console.log('[spa-reset] Token expired, showing error')
           showError('Reset link has expired. Please request a new password reset.')
           return
         }
         
         // Verify email matches
+        console.log('[spa-reset] Email verification:', { tokenEmail: tokenData.email, urlEmail: email, match: tokenData.email === email })
         if (tokenData.email !== email) {
+          console.log('[spa-reset] Email mismatch, showing error')
           showError('Invalid reset link. Please request a new password reset.')
           return
         }
         
         // Verify token type
+        console.log('[spa-reset] Token type verification:', { tokenType: tokenData.type, expected: 'password_reset', match: tokenData.type === 'password_reset' })
         if (tokenData.type !== 'password_reset') {
+          console.log('[spa-reset] Invalid token type, showing error')
           showError('Invalid reset link. Please request a new password reset.')
           return
         }
+        
+        console.log('[spa-reset] Token validation passed, proceeding to Edge Function call')
       } catch (error) {
         console.error('[spa-reset] token decode/validate error', error)
         showError('Invalid reset link. Please request a new password reset.')
@@ -357,6 +369,12 @@ export function setupResetPasswordPage() {
       }
 
       // Call our Edge Function to update the password using Supabase client
+      console.log('[spa-reset] About to call Edge Function with:', {
+        emailType: 'password_update',
+        email: email,
+        hasPassword: !!password,
+        hasToken: !!customToken
+      })
       console.time('[spa-reset] supabase.functions.invoke send-email')
       const { data, error } = await supabase.functions.invoke('send-email', {
         body: {
