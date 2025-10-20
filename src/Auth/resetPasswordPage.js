@@ -311,7 +311,9 @@ export function setupResetPasswordPage() {
       }
 
       // Fallback: custom token flow via Edge Function (legacy)
-      const urlParams = new URLSearchParams(window.location.search)
+      // Parse parameters from hash instead of search
+      const hashPart = window.location.hash.split('?')[1] || ''
+      const urlParams = new URLSearchParams(hashPart)
       const customToken = urlParams.get('token')
       const email = urlParams.get('email')
       console.log('[spa-reset] url params', { hasToken: !!customToken, email })
