@@ -268,7 +268,7 @@ export function setupResetPasswordPage() {
     hideMessages()
 
     try {
-      // First, prefer Supabase recovery flow if tokens exist in hash
+      // Check if we have valid reset tokens in the hash
       const rawHash = window.location.hash
       console.log('[spa-reset] Raw hash:', rawHash)
       const hashParams = new URLSearchParams(rawHash.startsWith('#') ? rawHash.substring(1) : rawHash)
@@ -276,44 +276,44 @@ export function setupResetPasswordPage() {
       const refreshToken = hashParams.get('refresh_token')
       console.log('[spa-reset] hash tokens', { hasAccess: !!accessToken, hasRefresh: !!refreshToken })
 
-      if (accessToken && refreshToken) {
-        console.time('[spa-reset] setSession')
-        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken
-        })
-        console.timeEnd('[spa-reset] setSession')
-        console.log('[spa-reset] setSession result', { sessionData, sessionError })
-
-        if (sessionError) {
-          showError('Invalid or expired reset link. Please request a new password reset.')
-          console.groupEnd()
-          return
-        }
-
-        console.time('[spa-reset] updateUser')
-        const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
-        console.timeEnd('[spa-reset] updateUser')
-        console.log('[spa-reset] updateUser result', { updateData, updateError })
-
-        if (updateError) {
-          showError(updateError.message || 'Failed to update password')
-          console.groupEnd()
-          return
-        }
-
-        showSuccess('Password updated successfully! Redirecting...')
-        setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
-          console.log('[spa-reset] redirecting to', redirectUrl)
-          window.location.href = redirectUrl
-        }, 1500)
+      if (!accessToken || !refreshToken) {
+        showError('Invalid or expired reset link. Please request a new password reset.')
         console.groupEnd()
         return
       }
 
-      // If we reach here, no valid tokens were found
-      showError('Invalid or expired reset link. Please request a new password reset.')
+      // Validate the tokens and update the password
+      console.time('[spa-reset] setSession')
+      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken
+      })
+      console.timeEnd('[spa-reset] setSession')
+      console.log('[spa-reset] setSession result', { sessionData, sessionError })
+
+      if (sessionError) {
+        showError('Invalid or expired reset link. Please request a new password reset.')
+        console.groupEnd()
+        return
+      }
+
+      console.time('[spa-reset] updateUser')
+      const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
+      console.timeEnd('[spa-reset] updateUser')
+      console.log('[spa-reset] updateUser result', { updateData, updateError })
+
+      if (updateError) {
+        showError(updateError.message || 'Failed to update password')
+        console.groupEnd()
+        return
+      }
+
+      showSuccess('Password updated successfully! Redirecting...')
+      setTimeout(() => {
+        const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+        console.log('[spa-reset] redirecting to', redirectUrl)
+        window.location.href = redirectUrl
+      }, 1500)
       console.groupEnd()
       return
 

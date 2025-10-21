@@ -3323,6 +3323,12 @@ async function handleAuthStateChange(event, session, user) {
       const currentHash = window.location.hash.substring(1)
       const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
       
+      // Don't redirect if we're on the reset-password page (user is in the middle of resetting)
+      if (currentPage === 'reset-password-page') {
+        console.log('User is on reset-password page, not redirecting')
+        return
+      }
+      
       if (!currentHash && currentPage !== 'selection-page') {
         showPage('selection-page')
       } else {
