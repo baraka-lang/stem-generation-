@@ -161,6 +161,9 @@ export function setupResetPasswordPage() {
   // Check if Supabase is configured and show demo mode notice
   checkSupabaseConfiguration()
 
+  // Check if user has valid reset tokens when page loads
+  checkResetTokens()
+
   // Reset password form submission
   console.log('[spa-reset] Adding submit event listener to form:', resetPasswordForm)
   resetPasswordForm.addEventListener('submit', async (e) => {
@@ -372,6 +375,45 @@ export function setupResetPasswordPage() {
   function hideMessages() {
     if (errorMessage) errorMessage.classList.add('hidden')
     if (successMessage) successMessage.classList.add('hidden')
+  }
+
+  /**
+   * Check if user has valid reset tokens when page loads
+   */
+  function checkResetTokens() {
+    const rawHash = window.location.hash
+    console.log('[spa-reset] Checking reset tokens on page load:', rawHash)
+    
+    if (!rawHash || !rawHash.includes('reset-password')) {
+      console.log('[spa-reset] No reset-password hash found')
+      return
+    }
+    
+    const hashParams = new URLSearchParams(rawHash.startsWith('#') ? rawHash.substring(1) : rawHash)
+    const accessToken = hashParams.get('access_token')
+    const refreshToken = hashParams.get('refresh_token')
+    const isFallback = hashParams.get('fallback') === 'true'
+    const email = hashParams.get('email')
+    
+    console.log('[spa-reset] Token check:', { 
+      hasAccess: !!accessToken, 
+      hasRefresh: !!refreshToken, 
+      isFallback, 
+      email 
+    })
+    
+    if (!accessToken || !refreshToken) {
+      if (isFallback && email) {
+        showError('This is a fallback reset link. Please request a new password reset email.')
+      } else {
+        showError('Invalid or expired reset link. Please request a new password reset.')
+      }
+      return
+    }
+    
+    // Tokens are present, show success message
+    console.log('[spa-reset] Valid reset tokens found, user can proceed with password reset')
+    // Don't call setSession() here - only when user submits the form
   }
 
   /**
