@@ -322,7 +322,20 @@ async function handlePasswordResetEmail(data: any): Promise<void> {
     };
     
     const template = await loadEmailTemplate(emailTemplates.password_reset.template);
+    console.log('Template loaded, length:', template.length);
+    console.log('Email data for template:', emailData);
+    
     const htmlContent = replaceTemplateVariables(template, emailData);
+    console.log('Template processed, HTML length:', htmlContent.length);
+    console.log('Reset URL in processed content:', htmlContent.includes('{{RESET_LINK}}') ? 'PLACEHOLDER NOT REPLACED' : 'Placeholder replaced');
+    
+    // Log a snippet of the processed HTML to verify the link is there
+    const linkMatch = htmlContent.match(/href="([^"]+)"/);
+    if (linkMatch) {
+      console.log('Found link in HTML:', linkMatch[1]);
+    } else {
+      console.warn('No href attribute found in processed HTML');
+    }
   
     await sendEmail(
       data.user?.email || data.email,
@@ -466,26 +479,34 @@ async function generatePasswordResetUrl(email: string): Promise<string> {
 
   if (error) {
     console.error('generateLink error:', error);
-    throw error;
+    console.error('Falling back to manual URL construction');
+    
+    // Fallback: construct a basic recovery URL manually
+    // This is a temporary fallback while we debug the generateLink API
+    const fallbackUrl = `${appUrl}/#reset-password?email=${encodeURIComponent(email)}&type=recovery&fallback=true`;
+    console.log('Using fallback URL:', fallbackUrl);
+    return fallbackUrl;
   }
   
   console.log('generateLink response:', data);
   
   // The response structure might be different - let's try different possible paths
+  let resetUrl = '';
+  
   if (data.properties && data.properties.action_link) {
     console.log('Using data.properties.action_link');
-    return data.properties.action_link;
+    resetUrl = data.properties.action_link;
   } else if (data.action_link) {
     console.log('Using data.action_link');
-    return data.action_link;
+    resetUrl = data.action_link;
   } else if (data.properties && data.properties.hashed_token) {
     // If it's a hashed token, we need to construct the URL differently
     console.log('Using hashed_token approach');
-    return `${appUrl}/#reset-password?token_hash=${data.properties.hashed_token}&type=recovery`;
+    resetUrl = `${appUrl}/#reset-password?token_hash=${data.properties.hashed_token}&type=recovery`;
   } else if (data.properties && data.properties.email_otp) {
     // If it's an OTP, we need to handle it differently
     console.log('Using email_otp approach');
-    return `${appUrl}/#reset-password?token=${data.properties.email_otp}&type=recovery`;
+    resetUrl = `${appUrl}/#reset-password?token=${data.properties.email_otp}&type=recovery`;
   } else {
     console.error('Unexpected generateLink response structure:', data);
     console.error('Available keys in data:', Object.keys(data));
@@ -494,6 +515,21 @@ async function generatePasswordResetUrl(email: string): Promise<string> {
     }
     throw new Error('Unexpected response structure from generateLink');
   }
+  
+  // Ensure the URL is properly formatted and log it
+  console.log('Generated reset URL:', resetUrl);
+  console.log('URL length:', resetUrl.length);
+  console.log('URL starts with http:', resetUrl.startsWith('http'));
+  
+  if (!resetUrl || resetUrl.length === 0) {
+    throw new Error('Generated reset URL is empty');
+  }
+  
+  if (!resetUrl.startsWith('http')) {
+    console.warn('Generated URL does not start with http, this might cause issues');
+  }
+  
+  return resetUrl;
 }
 
 /**

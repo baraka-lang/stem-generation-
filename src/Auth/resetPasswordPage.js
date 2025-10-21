@@ -274,12 +274,21 @@ export function setupResetPasswordPage() {
       const hashParams = new URLSearchParams(rawHash.startsWith('#') ? rawHash.substring(1) : rawHash)
       const accessToken = hashParams.get('access_token')
       const refreshToken = hashParams.get('refresh_token')
-      console.log('[spa-reset] hash tokens', { hasAccess: !!accessToken, hasRefresh: !!refreshToken })
+      const isFallback = hashParams.get('fallback') === 'true'
+      const email = hashParams.get('email')
+      console.log('[spa-reset] hash tokens', { hasAccess: !!accessToken, hasRefresh: !!refreshToken, isFallback, email })
 
       if (!accessToken || !refreshToken) {
-        showError('Invalid or expired reset link. Please request a new password reset.')
-        console.groupEnd()
-        return
+        if (isFallback && email) {
+          // Handle fallback mode - show error but allow user to request new reset
+          showError('This is a fallback reset link. Please request a new password reset email.')
+          console.groupEnd()
+          return
+        } else {
+          showError('Invalid or expired reset link. Please request a new password reset.')
+          console.groupEnd()
+          return
+        }
       }
 
       // Validate the tokens and update the password
