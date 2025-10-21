@@ -420,6 +420,72 @@ export function setupResetPasswordPage() {
         return
       }
 
+      // Handle case where we have only refreshToken (try to refresh session)
+      if (refreshToken && !accessToken) {
+        console.log('[spa-reset] Has refresh token but no access token, attempting to refresh session')
+        
+        if (!activeSupabase) {
+          console.error('[spa-reset] No Supabase client available')
+          showError('Authentication service not available. Please try again later.')
+          console.groupEnd()
+          return
+        }
+        
+        console.time('[spa-reset] refreshSession')
+        const { data: refreshData, error: refreshError } = await activeSupabase.auth.refreshSession({
+          refresh_token: refreshToken
+        })
+        console.timeEnd('[spa-reset] refreshSession')
+        console.log('[spa-reset] Session refresh result:', { 
+          success: !refreshError,
+          hasSession: !!refreshData?.session,
+          hasUser: !!refreshData?.user,
+          error: refreshError?.message
+        })
+
+        if (refreshError) {
+          console.error('[spa-reset] refreshSession failed:', refreshError)
+          showError('Invalid or expired reset link. Please request a new password reset.')
+          console.groupEnd()
+          return
+        }
+
+        // Check if we have a valid session after refresh
+        if (!refreshData?.session) {
+          console.error('[spa-reset] No session after refresh')
+          showError('Failed to establish session. Please request a new password reset.')
+          console.groupEnd()
+          return
+        }
+
+        console.log('[spa-reset] Session refreshed for user:', refreshData.session.user?.email)
+
+        console.time('[spa-reset] updateUser')
+        console.log('[spa-reset] Updating password for user')
+        const { data: updateData, error: updateError } = await activeSupabase.auth.updateUser({ password })
+        console.timeEnd('[spa-reset] updateUser')
+        console.log('[spa-reset] Password update result:', { 
+          success: !updateError,
+          error: updateError?.message
+        })
+
+        if (updateError) {
+          console.error('[spa-reset] updateUser failed:', updateError)
+          showError(updateError.message || 'Failed to update password')
+          console.groupEnd()
+          return
+        }
+
+        showSuccess('Password updated successfully! Redirecting...')
+        setTimeout(() => {
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          console.log('[spa-reset] redirecting to', redirectUrl)
+          window.location.href = redirectUrl
+        }, 1500)
+        console.groupEnd()
+        return
+      }
+
       // Fallback to implicit flow (using access_token and refresh_token)
       if (accessToken && refreshToken) {
         console.log('[spa-reset] Using implicit flow with access_token and refresh_token')
