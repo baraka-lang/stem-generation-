@@ -6,6 +6,7 @@
 import { supabase } from './index.js'
 import { resetPasswordConfig } from '../Config/resetPasswordConfig.js'
 import { createClient } from '@supabase/supabase-js'
+import { urlGenerators } from '../Config/environment.js'
 
 // Create a fallback Supabase client if the main one is not available
 let fallbackSupabase = null
@@ -26,6 +27,17 @@ const activeSupabase = supabase || fallbackSupabase
 // Debug: module load
 if (typeof window !== 'undefined') {
   console.log('[spa-reset] module loaded')
+}
+
+/**
+ * Get the appropriate redirect URL based on environment
+ */
+function getRedirectUrl() {
+  // Use the environment configuration to get the proper base URL
+  const redirectUrl = urlGenerators.generateWelcomeRedirectUrl('#selection')
+  
+  console.log('[spa-reset] Generated redirect URL:', redirectUrl)
+  return redirectUrl
 }
 
 
@@ -414,7 +426,7 @@ export function setupResetPasswordPage() {
         clearForm()
         showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
+          const redirectUrl = getRedirectUrl()
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
         }, 3000)
@@ -481,7 +493,7 @@ export function setupResetPasswordPage() {
         clearForm()
         showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
+          const redirectUrl = getRedirectUrl()
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
         }, 3000)
@@ -548,7 +560,7 @@ export function setupResetPasswordPage() {
         clearForm()
         showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
+          const redirectUrl = getRedirectUrl()
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
         }, 3000)
@@ -591,7 +603,7 @@ export function setupResetPasswordPage() {
         clearForm()
         showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
+          const redirectUrl = getRedirectUrl()
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
         }, 3000)
