@@ -293,14 +293,71 @@ async function sendEmail(to: string, subject: string, htmlContent: string): Prom
  * Handle user signup confirmation email
  */
 async function handleConfirmationEmail(data: any): Promise<void> {
-  const template = await loadEmailTemplate(emailTemplates.confirmation.template);
-  const htmlContent = replaceTemplateVariables(template, data);
+  try {
+    console.log('handleConfirmationEmail called with:', { 
+      email: data.user?.email || data.email,
+      hasUser: !!data.user,
+      hasEmail: !!data.email 
+    });
+    
+    // Generate proper confirmation URL with tokens
+    const confirmationUrl = await generateConfirmationUrl(data.user?.email || data.email);
+    console.log('Generated confirmation URL:', confirmationUrl);
+    
+    // Update the data with the actual confirmation URL containing tokens
+    const emailData = {
+      ...data,
+      confirmation_url: confirmationUrl
+    };
+    
+    const template = await loadEmailTemplate(emailTemplates.confirmation.template);
+    console.log('Template loaded, length:', template.length);
+    console.log('Email data for template:', emailData);
+    
+    const htmlContent = replaceTemplateVariables(template, emailData);
+    console.log('Template processed, HTML length:', htmlContent.length);
+    console.log('Confirmation URL in processed content:', htmlContent.includes('{{CONFIRMATION_LINK}}') ? 'PLACEHOLDER NOT REPLACED' : 'Placeholder replaced');
+    
+    // Log a snippet of the processed HTML to verify the link is there
+    const linkMatch = htmlContent.match(/href="([^"]+)"/);
+    if (linkMatch) {
+      console.log('Found link in HTML:', linkMatch[1]);
+      console.log('Link length:', linkMatch[1].length);
+      console.log('Link starts with http:', linkMatch[1].startsWith('http'));
+    } else {
+      console.warn('No href attribute found in processed HTML');
+    }
+    
+    // Also check for the confirm button specifically
+    const confirmButtonMatch = htmlContent.match(/<a[^>]*class="[^"]*confirm-button[^"]*"[^>]*href="([^"]+)"[^>]*>/);
+    if (confirmButtonMatch) {
+      console.log('Found confirm button link:', confirmButtonMatch[1]);
+    } else {
+      console.warn('Confirm button link not found in HTML');
+    }
+    
+    // Log a larger snippet of the HTML around the button area
+    const buttonAreaMatch = htmlContent.match(/<div class="button-container">[\s\S]*?<\/div>/);
+    if (buttonAreaMatch) {
+      console.log('Button area HTML:', buttonAreaMatch[0]);
+    }
   
-  await sendEmail(
-    data.user?.email || data.email,
-    emailTemplates.confirmation.subject,
-    htmlContent
-  );
+    await sendEmail(
+      data.user?.email || data.email,
+      emailTemplates.confirmation.subject,
+      htmlContent
+    );
+    
+    console.log('Confirmation email sent successfully to:', data.user?.email || data.email);
+  } catch (error) {
+    console.error('Failed to send confirmation email:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+    throw error;
+  }
 }
 
 /**
@@ -552,6 +609,89 @@ async function generatePasswordResetUrl(email: string): Promise<string> {
 }
 
 /**
+ * Generate email confirmation URL with Supabase tokens
+ */
+async function generateConfirmationUrl(email: string): Promise<string> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const appUrl = Deno.env.get('APP_URL') || 'https://staging.stemflow.app';
+  
+  console.log('generateConfirmationUrl called with:', { email, supabaseUrl: !!supabaseUrl, supabaseServiceKey: !!supabaseServiceKey, appUrl });
+  
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error('Supabase configuration missing');
+  }
+  
+  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+    type: 'signup',
+    email: email,
+    options: {
+      redirectTo: `${appUrl}/#confirm-email`
+    }
+  });
+
+  if (error) {
+    console.error('generateLink error for confirmation:', error);
+    console.error('Falling back to manual URL construction');
+    
+    // Fallback: construct a basic confirmation URL manually
+    const fallbackUrl = `${appUrl}/#confirm-email?email=${encodeURIComponent(email)}&type=signup&fallback=true`;
+    console.log('Using fallback confirmation URL:', fallbackUrl);
+    return fallbackUrl;
+  }
+  
+  console.log('generateLink response for confirmation:', data);
+  
+  // The response structure might be different - let's try different possible paths
+  let confirmationUrl = '';
+  
+  if (data.properties && data.properties.action_link) {
+    console.log('Using data.properties.action_link for confirmation');
+    confirmationUrl = data.properties.action_link;
+  } else if (data.action_link) {
+    console.log('Using data.action_link for confirmation');
+    confirmationUrl = data.action_link;
+  } else if (data.properties && data.properties.hashed_token) {
+    // If it's a hashed token, we need to construct the URL differently
+    console.log('Using hashed_token approach for confirmation');
+    confirmationUrl = `${appUrl}/#confirm-email?token_hash=${data.properties.hashed_token}&type=signup`;
+  } else if (data.properties && data.properties.email_otp) {
+    // If it's an OTP, we need to handle it differently
+    console.log('Using email_otp approach for confirmation');
+    confirmationUrl = `${appUrl}/#confirm-email?token=${data.properties.email_otp}&type=signup`;
+  } else {
+    console.error('Unexpected generateLink response structure for confirmation:', data);
+    console.error('Available keys in data:', Object.keys(data));
+    if (data.properties) {
+      console.error('Available keys in data.properties:', Object.keys(data.properties));
+    }
+    throw new Error('Unexpected response structure from generateLink for confirmation');
+  }
+  
+  // Ensure the URL is properly formatted and log it
+  console.log('Generated confirmation URL:', confirmationUrl);
+  console.log('URL length:', confirmationUrl.length);
+  console.log('URL starts with http:', confirmationUrl.startsWith('http'));
+  
+  if (!confirmationUrl || confirmationUrl.length === 0) {
+    throw new Error('Generated confirmation URL is empty');
+  }
+  
+  if (!confirmationUrl.startsWith('http')) {
+    console.warn('Generated confirmation URL does not start with http, this might cause issues');
+  }
+  
+  return confirmationUrl;
+}
+
+/**
  * Main handler for the Edge Function
  */
 Deno.serve(async (req: Request) => {
@@ -570,7 +710,12 @@ Deno.serve(async (req: Request) => {
     if (body.test && body.email) {
       console.log('Test URL generation request for:', body.email);
       try {
-        const testUrl = await generatePasswordResetUrl(body.email);
+        let testUrl;
+        if (body.type === 'confirmation') {
+          testUrl = await generateConfirmationUrl(body.email);
+        } else {
+          testUrl = await generatePasswordResetUrl(body.email);
+        }
         return new Response(JSON.stringify({
           success: true,
           testUrl: testUrl,
@@ -717,8 +862,7 @@ Deno.serve(async (req: Request) => {
           
           await handleConfirmationEmail({
             user: record,
-            email: record.email,
-            confirmation_url: `${Deno.env.get('APP_URL')}/#confirm-email#access_token={{TOKEN}}&refresh_token={{REFRESH_TOKEN}}&type=recovery`
+            email: record.email
           });
         } else if (record?.email_confirmed_at !== null) {
           console.log('Skipping email for already confirmed user:', record.email, 'Created:', userCreatedAt);

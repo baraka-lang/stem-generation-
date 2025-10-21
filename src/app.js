@@ -40,6 +40,7 @@ import { setupUserMenu, updateUserMenu, updateUserMenuVisibility } from './UI/us
 import { initializeAuthGuard, addAuthListener } from './Auth/authGuard.js'
 import { setupLoginPage } from './Auth/loginPage.js'
 import { setupResetPasswordPage } from './Auth/resetPasswordPage.js'
+import { setupConfirmEmailPage } from './Auth/confirmEmailPage.js'
 import { setupSelectionPage } from './Auth/selectionPage.js'
 import { setupProfilePage } from './Auth/profilePage.js'
 import { initializeUserProfile } from './Auth/userProfile.js'
@@ -3285,6 +3286,7 @@ export async function initApp() {
     updateUserMenuVisibility() // Set initial visibility based on auth state
     setupLoginPage()
     setupResetPasswordPage()
+    setupConfirmEmailPage()
     setupSelectionPage()
     setupProfilePage()
 
