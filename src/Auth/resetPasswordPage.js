@@ -206,6 +206,7 @@ export function setupResetPasswordPage() {
   // Real-time password validation
   document.addEventListener('input', (e) => {
     if (e.target.id === 'newPassword' || e.target.id === 'confirmPassword') {
+      hideMessages() // Clear any error/success messages when user starts typing
       validatePassword()
     }
   })
@@ -405,17 +406,18 @@ export function setupResetPasswordPage() {
 
         if (updateError) {
           console.error('[spa-reset] updateUser failed:', updateError)
-          showError(updateError.message || 'Failed to update password')
+          showError(getPasswordUpdateErrorMessage(updateError))
           console.groupEnd()
           return
         }
 
-        showSuccess('Password updated successfully! Redirecting...')
+        clearForm()
+        showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
-        }, 1500)
+        }, 3000)
         console.groupEnd()
         return
       }
@@ -471,17 +473,18 @@ export function setupResetPasswordPage() {
 
         if (updateError) {
           console.error('[spa-reset] updateUser failed:', updateError)
-          showError(updateError.message || 'Failed to update password')
+          showError(getPasswordUpdateErrorMessage(updateError))
           console.groupEnd()
           return
         }
 
-        showSuccess('Password updated successfully! Redirecting...')
+        clearForm()
+        showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
-        }, 1500)
+        }, 3000)
         console.groupEnd()
         return
       }
@@ -537,17 +540,18 @@ export function setupResetPasswordPage() {
 
         if (updateError) {
           console.error('[spa-reset] updateUser failed:', updateError)
-          showError(updateError.message || 'Failed to update password')
+          showError(getPasswordUpdateErrorMessage(updateError))
           console.groupEnd()
           return
         }
 
-        showSuccess('Password updated successfully! Redirecting...')
+        clearForm()
+        showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
-        }, 1500)
+        }, 3000)
         console.groupEnd()
         return
       }
@@ -579,17 +583,18 @@ export function setupResetPasswordPage() {
 
         if (updateError) {
           console.error('[spa-reset] updateUser failed:', updateError)
-          showError(updateError.message || 'Failed to update password')
+          showError(getPasswordUpdateErrorMessage(updateError))
           console.groupEnd()
           return
         }
 
-        showSuccess('Password updated successfully! Redirecting...')
+        clearForm()
+        showSuccess('Password updated successfully! Redirecting to main app...')
         setTimeout(() => {
-          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/#selection'
           console.log('[spa-reset] redirecting to', redirectUrl)
           window.location.href = redirectUrl
-        }, 1500)
+        }, 3000)
         console.groupEnd()
         return
       }
@@ -629,6 +634,29 @@ export function setupResetPasswordPage() {
   }
 
   /**
+   * Get user-friendly error message for password update errors
+   */
+  function getPasswordUpdateErrorMessage(updateError) {
+    if (!updateError || !updateError.message) {
+      return 'Failed to update password'
+    }
+    
+    const message = updateError.message.toLowerCase()
+    
+    if (message.includes('same password') || message.includes('identical')) {
+      return 'Please choose a different password. The new password must be different from your current password.'
+    } else if (message.includes('weak')) {
+      return 'Password is too weak. Please choose a stronger password.'
+    } else if (message.includes('length')) {
+      return 'Password must be at least 6 characters long.'
+    } else if (message.includes('invalid')) {
+      return 'Invalid password format. Please check your password and try again.'
+    } else {
+      return updateError.message
+    }
+  }
+
+  /**
    * Show error message
    */
   function showError(message) {
@@ -652,6 +680,15 @@ export function setupResetPasswordPage() {
   function hideMessages() {
     if (errorMessage) errorMessage.classList.add('hidden')
     if (successMessage) successMessage.classList.add('hidden')
+  }
+
+  /**
+   * Clear the password form
+   */
+  function clearForm() {
+    if (passwordInput) passwordInput.value = ''
+    if (confirmPasswordInput) confirmPasswordInput.value = ''
+    hideMessages()
   }
 
   /**
