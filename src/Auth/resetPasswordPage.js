@@ -271,15 +271,46 @@ export function setupResetPasswordPage() {
     hideMessages()
 
     try {
-      // Check if we have valid reset tokens in the hash
+      // Check for tokens in both URL hash and query parameters
       const rawHash = window.location.hash
+      const rawSearch = window.location.search
       console.log('[spa-reset] Raw hash:', rawHash)
-      const hashParams = new URLSearchParams(rawHash.startsWith('#') ? rawHash.substring(1) : rawHash)
-      const accessToken = hashParams.get('access_token')
-      const refreshToken = hashParams.get('refresh_token')
-      const isFallback = hashParams.get('fallback') === 'true'
-      const email = hashParams.get('email')
-      console.log('[spa-reset] hash tokens', { hasAccess: !!accessToken, hasRefresh: !!refreshToken, isFallback, email })
+      console.log('[spa-reset] Raw search:', rawSearch)
+      
+      // Try to get tokens from hash first (for direct links)
+      let hashParams = new URLSearchParams()
+      if (rawHash && rawHash.includes('reset-password')) {
+        const hashPart = rawHash.startsWith('#') ? rawHash.substring(1) : rawHash
+        // Extract the part after #reset-password
+        const resetPart = hashPart.includes('#reset-password') 
+          ? hashPart.split('#reset-password')[1] 
+          : hashPart
+        hashParams = new URLSearchParams(resetPart)
+      }
+      
+      // Also check query parameters (for Supabase generated links)
+      const searchParams = new URLSearchParams(rawSearch)
+      
+      // Get tokens from either source
+      const accessToken = hashParams.get('access_token') || searchParams.get('access_token')
+      const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token')
+      const isFallback = hashParams.get('fallback') === 'true' || searchParams.get('fallback') === 'true'
+      const email = hashParams.get('email') || searchParams.get('email')
+      
+      console.log('[spa-reset] token sources', { 
+        hasAccess: !!accessToken, 
+        hasRefresh: !!refreshToken, 
+        isFallback, 
+        email,
+        hashTokens: { 
+          access: hashParams.get('access_token'), 
+          refresh: hashParams.get('refresh_token') 
+        },
+        searchTokens: { 
+          access: searchParams.get('access_token'), 
+          refresh: searchParams.get('refresh_token') 
+        }
+      })
 
       if (!accessToken || !refreshToken) {
         if (isFallback && email) {
@@ -382,24 +413,48 @@ export function setupResetPasswordPage() {
    */
   function checkResetTokens() {
     const rawHash = window.location.hash
-    console.log('[spa-reset] Checking reset tokens on page load:', rawHash)
+    const rawSearch = window.location.search
+    console.log('[spa-reset] Checking reset tokens on page load:', { rawHash, rawSearch })
     
-    if (!rawHash || !rawHash.includes('reset-password')) {
-      console.log('[spa-reset] No reset-password hash found')
+    // Check if we're on the reset password page
+    const isOnResetPage = rawHash.includes('reset-password') || rawSearch.includes('reset-password')
+    if (!isOnResetPage) {
+      console.log('[spa-reset] Not on reset password page')
       return
     }
     
-    const hashParams = new URLSearchParams(rawHash.startsWith('#') ? rawHash.substring(1) : rawHash)
-    const accessToken = hashParams.get('access_token')
-    const refreshToken = hashParams.get('refresh_token')
-    const isFallback = hashParams.get('fallback') === 'true'
-    const email = hashParams.get('email')
+    // Try to get tokens from hash first
+    let hashParams = new URLSearchParams()
+    if (rawHash && rawHash.includes('reset-password')) {
+      const hashPart = rawHash.startsWith('#') ? rawHash.substring(1) : rawHash
+      const resetPart = hashPart.includes('#reset-password') 
+        ? hashPart.split('#reset-password')[1] 
+        : hashPart
+      hashParams = new URLSearchParams(resetPart)
+    }
+    
+    // Also check query parameters
+    const searchParams = new URLSearchParams(rawSearch)
+    
+    // Get tokens from either source
+    const accessToken = hashParams.get('access_token') || searchParams.get('access_token')
+    const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token')
+    const isFallback = hashParams.get('fallback') === 'true' || searchParams.get('fallback') === 'true'
+    const email = hashParams.get('email') || searchParams.get('email')
     
     console.log('[spa-reset] Token check:', { 
       hasAccess: !!accessToken, 
       hasRefresh: !!refreshToken, 
       isFallback, 
-      email 
+      email,
+      hashTokens: { 
+        access: hashParams.get('access_token'), 
+        refresh: hashParams.get('refresh_token') 
+      },
+      searchTokens: { 
+        access: searchParams.get('access_token'), 
+        refresh: searchParams.get('refresh_token') 
+      }
     })
     
     if (!accessToken || !refreshToken) {

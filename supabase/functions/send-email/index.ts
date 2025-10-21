@@ -227,12 +227,15 @@ function getInlineTemplate(templateName: string): string {
  */
 function replaceTemplateVariables(template: string, data: any): string {
   let processedTemplate = template;
+  console.log('Template replacement - input data:', data);
   
   for (const [placeholder, valueFunction] of Object.entries(templateVariables)) {
     const value = valueFunction(data);
+    console.log(`Replacing ${placeholder} with:`, value);
     processedTemplate = processedTemplate.replace(new RegExp(placeholder, 'g'), value);
   }
   
+  console.log('Template replacement - final result length:', processedTemplate.length);
   return processedTemplate;
 }
 
@@ -333,8 +336,24 @@ async function handlePasswordResetEmail(data: any): Promise<void> {
     const linkMatch = htmlContent.match(/href="([^"]+)"/);
     if (linkMatch) {
       console.log('Found link in HTML:', linkMatch[1]);
+      console.log('Link length:', linkMatch[1].length);
+      console.log('Link starts with http:', linkMatch[1].startsWith('http'));
     } else {
       console.warn('No href attribute found in processed HTML');
+    }
+    
+    // Also check for the reset button specifically
+    const resetButtonMatch = htmlContent.match(/<a[^>]*class="[^"]*reset-button[^"]*"[^>]*href="([^"]+)"[^>]*>/);
+    if (resetButtonMatch) {
+      console.log('Found reset button link:', resetButtonMatch[1]);
+    } else {
+      console.warn('Reset button link not found in HTML');
+    }
+    
+    // Log a larger snippet of the HTML around the button area
+    const buttonAreaMatch = htmlContent.match(/<div class="button-container">[\s\S]*?<\/div>/);
+    if (buttonAreaMatch) {
+      console.log('Button area HTML:', buttonAreaMatch[0]);
     }
   
     await sendEmail(
@@ -454,7 +473,7 @@ async function handlePasswordUpdate(email: string, newPassword: string, token: s
 async function generatePasswordResetUrl(email: string): Promise<string> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-  const appUrl = Deno.env.get('APP_URL');
+  const appUrl = Deno.env.get('APP_URL') || 'https://staging.stemflow.app';
   
   console.log('generatePasswordResetUrl called with:', { email, supabaseUrl: !!supabaseUrl, supabaseServiceKey: !!supabaseServiceKey, appUrl });
   
@@ -546,6 +565,32 @@ Deno.serve(async (req: Request) => {
     console.log('Request received, processing...');
     
     const body = await req.json();
+    
+    // Check if this is a test URL generation request
+    if (body.test && body.email) {
+      console.log('Test URL generation request for:', body.email);
+      try {
+        const testUrl = await generatePasswordResetUrl(body.email);
+        return new Response(JSON.stringify({
+          success: true,
+          testUrl: testUrl,
+          message: 'Test URL generated successfully'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200
+        });
+      } catch (error) {
+        console.error('Test URL generation failed:', error);
+        return new Response(JSON.stringify({
+          success: false,
+          error: error.message,
+          message: 'Test URL generation failed'
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 500
+        });
+      }
+    }
     
     // Check if this is a direct email request (not a webhook)
     if (body.emailType && body.email) {
