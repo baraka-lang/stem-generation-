@@ -674,10 +674,6 @@ export function setupResetPasswordPage() {
   function showError(message) {
     console.log('[spa-reset] Showing error:', message)
     
-    const errorText = document.getElementById('passwordResetErrorText')
-    const errorMessage = document.getElementById('passwordResetErrorAlert')
-    const successMessage = document.getElementById('passwordResetSuccessAlert')
-    
     if (errorText) {
       errorText.textContent = message
     } else {
@@ -701,10 +697,6 @@ export function setupResetPasswordPage() {
   function showSuccess(message) {
     console.log('[spa-reset] Showing success:', message)
     
-    const successText = document.getElementById('passwordResetSuccessText')
-    const successMessage = document.getElementById('passwordResetSuccessAlert')
-    const errorMessage = document.getElementById('passwordResetErrorAlert')
-    
     if (successText) successText.textContent = message
     if (successMessage) successMessage.classList.remove('hidden')
     if (errorMessage) errorMessage.classList.add('hidden')
@@ -714,9 +706,6 @@ export function setupResetPasswordPage() {
    * Hide all messages
    */
   function hideMessages() {
-    const errorMessage = document.getElementById('passwordResetErrorAlert')
-    const successMessage = document.getElementById('passwordResetSuccessAlert')
-    
     if (errorMessage) errorMessage.classList.add('hidden')
     if (successMessage) successMessage.classList.add('hidden')
   }
@@ -725,9 +714,6 @@ export function setupResetPasswordPage() {
    * Clear the password form
    */
   function clearForm() {
-    const passwordInput = document.getElementById('newPassword')
-    const confirmPasswordInput = document.getElementById('confirmPassword')
-    
     if (passwordInput) passwordInput.value = ''
     if (confirmPasswordInput) confirmPasswordInput.value = ''
     hideMessages()
