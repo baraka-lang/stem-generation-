@@ -324,7 +324,7 @@ async function handlePasswordResetEmail(data: any): Promise<void> {
       reset_url: resetUrl
     };
     
-    const template = await loadEmailTemplate(emailTemplates.password_reset.template);
+  const template = await loadEmailTemplate(emailTemplates.password_reset.template);
     console.log('Template loaded, length:', template.length);
     console.log('Email data for template:', emailData);
     
@@ -356,11 +356,11 @@ async function handlePasswordResetEmail(data: any): Promise<void> {
       console.log('Button area HTML:', buttonAreaMatch[0]);
     }
   
-    await sendEmail(
-      data.user?.email || data.email,
-      emailTemplates.password_reset.subject,
-      htmlContent
-    );
+  await sendEmail(
+    data.user?.email || data.email,
+    emailTemplates.password_reset.subject,
+    htmlContent
+  );
     
     console.log('Password reset email sent successfully to:', data.user?.email || data.email);
   } catch (error) {
@@ -465,6 +465,70 @@ async function handlePasswordUpdate(email: string, newPassword: string, token: s
     console.error('Error updating password:', error);
     throw error;
   }
+}
+
+/**
+ * Generate email confirmation URL with Supabase tokens
+ */
+async function generateConfirmationUrl(email: string): Promise<string> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const appUrl = Deno.env.get('APP_URL') || 'https://staging.stemflow.app';
+  
+  console.log('generateConfirmationUrl called with:', { email, supabaseUrl: !!supabaseUrl, supabaseServiceKey: !!supabaseServiceKey, appUrl });
+  
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error('Supabase configuration missing');
+  }
+  
+  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+    type: 'signup',
+    email: email,
+    options: {
+      redirectTo: `${appUrl}/#confirm-email`
+    }
+  });
+
+  if (error) {
+    console.error('generateLink error for confirmation:', error);
+    console.error('Falling back to manual URL construction');
+    
+    // Fallback: construct a basic confirmation URL manually
+    const fallbackUrl = `${appUrl}/#confirm-email?email=${encodeURIComponent(email)}&type=signup&fallback=true`;
+    console.log('Using fallback confirmation URL:', fallbackUrl);
+    return fallbackUrl;
+  }
+  
+  console.log('generateLink response for confirmation:', data);
+  
+  // Extract the confirmation URL from the response
+  let confirmationUrl = '';
+  
+  if (data.properties && data.properties.action_link) {
+    console.log('Using data.properties.action_link for confirmation');
+    confirmationUrl = data.properties.action_link;
+  } else if (data.action_link) {
+    console.log('Using data.action_link for confirmation');
+    confirmationUrl = data.action_link;
+  } else if (data.hashed_token) {
+    // If we get a hashed token, construct the URL manually
+    console.log('Using hashed_token to construct confirmation URL');
+    confirmationUrl = `${appUrl}/#confirm-email?token=${data.hashed_token}&type=signup`;
+  } else {
+    console.error('Unexpected generateLink response structure for confirmation:', data);
+    // Fallback to manual construction
+    confirmationUrl = `${appUrl}/#confirm-email?email=${encodeURIComponent(email)}&type=signup&fallback=true`;
+  }
+  
+  console.log('Generated confirmation URL:', confirmationUrl);
+  return confirmationUrl;
 }
 
 /**
@@ -605,6 +669,17 @@ Deno.serve(async (req: Request) => {
         case 'confirmation':
           templateName = emailTemplates.confirmation.template;
           subject = emailTemplates.confirmation.subject;
+          
+          // Generate proper confirmation URL with Supabase tokens
+          try {
+            const confirmationUrl = await generateConfirmationUrl(body.email);
+            emailData.confirmation_url = confirmationUrl;
+            console.log('Generated confirmation URL:', confirmationUrl);
+          } catch (error) {
+            console.error('Failed to generate confirmation URL:', error);
+            // Fall back to provided URL or default
+            emailData.confirmation_url = body.data?.confirmation_url || `${Deno.env.get('APP_URL')}/#confirm-email`;
+          }
           break;
         case 'password_reset':
           templateName = emailTemplates.password_reset.template;
@@ -616,7 +691,7 @@ Deno.serve(async (req: Request) => {
             // Update the email data with the actual reset URL containing tokens
             emailData.reset_url = resetUrl;
             console.log('Generated reset URL:', resetUrl);
-          } catch (error) {
+            } catch (error) {
             console.error('Failed to generate reset URL:', error);
             throw error;
           }
@@ -715,11 +790,23 @@ Deno.serve(async (req: Request) => {
             console.log('Sending confirmation email for existing unconfirmed user:', record.email);
           }
           
+          // Generate proper confirmation URL
+          try {
+            const confirmationUrl = await generateConfirmationUrl(record.email);
+            await handleConfirmationEmail({
+              user: record,
+              email: record.email,
+              confirmation_url: confirmationUrl
+            });
+          } catch (error) {
+            console.error('Failed to generate confirmation URL for webhook:', error);
+            // Fallback to manual URL construction
           await handleConfirmationEmail({
             user: record,
             email: record.email,
-            confirmation_url: `${Deno.env.get('APP_URL')}/#confirm-email#access_token={{TOKEN}}&refresh_token={{REFRESH_TOKEN}}&type=recovery`
+              confirmation_url: `${Deno.env.get('APP_URL')}/#confirm-email?email=${encodeURIComponent(record.email)}&type=signup`
           });
+          }
         } else if (record?.email_confirmed_at !== null) {
           console.log('Skipping email for already confirmed user:', record.email, 'Created:', userCreatedAt);
         }
