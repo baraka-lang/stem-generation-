@@ -301,9 +301,20 @@ export function setupResetPasswordPage() {
       if (rawHash && rawHash.includes('reset-password')) {
         const hashPart = rawHash.startsWith('#') ? rawHash.substring(1) : rawHash
         // Extract the part after #reset-password
-        const resetPart = hashPart.includes('#reset-password') 
-          ? hashPart.split('#reset-password')[1] 
-          : hashPart
+        let resetPart = ''
+        if (hashPart.includes('#reset-password#')) {
+          // Handle format: #reset-password#access_token=...
+          resetPart = hashPart.split('#reset-password#')[1]
+        } else if (hashPart.includes('#reset-password?')) {
+          // Handle format: #reset-password?access_token=...
+          resetPart = hashPart.split('#reset-password?')[1]
+        } else if (hashPart.includes('#reset-password')) {
+          // Handle format: #reset-password (no params)
+          resetPart = hashPart.split('#reset-password')[1]
+        } else {
+          resetPart = hashPart
+        }
+        console.log('[spa-reset] Extracted reset part:', resetPart)
         hashParams = new URLSearchParams(resetPart)
       }
       
@@ -328,6 +339,14 @@ export function setupResetPasswordPage() {
         isFallback, 
         email,
         tokenType: isTokenHash ? 'token_hash' : 'token'
+      })
+      
+      // Debug: Show what tokens were actually extracted
+      console.log('[spa-reset] Extracted tokens:', {
+        tokenHash: tokenHash ? tokenHash.substring(0, 20) + '...' : null,
+        accessToken: accessToken ? accessToken.substring(0, 20) + '...' : null,
+        refreshToken: refreshToken ? refreshToken.substring(0, 20) + '...' : null,
+        email: email
       })
 
       // Try PKCE flow first (using token_hash) - this is the recommended approach
