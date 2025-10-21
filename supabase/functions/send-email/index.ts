@@ -10,6 +10,34 @@ const corsHeaders = {
 };
 
 /**
+ * Verify Supabase Auth Hook authorization
+ */
+function verifyAuthHook(req: Request): boolean {
+  const authHeader = req.headers.get('authorization');
+  const apiKey = req.headers.get('x-api-key');
+  
+  // For Supabase Auth Hooks, we need to verify the authorization header
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    const expectedToken = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (expectedToken && token === expectedToken) {
+      return true;
+    }
+  }
+  
+  // Also check for x-api-key header
+  if (apiKey) {
+    const expectedApiKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (expectedApiKey && apiKey === expectedApiKey) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
  * Send email using Resend API
  */
 async function sendEmail(to: string, subject: string, htmlContent: string): Promise<void> {
@@ -259,83 +287,88 @@ Deno.serve(async (req: Request) => {
   try {
     console.log('Request received, processing...');
     
-    // Check if this is a webhook request (from Auth Hook)
-    const webhookId = req.headers.get('webhook-id');
-    const webhookTimestamp = req.headers.get('webhook-timestamp');
-    const webhookSignature = req.headers.get('webhook-signature');
+    // Check if this is an Auth Hook request from Supabase
+    const authHeader = req.headers.get('authorization');
+    const apiKey = req.headers.get('x-api-key');
     
-    if (webhookId && webhookTimestamp && webhookSignature) {
-      console.log('Processing webhook request from Auth Hook');
+    if (authHeader || apiKey) {
+      console.log('Processing Auth Hook request from Supabase');
       
-      const payload = await req.text();
-      const hookSecret = Deno.env.get('SEND_EMAIL_HOOK_SECRET');
-      
-      if (!hookSecret) {
-        throw new Error('SEND_EMAIL_HOOK_SECRET not configured');
-      }
-      
-      const headers = Object.fromEntries(req.headers);
-      const wh = new Webhook(hookSecret.replace('v1,whsec_', ''));
-      
-      try {
-        const { user, email_data } = wh.verify(payload, headers) as {
-          user: {
-            email: string;
-            id: string;
-          };
-          email_data: {
-            token: string;
-            token_hash: string;
-            redirect_to: string;
-            email_action_type: string;
-            site_url: string;
-            token_new: string;
-            token_hash_new: string;
-          };
-        };
-        
-        console.log('Webhook verified, processing email:', {
-          email: user.email,
-          action_type: email_data.email_action_type
-        });
-        
-        let subject: string;
-        let confirmationUrl: string;
-
-        if (email_data.email_action_type === 'signup') {
-          subject = 'Confirm Your Email - 343 Labs AI Music Studio';
-          confirmationUrl = await generateConfirmationUrl(user.email);
-        } else if (email_data.email_action_type === 'recovery') {
-          subject = 'Reset Your Password - 343 Labs AI Music Studio';
-          confirmationUrl = await generatePasswordResetUrl(user.email);
-        } else {
-          console.log('Unhandled email action type:', email_data.email_action_type);
-          return new Response(JSON.stringify({ success: true, message: 'Email action type not handled' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200 
-          });
-        }
-
-        const htmlContent = getEmailTemplate(email_data.email_action_type === 'signup' ? 'confirmation' : 'password_reset', confirmationUrl);
-        
-        await sendEmail(user.email, subject, htmlContent);
-        console.log('Email sent successfully to:', user.email);
-
-        return new Response(JSON.stringify({ success: true, message: 'Email sent successfully' }), {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200
-        });
-        
-      } catch (webhookError) {
-        console.error('Webhook verification failed:', webhookError);
+      // Verify authorization
+      if (!verifyAuthHook(req)) {
+        console.error('Auth Hook authorization failed');
         return new Response(JSON.stringify({ 
-          error: 'Webhook verification failed',
-          details: webhookError.message 
+          error: 'Unauthorized: Invalid authorization token' 
         }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           status: 401
         });
       }
+      
+      console.log('Auth Hook authorization verified');
+      
+      // Parse the Auth Hook payload
+      const payload = await req.text();
+      let authData;
+      
+      try {
+        authData = JSON.parse(payload);
+        console.log('Auth Hook payload parsed:', authData);
+      } catch (parseError) {
+        console.error('Failed to parse Auth Hook payload:', parseError);
+        return new Response(JSON.stringify({ 
+          error: 'Invalid JSON payload' 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400
+        });
+      }
+      
+      // Extract user and email data from the payload
+      const user = authData.user;
+      const emailData = authData.email_data;
+      
+      if (!user || !emailData) {
+        console.error('Missing user or email_data in payload');
+        return new Response(JSON.stringify({ 
+          error: 'Invalid payload: missing user or email_data' 
+        }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 400
+        });
+      }
+      
+      console.log('Processing email:', {
+        email: user.email,
+        action_type: emailData.email_action_type
+      });
+        
+      let subject: string;
+      let confirmationUrl: string;
+
+      if (emailData.email_action_type === 'signup') {
+        subject = 'Confirm Your Email - 343 Labs AI Music Studio';
+        confirmationUrl = await generateConfirmationUrl(user.email);
+      } else if (emailData.email_action_type === 'recovery') {
+        subject = 'Reset Your Password - 343 Labs AI Music Studio';
+        confirmationUrl = await generatePasswordResetUrl(user.email);
+      } else {
+        console.log('Unhandled email action type:', emailData.email_action_type);
+        return new Response(JSON.stringify({ success: true, message: 'Email action type not handled' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200 
+        });
+      }
+
+      const htmlContent = getEmailTemplate(emailData.email_action_type === 'signup' ? 'confirmation' : 'password_reset', confirmationUrl);
+      
+      await sendEmail(user.email, subject, htmlContent);
+      console.log('Email sent successfully to:', user.email);
+
+      return new Response(JSON.stringify({ success: true, message: 'Email sent successfully' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200
+      });
     }
     
     // Handle other requests (direct calls, webhooks, etc.)
