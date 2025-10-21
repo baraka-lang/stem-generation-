@@ -312,95 +312,10 @@ export function setupResetPasswordPage() {
         return
       }
 
-      // Fallback: custom token flow via Edge Function (legacy)
-      // Parse parameters from hash - handle format: #reset-password?token=...&email=...
-      console.log('[spa-reset] Trying custom token flow...')
-      const hashParts = window.location.hash.split('?')
-      console.log('[spa-reset] Hash parts:', hashParts)
-      const hashPart = hashParts.length > 1 ? hashParts[1] : ''
-      console.log('[spa-reset] Hash part after ?:', hashPart)
-      const urlParams = new URLSearchParams(hashPart)
-      const customToken = urlParams.get('token')
-      const email = urlParams.get('email')
-      console.log('[spa-reset] url params', { hasToken: !!customToken, email, fullHash: window.location.hash })
-
-      if (!customToken || !email) {
-        showError('Invalid reset link. Please request a new password reset.')
-        return
-      }
-
-      // Decode and validate the custom token
-      try {
-        const tokenData = JSON.parse(atob(customToken))
-        console.log('[spa-reset] tokenData', tokenData)
-        
-        // Check if token is expired (1 hour)
-        const tokenAge = Date.now() - tokenData.timestamp
-        const oneHour = 60 * 60 * 1000
-        console.log('[spa-reset] Token age check:', { tokenAge, oneHour, isExpired: tokenAge > oneHour })
-        
-        if (tokenAge > oneHour) {
-          console.log('[spa-reset] Token expired, showing error')
-          showError('Reset link has expired. Please request a new password reset.')
-          return
-        }
-        
-        // Verify email matches
-        console.log('[spa-reset] Email verification:', { tokenEmail: tokenData.email, urlEmail: email, match: tokenData.email === email })
-        if (tokenData.email !== email) {
-          console.log('[spa-reset] Email mismatch, showing error')
-          showError('Invalid reset link. Please request a new password reset.')
-          return
-        }
-        
-        // Verify token type
-        console.log('[spa-reset] Token type verification:', { tokenType: tokenData.type, expected: 'password_reset', match: tokenData.type === 'password_reset' })
-        if (tokenData.type !== 'password_reset') {
-          console.log('[spa-reset] Invalid token type, showing error')
-          showError('Invalid reset link. Please request a new password reset.')
-          return
-        }
-        
-        console.log('[spa-reset] Token validation passed, proceeding to Edge Function call')
-      } catch (error) {
-        console.error('[spa-reset] token decode/validate error', error)
-        showError('Invalid reset link. Please request a new password reset.')
-        return
-      }
-
-      // Call our Edge Function to update the password using Supabase client
-      console.log('[spa-reset] About to call Edge Function with:', {
-        emailType: 'password_update',
-        email: email,
-        hasPassword: !!password,
-        hasToken: !!customToken
-      })
-      console.time('[spa-reset] supabase.functions.invoke send-email')
-      const { data, error } = await supabase.functions.invoke('send-email', {
-        body: {
-          emailType: 'password_update',
-          email: email,
-          data: {
-            newPassword: password,
-            token: customToken
-          }
-        }
-      })
-      console.timeEnd('[spa-reset] supabase.functions.invoke send-email')
-      console.log('[spa-reset] function result', { data, error })
-
-      if (error) {
-        showError(error.message || 'Failed to update password')
-        return
-      }
-
-      showSuccess('Password updated successfully! Redirecting to login...')
-      
-      // Redirect to login after a short delay
-      setTimeout(() => {
-        console.log('[spa-reset] redirecting to #login')
-        window.location.hash = '#login'
-      }, 2000)
+      // If we reach here, no valid tokens were found
+      showError('Invalid or expired reset link. Please request a new password reset.')
+      console.groupEnd()
+      return
 
     } catch (error) {
       console.error('[spa-reset] Password reset error:', error)

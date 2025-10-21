@@ -85,15 +85,12 @@ const EMAIL_SERVICE_CONFIG = {
   }
   
   /**
-   * Send password reset email.
-   * @param {string} email - User's email address.
-   * @param {string} resetUrl - Password reset URL.
-   * @returns {Promise<{success: boolean, error?: string}>}
-   */
-  export async function sendPasswordResetEmail(email, resetUrl) {
-    return await sendCustomEmail(EMAIL_SERVICE_CONFIG.templates.PASSWORD_RESET, email, {
-      reset_url: resetUrl // This key must match the placeholder in the Edge Function
-    });
+   * Send password reset email.
+   * @param {string} email - User's email address.
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  export async function sendPasswordResetEmail(email) {
+    return await sendCustomEmail(EMAIL_SERVICE_CONFIG.templates.PASSWORD_RESET, email, {});
   }
   
   /**

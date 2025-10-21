@@ -4,6 +4,8 @@
 // for user confirmation, password reset, and welcome emails. It replaces the
 // default Supabase auth emails with branded templates that match the app design.
 
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
@@ -303,8 +305,15 @@ async function handleConfirmationEmail(data: any): Promise<void> {
  */
 async function handlePasswordResetEmail(data: any): Promise<void> {
   try {
+    console.log('handlePasswordResetEmail called with:', { 
+      email: data.user?.email || data.email,
+      hasUser: !!data.user,
+      hasEmail: !!data.email 
+    });
+    
     // Generate proper password reset URL with tokens
-    const resetUrl = await generatePasswordResetUrl(data.user?.email || data.email, data.reset_url);
+    const resetUrl = await generatePasswordResetUrl(data.user?.email || data.email);
+    console.log('Generated reset URL:', resetUrl);
     
     // Update the data with the actual reset URL containing tokens
     const emailData = {
@@ -312,18 +321,23 @@ async function handlePasswordResetEmail(data: any): Promise<void> {
       reset_url: resetUrl
     };
     
-  const template = await loadEmailTemplate(emailTemplates.password_reset.template);
+    const template = await loadEmailTemplate(emailTemplates.password_reset.template);
     const htmlContent = replaceTemplateVariables(template, emailData);
   
-  await sendEmail(
-    data.user?.email || data.email,
-    emailTemplates.password_reset.subject,
-    htmlContent
-  );
+    await sendEmail(
+      data.user?.email || data.email,
+      emailTemplates.password_reset.subject,
+      htmlContent
+    );
     
     console.log('Password reset email sent successfully to:', data.user?.email || data.email);
   } catch (error) {
     console.error('Failed to send password reset email:', error);
+    console.error('Error details:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
     throw error;
   }
 }
@@ -424,35 +438,61 @@ async function handlePasswordUpdate(email: string, newPassword: string, token: s
 /**
  * Generate password reset URL with Supabase tokens
  */
-async function generatePasswordResetUrl(email: string, baseUrl: string): Promise<string> {
-  try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    
-    if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Supabase configuration missing');
+async function generatePasswordResetUrl(email: string): Promise<string> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  const appUrl = Deno.env.get('APP_URL');
+  
+  console.log('generatePasswordResetUrl called with:', { email, supabaseUrl: !!supabaseUrl, supabaseServiceKey: !!supabaseServiceKey, appUrl });
+  
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error('Supabase configuration missing');
+  }
+  
+  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
     }
+  });
 
-    // Create a custom token with email and timestamp
-    const tokenData = {
-        email: email,
-      timestamp: Date.now(),
-      type: 'password_reset'
-    };
+  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+    type: 'recovery',
+    email: email,
+    options: {
+      redirectTo: `${appUrl}/#reset-password`
+    }
+  });
 
-    // Encode the token data
-    const token = btoa(JSON.stringify(tokenData));
-    
-    // Create the reset URL with our custom token
-    const resetUrl = `${baseUrl}?token=${token}&email=${encodeURIComponent(email)}`;
-    
-    console.log('Generated custom reset URL:', resetUrl);
-    return resetUrl;
-  } catch (error) {
-    console.error('Error generating password reset URL:', error);
-    // Fallback to the base URL if token generation fails
-    console.log('Falling back to base URL:', baseUrl);
-    return baseUrl;
+  if (error) {
+    console.error('generateLink error:', error);
+    throw error;
+  }
+  
+  console.log('generateLink response:', data);
+  
+  // The response structure might be different - let's try different possible paths
+  if (data.properties && data.properties.action_link) {
+    console.log('Using data.properties.action_link');
+    return data.properties.action_link;
+  } else if (data.action_link) {
+    console.log('Using data.action_link');
+    return data.action_link;
+  } else if (data.properties && data.properties.hashed_token) {
+    // If it's a hashed token, we need to construct the URL differently
+    console.log('Using hashed_token approach');
+    return `${appUrl}/#reset-password?token_hash=${data.properties.hashed_token}&type=recovery`;
+  } else if (data.properties && data.properties.email_otp) {
+    // If it's an OTP, we need to handle it differently
+    console.log('Using email_otp approach');
+    return `${appUrl}/#reset-password?token=${data.properties.email_otp}&type=recovery`;
+  } else {
+    console.error('Unexpected generateLink response structure:', data);
+    console.error('Available keys in data:', Object.keys(data));
+    if (data.properties) {
+      console.error('Available keys in data.properties:', Object.keys(data.properties));
+    }
+    throw new Error('Unexpected response structure from generateLink');
   }
 }
 
@@ -490,16 +530,14 @@ Deno.serve(async (req: Request) => {
           subject = emailTemplates.password_reset.subject;
           
           // Generate proper password reset URL with tokens
-          if (body.data?.reset_url) {
-            try {
-              const resetUrl = await generatePasswordResetUrl(body.email, body.data.reset_url);
-              // Update the email data with the actual reset URL containing tokens
-              emailData.reset_url = resetUrl;
-              console.log('Generated reset URL:', resetUrl);
-            } catch (error) {
-              console.error('Failed to generate reset URL, using provided URL:', error);
-              // Fall back to the provided URL
-            }
+          try {
+            const resetUrl = await generatePasswordResetUrl(body.email);
+            // Update the email data with the actual reset URL containing tokens
+            emailData.reset_url = resetUrl;
+            console.log('Generated reset URL:', resetUrl);
+          } catch (error) {
+            console.error('Failed to generate reset URL:', error);
+            throw error;
           }
           break;
         case 'password_update':
@@ -599,7 +637,7 @@ Deno.serve(async (req: Request) => {
           await handleConfirmationEmail({
             user: record,
             email: record.email,
-            confirmation_url: `${Deno.env.get('APP_URL')}/#reset-password#access_token={{TOKEN}}&refresh_token={{REFRESH_TOKEN}}&type=recovery`
+            confirmation_url: `${Deno.env.get('APP_URL')}/#confirm-email#access_token={{TOKEN}}&refresh_token={{REFRESH_TOKEN}}&type=recovery`
           });
         } else if (record?.email_confirmed_at !== null) {
           console.log('Skipping email for already confirmed user:', record.email, 'Created:', userCreatedAt);
@@ -622,8 +660,7 @@ Deno.serve(async (req: Request) => {
         console.log('Sending password reset email for user:', record.email);
         await handlePasswordResetEmail({
           user: record,
-          email: record.email,
-          reset_url: `${Deno.env.get('APP_URL')}/#reset-password`
+          email: record.email
         });
         break;
 
