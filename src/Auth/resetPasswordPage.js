@@ -740,9 +740,21 @@ export function setupResetPasswordPage() {
     let hashParams = new URLSearchParams()
     if (rawHash && rawHash.includes('reset-password')) {
       const hashPart = rawHash.startsWith('#') ? rawHash.substring(1) : rawHash
-      const resetPart = hashPart.includes('#reset-password') 
-        ? hashPart.split('#reset-password')[1] 
-        : hashPart
+      // Handle different URL formats
+      let resetPart = ''
+      if (hashPart.includes('#reset-password#')) {
+        // Handle format: #reset-password#access_token=...
+        resetPart = hashPart.split('#reset-password#')[1]
+      } else if (hashPart.includes('#reset-password?')) {
+        // Handle format: #reset-password?access_token=...
+        resetPart = hashPart.split('#reset-password?')[1]
+      } else if (hashPart.includes('#reset-password')) {
+        // Handle format: #reset-password (no params)
+        resetPart = hashPart.split('#reset-password')[1]
+      } else {
+        resetPart = hashPart
+      }
+      console.log('[spa-reset] Extracted reset part from hash:', resetPart)
       hashParams = new URLSearchParams(resetPart)
     }
     
@@ -770,7 +782,8 @@ export function setupResetPasswordPage() {
       }
     })
     
-    if (!accessToken || !refreshToken) {
+    // Only show error if we have NO tokens at all
+    if (!accessToken && !refreshToken) {
       if (isFallback && email) {
         showError('This is a fallback reset link. Please request a new password reset email.')
       } else {
@@ -779,7 +792,7 @@ export function setupResetPasswordPage() {
       return
     }
     
-    // Tokens are present, show success message
+    // Tokens are present (either access_token, refresh_token, or both), user can proceed
     console.log('[spa-reset] Valid reset tokens found, user can proceed with password reset')
     // Don't call setSession() here - only when user submits the form
   }
