@@ -5,6 +5,23 @@
 
 import { supabase } from './index.js'
 import { resetPasswordConfig } from '../Config/resetPasswordConfig.js'
+import { createClient } from '@supabase/supabase-js'
+
+// Create a fallback Supabase client if the main one is not available
+let fallbackSupabase = null
+if (!supabase && resetPasswordConfig.supabaseUrl && resetPasswordConfig.supabaseKey) {
+  console.log('[spa-reset] Creating fallback Supabase client')
+  fallbackSupabase = createClient(resetPasswordConfig.supabaseUrl, resetPasswordConfig.supabaseKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false
+    }
+  })
+}
+
+// Use the main supabase client or fallback
+const activeSupabase = supabase || fallbackSupabase
 
 // Debug: module load
 if (typeof window !== 'undefined') {
@@ -130,13 +147,17 @@ export function setupResetPasswordPage() {
     window.addEventListener('hashchange', () => {
       console.log('[spa-reset] hashchange ->', window.location.hash)
     })
-    console.log('[spa-reset] config', {
-      supabaseUrl: resetPasswordConfig.supabaseUrl,
-      hasAnonKey: !!resetPasswordConfig.supabaseKey && resetPasswordConfig.supabaseKey !== 'your-anon-key',
-      redirectUrl: resetPasswordConfig.redirectUrl,
-      showDemoMode: resetPasswordConfig.showDemoMode
-    })
-    console.log('[spa-reset] supabase present:', !!supabase)
+  console.log('[spa-reset] config', {
+    supabaseUrl: resetPasswordConfig.supabaseUrl,
+    hasAnonKey: !!resetPasswordConfig.supabaseKey && resetPasswordConfig.supabaseKey !== 'your-anon-key',
+    redirectUrl: resetPasswordConfig.redirectUrl,
+    showDemoMode: resetPasswordConfig.showDemoMode
+  })
+  console.log('[spa-reset] supabase present:', !!supabase)
+  console.log('[spa-reset] fallback supabase present:', !!fallbackSupabase)
+  console.log('[spa-reset] active supabase present:', !!activeSupabase)
+  console.log('[spa-reset] active supabase auth present:', !!activeSupabase?.auth)
+  console.log('[spa-reset] active supabase auth methods:', activeSupabase?.auth ? Object.keys(activeSupabase.auth) : 'N/A')
     
   // Get form elements
   const resetPasswordForm = document.getElementById('resetPasswordForm')
@@ -334,28 +355,66 @@ export function setupResetPasswordPage() {
 
       // Try PKCE flow first (using token_hash) - this is the recommended approach
       if (tokenHash) {
-        console.log('[spa-reset] Using PKCE flow with token_hash')
+        console.log('[spa-reset] Using PKCE flow with token_hash:', tokenHash.substring(0, 20) + '...')
+        console.log('[spa-reset] Supabase client:', activeSupabase)
+        console.log('[spa-reset] Supabase auth:', activeSupabase?.auth)
+        
+        if (!activeSupabase) {
+          console.error('[spa-reset] No Supabase client available')
+          showError('Authentication service not available. Please try again later.')
+          console.groupEnd()
+          return
+        }
+        
         console.time('[spa-reset] verifyOtp')
-        const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        const { data: verifyData, error: verifyError } = await activeSupabase.auth.verifyOtp({
           token_hash: tokenHash,
           type: 'recovery'
         })
         console.timeEnd('[spa-reset] verifyOtp')
-        console.log('[spa-reset] verifyOtp result', { verifyData, verifyError })
+        console.log('[spa-reset] verifyOtp result', { 
+          hasData: !!verifyData, 
+          hasError: !!verifyError,
+          errorMessage: verifyError?.message,
+          session: verifyData?.session,
+          user: verifyData?.user
+        })
 
         if (verifyError) {
+          console.error('[spa-reset] verifyOtp failed:', verifyError)
           showError('Invalid or expired reset link. Please request a new password reset.')
           console.groupEnd()
           return
         }
 
+        // Check if we have a valid session
+        if (!verifyData?.session) {
+          console.error('[spa-reset] No session after verifyOtp')
+          showError('Failed to establish session. Please request a new password reset.')
+          console.groupEnd()
+          return
+        }
+
+        console.log('[spa-reset] Session established:', {
+          hasAccessToken: !!verifyData.session.access_token,
+          hasRefreshToken: !!verifyData.session.refresh_token,
+          userEmail: verifyData.session.user?.email
+        })
+
         // Now update the password
         console.time('[spa-reset] updateUser')
-        const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
+        console.log('[spa-reset] Calling updateUser with password length:', password.length)
+        const { data: updateData, error: updateError } = await activeSupabase.auth.updateUser({ password })
         console.timeEnd('[spa-reset] updateUser')
-        console.log('[spa-reset] updateUser result', { updateData, updateError })
+        console.log('[spa-reset] updateUser result', { 
+          hasData: !!updateData, 
+          hasError: !!updateError,
+          errorMessage: updateError?.message,
+          user: updateData?.user
+        })
 
         if (updateError) {
+          console.error('[spa-reset] updateUser failed:', updateError)
           showError(updateError.message || 'Failed to update password')
           console.groupEnd()
           return
@@ -374,26 +433,66 @@ export function setupResetPasswordPage() {
       // Fallback to implicit flow (using access_token and refresh_token)
       if (accessToken && refreshToken) {
         console.log('[spa-reset] Using implicit flow with access_token and refresh_token')
+        console.log('[spa-reset] Access token length:', accessToken.length)
+        console.log('[spa-reset] Refresh token length:', refreshToken.length)
+        console.log('[spa-reset] Supabase client:', activeSupabase)
+        console.log('[spa-reset] Supabase auth:', activeSupabase?.auth)
+        
+        if (!activeSupabase) {
+          console.error('[spa-reset] No Supabase client available')
+          showError('Authentication service not available. Please try again later.')
+          console.groupEnd()
+          return
+        }
+        
         console.time('[spa-reset] setSession')
-        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+        const { data: sessionData, error: sessionError } = await activeSupabase.auth.setSession({
           access_token: accessToken,
           refresh_token: refreshToken
         })
         console.timeEnd('[spa-reset] setSession')
-        console.log('[spa-reset] setSession result', { sessionData, sessionError })
+        console.log('[spa-reset] setSession result', { 
+          hasData: !!sessionData, 
+          hasError: !!sessionError,
+          errorMessage: sessionError?.message,
+          session: sessionData?.session,
+          user: sessionData?.user
+        })
 
         if (sessionError) {
+          console.error('[spa-reset] setSession failed:', sessionError)
           showError('Invalid or expired reset link. Please request a new password reset.')
           console.groupEnd()
           return
         }
 
+        // Check if we have a valid session
+        if (!sessionData?.session) {
+          console.error('[spa-reset] No session after setSession')
+          showError('Failed to establish session. Please request a new password reset.')
+          console.groupEnd()
+          return
+        }
+
+        console.log('[spa-reset] Session established:', {
+          hasAccessToken: !!sessionData.session.access_token,
+          hasRefreshToken: !!sessionData.session.refresh_token,
+          userEmail: sessionData.session.user?.email
+        })
+
         console.time('[spa-reset] updateUser')
-        const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
+        console.log('[spa-reset] Calling updateUser with password length:', password.length)
+        const { data: updateData, error: updateError } = await activeSupabase.auth.updateUser({ password })
         console.timeEnd('[spa-reset] updateUser')
-        console.log('[spa-reset] updateUser result', { updateData, updateError })
+        console.log('[spa-reset] updateUser result', { 
+          hasData: !!updateData, 
+          hasError: !!updateError,
+          errorMessage: updateError?.message,
+          user: updateData?.user
+        })
 
         if (updateError) {
+          console.error('[spa-reset] updateUser failed:', updateError)
           showError(updateError.message || 'Failed to update password')
           console.groupEnd()
           return
