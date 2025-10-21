@@ -3076,7 +3076,13 @@ function showPage(pageId) {
   try { console.log('[router] showPage ->', pageId) } catch {}
   const pages = ['login-page', 'selection-page', 'techno-generator-page', 'reset-password-page', 'confirm-email-page', 'profile-page']
   pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
-  const targetPage = document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
+  const targetPage = document.getElementById(pageId); 
+  if (targetPage) {
+    targetPage.classList.remove('hidden')
+    console.log('[router] Page shown:', pageId, 'Element:', targetPage, 'Classes:', targetPage.className)
+  } else {
+    console.error('[router] Page not found:', pageId)
+  }
 
     // Show studio header only on studio pages (techno-generator-page)
     const studioHeader = document.getElementById('studioHeader')
@@ -3162,6 +3168,14 @@ function handleHashChange() {
     case 'reset-password':
       try { console.log('[router] showing reset-password-page') } catch {}
       showPage('reset-password-page')
+      console.log('[router] Reset password page should be visible now')
+      // Force a small delay to ensure DOM is ready
+      setTimeout(() => {
+        const page = document.getElementById('reset-password-page')
+        console.log('[router] Reset password page element:', page)
+        console.log('[router] Reset password page classes:', page?.className)
+        console.log('[router] Reset password page hidden:', page?.classList.contains('hidden'))
+      }, 100)
       break
     case 'confirm-email':
       showPage('confirm-email-page')

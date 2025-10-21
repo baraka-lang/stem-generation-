@@ -78,8 +78,14 @@ export async function loadTemplates() {
       appRoot.insertAdjacentHTML('beforeend', selectionPageContent);
     }
     
-    // Append reset password page
-    appRoot.insertAdjacentHTML('beforeend', resetPasswordContent);
+    // Replace the reset password page placeholder
+    const resetPasswordPlaceholder = document.getElementById('reset-password-page-placeholder');
+    if (resetPasswordPlaceholder) {
+      resetPasswordPlaceholder.outerHTML = resetPasswordContent;
+    } else {
+      console.warn('Reset password page placeholder not found, appending reset password page to end');
+      appRoot.insertAdjacentHTML('beforeend', resetPasswordContent);
+    }
     
     // Append confirm email page
     appRoot.insertAdjacentHTML('beforeend', confirmEmailContent);

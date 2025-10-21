@@ -123,6 +123,9 @@ function updateRequirementIndicator(element, isValid) {
 export function setupResetPasswordPage() {
   console.group('[spa-reset] setupResetPasswordPage')
   console.log('[spa-reset] setupResetPasswordPage called at:', new Date().toISOString())
+  console.log('[spa-reset] DOM ready state:', document.readyState)
+  console.log('[spa-reset] window location:', window.location.href)
+  
   try {
     window.addEventListener('hashchange', () => {
       console.log('[spa-reset] hashchange ->', window.location.hash)
@@ -146,6 +149,17 @@ export function setupResetPasswordPage() {
   const successMessage = document.getElementById('resetSuccessMessage')
   const successText = document.getElementById('resetSuccessText')
 
+  console.log('[spa-reset] Form elements found:', {
+    hasForm: !!resetPasswordForm,
+    hasBtn: !!resetSubmitBtn,
+    hasBtnText: !!resetSubmitBtnText,
+    hasBtnSpinner: !!resetSubmitBtnSpinner,
+    hasErrorMessage: !!errorMessage,
+    hasErrorText: !!errorText,
+    hasSuccessMessage: !!successMessage,
+    hasSuccessText: !!successText
+  })
+
   if (!resetPasswordForm || !resetSubmitBtn) {
     console.warn('[spa-reset] Reset password form elements not found', {
       hasForm: !!resetPasswordForm,
@@ -168,6 +182,7 @@ export function setupResetPasswordPage() {
   console.log('[spa-reset] Adding submit event listener to form:', resetPasswordForm)
   resetPasswordForm.addEventListener('submit', async (e) => {
     e.preventDefault()
+    console.log('[spa-reset] FORM SUBMIT EVENT TRIGGERED')
     console.log('[spa-reset] submit handler invoked')
     console.log('[spa-reset] current hash:', window.location.hash)
     console.log('[spa-reset] current search:', window.location.search)
@@ -178,6 +193,7 @@ export function setupResetPasswordPage() {
   console.log('[spa-reset] Adding click event listener to button:', resetSubmitBtn)
   resetSubmitBtn.addEventListener('click', async (e) => {
     e.preventDefault()
+    console.log('[spa-reset] BUTTON CLICK EVENT TRIGGERED')
     console.log('[spa-reset] button click handler invoked')
     console.log('[spa-reset] current hash:', window.location.hash)
     console.log('[spa-reset] current search:', window.location.search)
