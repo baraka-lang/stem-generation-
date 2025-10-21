@@ -307,74 +307,119 @@ export function setupResetPasswordPage() {
       // Also check query parameters (for Supabase generated links)
       const searchParams = new URLSearchParams(rawSearch)
       
-      // Get tokens from either source
+      // Get tokens from either source - prioritize token_hash for PKCE flow
+      const tokenHash = hashParams.get('token_hash') || searchParams.get('token_hash')
       const accessToken = hashParams.get('access_token') || searchParams.get('access_token')
       const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token')
       const isFallback = hashParams.get('fallback') === 'true' || searchParams.get('fallback') === 'true'
       const email = hashParams.get('email') || searchParams.get('email')
       
       console.log('[spa-reset] token sources', { 
+        hasTokenHash: !!tokenHash,
         hasAccess: !!accessToken, 
         hasRefresh: !!refreshToken, 
         isFallback, 
         email,
         hashTokens: { 
+          tokenHash: hashParams.get('token_hash'),
           access: hashParams.get('access_token'), 
           refresh: hashParams.get('refresh_token') 
         },
         searchTokens: { 
+          tokenHash: searchParams.get('token_hash'),
           access: searchParams.get('access_token'), 
           refresh: searchParams.get('refresh_token') 
         }
       })
 
-      if (!accessToken || !refreshToken) {
-        if (isFallback && email) {
-          // Handle fallback mode - show error but allow user to request new reset
-          showError('This is a fallback reset link. Please request a new password reset email.')
-          console.groupEnd()
-          return
-        } else {
+      // Try PKCE flow first (using token_hash) - this is the recommended approach
+      if (tokenHash) {
+        console.log('[spa-reset] Using PKCE flow with token_hash')
+        console.time('[spa-reset] verifyOtp')
+        const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+          token_hash: tokenHash,
+          type: 'recovery'
+        })
+        console.timeEnd('[spa-reset] verifyOtp')
+        console.log('[spa-reset] verifyOtp result', { verifyData, verifyError })
+
+        if (verifyError) {
           showError('Invalid or expired reset link. Please request a new password reset.')
           console.groupEnd()
           return
         }
+
+        // Now update the password
+        console.time('[spa-reset] updateUser')
+        const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
+        console.timeEnd('[spa-reset] updateUser')
+        console.log('[spa-reset] updateUser result', { updateData, updateError })
+
+        if (updateError) {
+          showError(updateError.message || 'Failed to update password')
+          console.groupEnd()
+          return
+        }
+
+        showSuccess('Password updated successfully! Redirecting...')
+        setTimeout(() => {
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          console.log('[spa-reset] redirecting to', redirectUrl)
+          window.location.href = redirectUrl
+        }, 1500)
+        console.groupEnd()
+        return
       }
 
-      // Validate the tokens and update the password
-      console.time('[spa-reset] setSession')
-      const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken
-      })
-      console.timeEnd('[spa-reset] setSession')
-      console.log('[spa-reset] setSession result', { sessionData, sessionError })
+      // Fallback to implicit flow (using access_token and refresh_token)
+      if (accessToken && refreshToken) {
+        console.log('[spa-reset] Using implicit flow with access_token and refresh_token')
+        console.time('[spa-reset] setSession')
+        const { data: sessionData, error: sessionError } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken
+        })
+        console.timeEnd('[spa-reset] setSession')
+        console.log('[spa-reset] setSession result', { sessionData, sessionError })
 
-      if (sessionError) {
+        if (sessionError) {
+          showError('Invalid or expired reset link. Please request a new password reset.')
+          console.groupEnd()
+          return
+        }
+
+        console.time('[spa-reset] updateUser')
+        const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
+        console.timeEnd('[spa-reset] updateUser')
+        console.log('[spa-reset] updateUser result', { updateData, updateError })
+
+        if (updateError) {
+          showError(updateError.message || 'Failed to update password')
+          console.groupEnd()
+          return
+        }
+
+        showSuccess('Password updated successfully! Redirecting...')
+        setTimeout(() => {
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          console.log('[spa-reset] redirecting to', redirectUrl)
+          window.location.href = redirectUrl
+        }, 1500)
+        console.groupEnd()
+        return
+      }
+
+      // No valid tokens found
+      if (isFallback && email) {
+        // Handle fallback mode - show error but allow user to request new reset
+        showError('This is a fallback reset link. Please request a new password reset email.')
+        console.groupEnd()
+        return
+      } else {
         showError('Invalid or expired reset link. Please request a new password reset.')
         console.groupEnd()
         return
       }
-
-      console.time('[spa-reset] updateUser')
-      const { data: updateData, error: updateError } = await supabase.auth.updateUser({ password })
-      console.timeEnd('[spa-reset] updateUser')
-      console.log('[spa-reset] updateUser result', { updateData, updateError })
-
-      if (updateError) {
-        showError(updateError.message || 'Failed to update password')
-        console.groupEnd()
-        return
-      }
-
-      showSuccess('Password updated successfully! Redirecting...')
-      setTimeout(() => {
-        const redirectUrl = resetPasswordConfig.redirectUrl || '/'
-        console.log('[spa-reset] redirecting to', redirectUrl)
-        window.location.href = redirectUrl
-      }, 1500)
-      console.groupEnd()
-      return
 
     } catch (error) {
       console.error('[spa-reset] Password reset error:', error)
