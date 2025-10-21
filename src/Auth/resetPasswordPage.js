@@ -467,7 +467,49 @@ export function setupResetPasswordPage() {
         return
       }
 
-      // No valid tokens found
+      // No valid tokens found - check if user is already authenticated
+      console.log('[spa-reset] No tokens found, checking if user is already authenticated')
+      
+      // Check if user is already authenticated (for testing or direct access)
+      const { data: { session }, error: sessionError } = await activeSupabase.auth.getSession()
+      console.log('[spa-reset] Current session check:', { 
+        hasSession: !!session, 
+        hasUser: !!session?.user,
+        error: sessionError?.message 
+      })
+      
+      if (session && session.user) {
+        console.log('[spa-reset] User already authenticated, proceeding with password update')
+        console.log('[spa-reset] Authenticated user:', session.user.email)
+        
+        // User is already authenticated, proceed with password update
+        console.time('[spa-reset] updateUser')
+        console.log('[spa-reset] Updating password for authenticated user')
+        const { data: updateData, error: updateError } = await activeSupabase.auth.updateUser({ password })
+        console.timeEnd('[spa-reset] updateUser')
+        console.log('[spa-reset] Password update result:', { 
+          success: !updateError,
+          error: updateError?.message
+        })
+
+        if (updateError) {
+          console.error('[spa-reset] updateUser failed:', updateError)
+          showError(updateError.message || 'Failed to update password')
+          console.groupEnd()
+          return
+        }
+
+        showSuccess('Password updated successfully! Redirecting...')
+        setTimeout(() => {
+          const redirectUrl = resetPasswordConfig.redirectUrl || '/'
+          console.log('[spa-reset] redirecting to', redirectUrl)
+          window.location.href = redirectUrl
+        }, 1500)
+        console.groupEnd()
+        return
+      }
+      
+      // No session and no tokens - show error
       if (isFallback && email) {
         // Handle fallback mode - show error but allow user to request new reset
         showError('This is a fallback reset link. Please request a new password reset email.')
