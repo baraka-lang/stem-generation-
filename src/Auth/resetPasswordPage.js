@@ -162,10 +162,10 @@ export function setupResetPasswordPage() {
   const resetSubmitBtnText = document.getElementById('resetSubmitBtnText')
   const resetSubmitBtnSpinner = document.getElementById('resetSubmitBtnSpinner')
   
-  const errorMessage = document.getElementById('resetErrorMessage')
-  const errorText = document.getElementById('resetErrorText')
-  const successMessage = document.getElementById('resetSuccessMessage')
-  const successText = document.getElementById('resetSuccessText')
+  const errorMessage = document.getElementById('passwordResetErrorAlert')
+  const errorText = document.getElementById('passwordResetErrorText')
+  const successMessage = document.getElementById('passwordResetSuccessAlert')
+  const successText = document.getElementById('passwordResetSuccessText')
 
 
   if (!resetPasswordForm || !resetSubmitBtn) {
@@ -660,15 +660,31 @@ export function setupResetPasswordPage() {
    * Show error message
    */
   function showError(message) {
-    if (errorText) errorText.textContent = message
-    if (errorMessage) errorMessage.classList.remove('hidden')
-    if (successMessage) successMessage.classList.add('hidden')
+    console.log('[spa-reset] Showing error:', message)
+    
+    if (errorText) {
+      errorText.textContent = message
+    } else {
+      console.error('[spa-reset] Error text element not found!')
+    }
+    
+    if (errorMessage) {
+      errorMessage.classList.remove('hidden')
+    } else {
+      console.error('[spa-reset] Error message element not found!')
+    }
+    
+    if (successMessage) {
+      successMessage.classList.add('hidden')
+    }
   }
 
   /**
    * Show success message
    */
   function showSuccess(message) {
+    console.log('[spa-reset] Showing success:', message)
+    
     if (successText) successText.textContent = message
     if (successMessage) successMessage.classList.remove('hidden')
     if (errorMessage) errorMessage.classList.add('hidden')
