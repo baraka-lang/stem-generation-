@@ -48,15 +48,17 @@ export async function signUp(email, password, fullName) {
   }
 
   try {
-    // Use a different approach - create user without email confirmation
-    // and handle confirmation manually via our custom email service
+    // Create user WITHOUT triggering Supabase's default email confirmation
+    // We'll handle all email confirmation via our custom Edge Function
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: {
           full_name: fullName
-        }
+        },
+        emailRedirectTo: null, // Disable default email redirect
+        captchaToken: null
       }
     })
     
@@ -71,16 +73,16 @@ export async function signUp(email, password, fullName) {
     const timeDiff = now.getTime() - userCreatedAt.getTime()
     const isRecentUser = timeDiff < 5 * 60 * 1000 // 5 minutes in milliseconds
     
-    // Send confirmation email for both new users and existing unconfirmed users
+    // Send confirmation email ONLY via our custom Edge Function
     if (data.user && !data.user.email_confirmed_at) {
-      const confirmationUrl = `${window.location.origin}#login`
+      const confirmationUrl = `${window.location.origin}#confirm-email`
       const emailResult = await sendConfirmationEmail(email, confirmationUrl)
       
       if (!emailResult.success) {
         console.error('Custom confirmation email failed:', emailResult.error)
-        // Continue anyway - Supabase will send default email
+        return { user: null, error: { message: 'Failed to send confirmation email' } }
       } else {
-        console.log('Confirmation email sent to:', email)
+        console.log('Custom confirmation email sent to:', email)
       }
       
       // Return different response based on whether user is new or existing
@@ -138,6 +140,8 @@ export async function signIn(email, password) {
  * @returns {Promise<{error: AuthError | null}>}
  */
 export async function signOut() {
+  console.log('🚪 signOut() called')
+  
   if (!supabase) {
     const error = { message: 'Supabase not configured. Please check your .env file.' }
     console.error('Sign out error:', error.message)
@@ -145,6 +149,7 @@ export async function signOut() {
   }
 
   try {
+    console.log('🚪 Calling supabase.auth.signOut()...')
     const { error } = await supabase.auth.signOut()
     
     if (error) {
@@ -152,7 +157,7 @@ export async function signOut() {
       return { error }
     }
     
-    console.log('Sign out successful')
+    console.log('✅ Sign out successful')
     return { error: null }
   } catch (error) {
     console.error('Sign out exception:', error)

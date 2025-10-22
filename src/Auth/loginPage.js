@@ -668,6 +668,68 @@ export function setupLoginPage() {
   }
 
   /**
+   * Check for email verification notification and show success message
+   */
+  function checkEmailVerificationNotification() {
+    const emailVerified = localStorage.getItem('emailVerified')
+    const verifiedEmail = localStorage.getItem('verifiedEmail')
+    
+    if (emailVerified === 'true' && verifiedEmail) {
+      console.log('[login-page] Email verification detected for:', verifiedEmail)
+      
+      // Show success notification
+      showEmailVerificationSuccess(verifiedEmail)
+      
+      // Clear the stored verification data
+      localStorage.removeItem('emailVerified')
+      localStorage.removeItem('verifiedEmail')
+    }
+  }
+
+  /**
+   * Show email verification success notification on login page
+   */
+  function showEmailVerificationSuccess(email) {
+    // Create notification element
+    const notification = document.createElement('div')
+    notification.id = 'emailVerificationNotification'
+    notification.className = 'fixed top-4 right-4 z-50 max-w-md'
+    notification.innerHTML = `
+      <div class="bg-green-500/90 backdrop-blur-sm border border-green-400/30 rounded-lg p-4 shadow-lg">
+        <div class="flex items-start space-x-3">
+          <div class="flex-shrink-0">
+            <i data-lucide="check-circle" class="w-5 h-5 text-green-100"></i>
+          </div>
+          <div class="flex-1">
+            <h3 class="text-sm font-medium text-green-100">Email Verified!</h3>
+            <p class="text-sm text-green-200 mt-1">
+              Your email <strong>${email}</strong> has been successfully verified. You can now log in.
+            </p>
+          </div>
+          <button onclick="this.closest('.fixed').remove()" class="flex-shrink-0 text-green-200 hover:text-green-100">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+    `
+    
+    // Add to page
+    document.body.appendChild(notification)
+    
+    // Initialize Lucide icons
+    if (window.lucide) {
+      window.lucide.createIcons()
+    }
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.remove()
+      }
+    }, 5000)
+  }
+
+  /**
    * Get user-friendly error message
    */
   function getErrorMessage(error) {
@@ -694,6 +756,9 @@ export function setupLoginPage() {
 
     return error.message || 'An error occurred'
   }
+
+  // Check for email verification notification
+  checkEmailVerificationNotification()
 
   // Initialize password validation when Lucide is ready
   const waitForLucide = () => {

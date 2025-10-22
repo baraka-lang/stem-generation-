@@ -3141,6 +3141,134 @@ function setupRouteHandling() {
   
 }
 
+/**
+ * Handle email verification when user clicks confirmation link
+ */
+async function handleEmailVerification() {
+  try {
+    console.log('[email-verification] Starting email verification process')
+    
+    // Parse URL parameters to get verification tokens
+    const urlParams = new URLSearchParams(window.location.search)
+    const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '')
+    
+    const accessToken = urlParams.get('access_token') || hashParams.get('access_token')
+    const refreshToken = urlParams.get('refresh_token') || hashParams.get('refresh_token')
+    const type = urlParams.get('type') || hashParams.get('type')
+    
+    console.log('[email-verification] Found tokens:', { 
+      hasAccessToken: !!accessToken, 
+      hasRefreshToken: !!refreshToken, 
+      type 
+    })
+    
+    if (!accessToken || !refreshToken) {
+      console.log('[email-verification] No verification tokens found')
+      return
+    }
+    
+    if (type !== 'signup') {
+      console.log('[email-verification] Not a signup verification, type:', type)
+      return
+    }
+    
+    // Import supabase client
+    const { supabase } = await import('./Auth/index.js')
+    
+    // Set the session using the verification tokens
+    const { data, error } = await supabase.auth.setSession({
+      access_token: accessToken,
+      refresh_token: refreshToken
+    })
+    
+    if (error) {
+      console.error('[email-verification] Failed to verify email:', error)
+      showEmailVerificationError('Email verification failed. Please try again.')
+      return
+    }
+    
+    console.log('[email-verification] Email verified successfully:', data.user?.email)
+    
+    // Show success message and redirect to login
+    showEmailVerificationSuccess('Email verified successfully! You can now log in.')
+    
+    // Store verification success flag for login page
+    localStorage.setItem('emailVerified', 'true')
+    localStorage.setItem('verifiedEmail', data.user?.email || '')
+    
+    // Clear URL parameters and redirect to login after a delay
+    setTimeout(() => {
+      window.location.hash = '#login'
+    }, 3000)
+    
+  } catch (error) {
+    console.error('[email-verification] Unexpected error:', error)
+    showEmailVerificationError('An unexpected error occurred during email verification.')
+  }
+}
+
+/**
+ * Show email verification success message
+ */
+function showEmailVerificationSuccess(message) {
+  const page = document.getElementById('confirm-email-page')
+  if (!page) return
+  
+  // Update the page content to show success message
+  page.innerHTML = `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="max-w-md w-full text-center">
+        <div class="glass card-border rounded-2xl p-8">
+          <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <i data-lucide="check-circle" class="w-8 h-8 text-green-400"></i>
+          </div>
+          <h2 class="text-2xl font-bold text-white mb-4">Email Verified!</h2>
+          <p class="text-white/70 mb-6">${message}</p>
+          <div class="text-sm text-white/50">
+            Redirecting to login page...
+          </div>
+        </div>
+      </div>
+    </div>
+  `
+  
+  // Initialize Lucide icons
+  if (window.lucide) {
+    window.lucide.createIcons()
+  }
+}
+
+/**
+ * Show email verification error message
+ */
+function showEmailVerificationError(message) {
+  const page = document.getElementById('confirm-email-page')
+  if (!page) return
+  
+  // Update the page content to show error message
+  page.innerHTML = `
+    <div class="min-h-screen flex items-center justify-center p-4">
+      <div class="max-w-md w-full text-center">
+        <div class="glass card-border rounded-2xl p-8">
+          <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <i data-lucide="x-circle" class="w-8 h-8 text-red-400"></i>
+          </div>
+          <h2 class="text-2xl font-bold text-white mb-4">Verification Failed</h2>
+          <p class="text-white/70 mb-6">${message}</p>
+          <a href="#login" class="inline-block px-6 py-3 bg-purple-500 hover:bg-purple-600 rounded-lg text-white font-medium transition-colors">
+            Go to Login
+          </a>
+        </div>
+      </div>
+    </div>
+  `
+  
+  // Initialize Lucide icons
+  if (window.lucide) {
+    window.lucide.createIcons()
+  }
+}
+
 function handleHashChange() {
   const rawHash = window.location.hash.substring(1) // Remove the # symbol
   try { console.log('[router] handleHashChange rawHash=', rawHash) } catch {}
@@ -3179,8 +3307,17 @@ function handleHashChange() {
       break
     case 'confirm-email':
       showPage('confirm-email-page')
+      // Handle email verification tokens if present
+      handleEmailVerification()
       break
     case 'profile':
+      // Check if user is authenticated before showing profile page
+      const authGuard = getAuthGuard()
+      if (!authGuard.getIsAuthenticated()) {
+        // Redirect to homepage (selection page) if not authenticated
+        showPage('selection-page')
+        break
+      }
       showPage('profile-page')
       break
     default:
@@ -3348,6 +3485,7 @@ async function handleAuthStateChange(event, session, user) {
       } else {
       }
     } else if (event === 'SIGNED_OUT') {
+      console.log('🚪 SIGNED_OUT event received, handling logout...')
 
       // Clear user menu
       await updateUserMenu()
@@ -3367,9 +3505,13 @@ async function handleAuthStateChange(event, session, user) {
       const currentHash = window.location.hash.substring(1)
       const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
       
+      console.log('🚪 Current page:', currentPage, 'Current hash:', currentHash)
+      
       if (!currentHash && currentPage !== 'login-page') {
+        console.log('🚪 Redirecting to login page...')
         showPage('login-page')
       } else {
+        console.log('🚪 Not redirecting - already on login page or hash present')
       }
     }
   } catch (error) {

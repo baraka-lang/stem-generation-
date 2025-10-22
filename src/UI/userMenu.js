@@ -108,6 +108,13 @@ function setupMenuItems() {
   // Logout button
   const logoutBtn = document.getElementById('userMenuLogout')
   if (logoutBtn) {
+    // Check if Supabase is configured and disable logout if not
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      logoutBtn.textContent = 'Logout (Demo Mode)'
+      logoutBtn.style.opacity = '0.5'
+      logoutBtn.title = 'Authentication not configured - logout disabled'
+    }
+    
     logoutBtn.addEventListener('click', () => {
       handleLogoutClick()
     })
@@ -140,12 +147,32 @@ async function handleAccountClick() {
 async function handleLogoutClick() {
   console.log('👋 Logout clicked')
   
+  // Check if Supabase is configured
+  if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+    console.warn('⚠️ Supabase not configured - logout not available')
+    alert('Authentication is not configured. Please set up Supabase environment variables to enable logout functionality.')
+    return
+  }
+  
   try {
+    // Show loading state
+    const logoutBtn = document.getElementById('userMenuLogout')
+    if (logoutBtn) {
+      logoutBtn.textContent = 'Signing out...'
+      logoutBtn.disabled = true
+    }
+    
     const { error } = await signOut()
     
     if (error) {
       console.error('Logout error:', error.message)
       alert('Error signing out. Please try again.')
+      
+      // Reset button state
+      if (logoutBtn) {
+        logoutBtn.textContent = 'Log out'
+        logoutBtn.disabled = false
+      }
       return
     }
     
@@ -154,6 +181,13 @@ async function handleLogoutClick() {
   } catch (error) {
     console.error('Logout exception:', error)
     alert('An unexpected error occurred during logout.')
+    
+    // Reset button state
+    const logoutBtn = document.getElementById('userMenuLogout')
+    if (logoutBtn) {
+      logoutBtn.textContent = 'Log out'
+      logoutBtn.disabled = false
+    }
   }
 }
 
