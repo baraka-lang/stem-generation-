@@ -3153,34 +3153,62 @@ async function handleEmailVerification() {
     const urlParams = new URLSearchParams(window.location.search)
     const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '')
     
+    // Check for new token format (from custom email template)
+    const token = urlParams.get('token') || hashParams.get('token')
+    const email = urlParams.get('email') || hashParams.get('email')
+    
+    // Check for old token format (from Supabase default)
     const accessToken = urlParams.get('access_token') || hashParams.get('access_token')
     const refreshToken = urlParams.get('refresh_token') || hashParams.get('refresh_token')
     const type = urlParams.get('type') || hashParams.get('type')
     
     console.log('[email-verification] Found tokens:', { 
+      hasToken: !!token,
+      hasEmail: !!email,
       hasAccessToken: !!accessToken, 
       hasRefreshToken: !!refreshToken, 
       type 
     })
     
-    if (!accessToken || !refreshToken) {
-      console.log('[email-verification] No verification tokens found')
-      return
-    }
-    
-    if (type !== 'signup') {
-      console.log('[email-verification] Not a signup verification, type:', type)
-      return
-    }
-    
     // Import supabase client
     const { supabase } = await import('./Auth/index.js')
     
-    // Set the session using the verification tokens
-    const { data, error } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken
-    })
+    let data, error
+    
+    // Handle new token format (token hash for verifyOtp)
+    if (token) {
+      console.log('[email-verification] Using new token format (verifyOtp)')
+      
+      const result = await supabase.auth.verifyOtp({
+        token_hash: token,
+        type: 'signup'
+      })
+      
+      data = result.data
+      error = result.error
+      
+    } 
+    // Handle old token format (access_token/refresh_token for setSession)
+    else if (accessToken && refreshToken) {
+      console.log('[email-verification] Using old token format (setSession)')
+      
+      if (type !== 'signup') {
+        console.log('[email-verification] Not a signup verification, type:', type)
+        return
+      }
+      
+      const result = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken
+      })
+      
+      data = result.data
+      error = result.error
+      
+    } else {
+      console.log('[email-verification] No verification tokens found')
+      return
+    }
     
     if (error) {
       console.error('[email-verification] Failed to verify email:', error)
@@ -3195,7 +3223,7 @@ async function handleEmailVerification() {
     
     // Store verification success flag for login page
     localStorage.setItem('emailVerified', 'true')
-    localStorage.setItem('verifiedEmail', data.user?.email || '')
+    localStorage.setItem('verifiedEmail', data.user?.email || email || '')
     
     // Clear URL parameters and redirect to login after a delay
     setTimeout(() => {
