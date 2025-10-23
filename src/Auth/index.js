@@ -48,24 +48,7 @@ export async function signUp(email, password, fullName) {
   }
 
   try {
-    // First, check if user already exists by attempting to sign in with a dummy password
-    // This will fail if user doesn't exist, but won't log them in if they do exist
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email,
-      password: 'dummy-password-to-check-existence'
-    })
-    
-    // If the error is about invalid credentials (not user not found), user exists
-    if (signInError && signInError.message.includes('Invalid login credentials')) {
-      console.log('User already exists:', email)
-      return { 
-        user: null, 
-        error: { message: 'User already registered' }, 
-        isNewUser: false 
-      }
-    }
-    
-    // If we get here, user doesn't exist, so proceed with signup
+    // Proceed directly with signup - Supabase will handle duplicate detection
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -83,13 +66,35 @@ export async function signUp(email, password, fullName) {
       return { user: null, error }
     }
     
-    // Store email in localStorage for confirm-email page
-    if (data.user?.email) {
+    // Check if this is a new user by examining the response
+    // Supabase returns different behavior for existing vs new users
+    let isNewUser = false
+    
+    // If we get a user object, check if it was actually created
+    if (data.user) {
+      // Check if the user was just created by looking at the session
+      // New users typically don't have a session immediately
+      isNewUser = !data.session || data.session === null
+      
+      // Also check if email_confirmed_at is null (indicating new user)
+      if (data.user.email_confirmed_at === null) {
+        isNewUser = true
+      }
+    }
+    
+    console.log('Sign up result:', { 
+      email: data.user?.email, 
+      isNewUser,
+      hasSession: !!data.session,
+      emailConfirmedAt: data.user?.email_confirmed_at
+    })
+    
+    // Store email in localStorage for confirm-email page only for new users
+    if (data.user?.email && isNewUser) {
       localStorage.setItem('pendingEmail', data.user.email)
     }
     
-    console.log('Sign up successful for new user:', data.user?.email)
-    return { user: data.user, error: null, isNewUser: true }
+    return { user: data.user, error: null, isNewUser }
   } catch (error) {
     console.error('Sign up exception:', error)
     return { user: null, error: { message: 'An unexpected error occurred' } }
