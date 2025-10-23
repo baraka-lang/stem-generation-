@@ -67,15 +67,23 @@ export async function signUp(email, password, fullName) {
       return { user: null, error }
     }
     
-    // Store email in localStorage for confirm-email page
-    if (data.user?.email) {
+    // Check if this is a new user or existing user
+    // If the user already exists, Supabase returns the user but doesn't send confirmation email
+    const isNewUser = data.user && data.user.created_at && 
+      new Date(data.user.created_at).getTime() > (Date.now() - 5000) // Created within last 5 seconds
+    
+    // Store email in localStorage for confirm-email page only for new users
+    if (data.user?.email && isNewUser) {
       localStorage.setItem('pendingEmail', data.user.email)
     }
     
-    // Supabase will automatically send confirmation email via custom SMTP
-    // No need to call Edge Function - this prevents duplicate emails
-    console.log('Sign up successful:', data.user?.email)
-    return { user: data.user, error: null, isNewUser: true }
+    console.log('Sign up result:', { 
+      email: data.user?.email, 
+      isNewUser, 
+      createdAt: data.user?.created_at 
+    })
+    
+    return { user: data.user, error: null, isNewUser }
   } catch (error) {
     console.error('Sign up exception:', error)
     return { user: null, error: { message: 'An unexpected error occurred' } }
