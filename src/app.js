@@ -41,6 +41,7 @@ import { initializeAuthGuard, addAuthListener } from './Auth/authGuard.js'
 import { setupLoginPage } from './Auth/loginPage.js'
 import { setupResetPasswordPage } from './Auth/resetPasswordPage.js'
 import { setupSelectionPage } from './Auth/selectionPage.js'
+import { setupTechnoGeneratorPage } from './Auth/tecnoGeneratorPage.js'
 import { setupProfilePage } from './Auth/profilePage.js'
 import { initializeUserProfile } from './Auth/userProfile.js'
 import { checkCredits, updateCredits } from './Auth/userProfile.js'
@@ -3342,6 +3343,18 @@ function initTechnoGenerator() {
   injectGlobalStyles()
   initializeStemControlValues()
 
+  // Check authentication status for techno generator page
+  setTimeout(async () => {
+    try {
+      const { checkAuthenticationStatus } = await import('./Auth/tecnoGeneratorPage.js')
+      if (typeof checkAuthenticationStatus === 'function') {
+        checkAuthenticationStatus()
+      }
+    } catch (error) {
+      console.error('Error loading techno generator auth:', error)
+    }
+  }, 100)
+
   // Build cards
   const container = document.getElementById('stem-container')
   if (container && PROMPTS_MODE === 'builder') {
@@ -3425,6 +3438,7 @@ export async function initApp() {
     setupLoginPage()
     setupResetPasswordPage()
     setupSelectionPage()
+    setupTechnoGeneratorPage()
     setupProfilePage()
 
     // Determine initial page based on URL hash first, then auth state

@@ -1,5 +1,5 @@
 <!-- Techno Generator Page -->
-<div id="techno-generator-page" class="hidden">
+<div id="techno-generator-page" class="hidden min-h-screen flex flex-col">
   <!-- Session setup modal; displayed once when the Techno page loads -->
   <div id="sessionSetupModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="sessionSetupOverlay"></div>
@@ -71,20 +71,23 @@
       </div>
     </div>
   </div>
-  
-  <!-- Guest Mode Notice -->
-  <div id="guestModeNotice" class="hidden mx-4 mb-4 p-3 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm">
-    <div class="flex items-center justify-center">
-      <i data-lucide="info" class="w-4 h-4 mr-2"></i>
-      <span>You're in guest mode - generate stems freely! Login to save your work.</span>
+
+  <!-- Main Content -->
+  <div class="flex-1 flex flex-col">
+    <!-- Guest Mode Notice -->
+    <div id="guestModeNotice" class="hidden mx-4 mb-4 p-3 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm">
+      <div class="flex items-center justify-center">
+        <i data-lucide="info" class="w-4 h-4 mr-2"></i>
+        <span>You're in guest mode - generate stems freely! Login to save your work.</span>
+      </div>
     </div>
+    
+    <!-- Stem Cards -->
+    <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
+    <!-- Stem container: always 3 columns, with smaller gaps on mobile to reduce overall width. -->
+    <main id="stem-container" class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-3 gap-2 sm:gap-4 select-none cursor-default">
+      <!-- Cards injected by app.js -->
+    </main>
   </div>
-  
-  <!-- Stem Cards -->
-  <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
-  <!-- Stem container: always 3 columns, with smaller gaps on mobile to reduce overall width. -->
-  <main id="stem-container" class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-3 gap-2 sm:gap-4 select-none cursor-default">
-    <!-- Cards injected by app.js -->
-  </main>
 </div>
 
