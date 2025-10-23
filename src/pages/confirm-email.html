@@ -1,4 +1,4 @@
-<!-- Email Confirmation Preview Page -->
+<!-- Email Confirmation Page -->
 <div id="confirm-email-page" class="hidden min-h-screen flex flex-col">
   <!-- Header -->
   <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
@@ -33,149 +33,171 @@
 
   <!-- Main Content -->
   <div class="flex-1 flex items-center justify-center p-4">
-    <div class="max-w-6xl w-full">
-      <!-- Page Header -->
-      <div class="text-center mb-8">
-        <h1 class="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
-          343 Labs AI Music Studio
+    <div class="max-w-md w-full">
+      <!-- Confirmation Card -->
+      <div class="glass card-border rounded-2xl p-8 text-center">
+        <!-- Success Icon -->
+        <div class="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+          <i data-lucide="mail-check" class="w-8 h-8 text-white"></i>
+        </div>
+
+        <!-- Title -->
+        <h1 class="text-3xl font-bold text-white mb-4">
+          Check Your Email
         </h1>
-        <p class="text-xl text-white/60 mb-8">
-          Email Template Preview
+
+        <!-- Description -->
+        <p class="text-white/70 mb-8 leading-relaxed">
+          We've sent a confirmation link to your email address. Please check your inbox and click the link to verify your account.
         </p>
-      </div>
 
-    <!-- Preview Controls -->
-    <div class="glass card-border rounded-2xl p-6 mb-8">
-      <div class="flex items-center justify-between">
-        <h2 class="text-2xl font-bold text-white">Email Templates</h2>
-        <div class="flex gap-4">
-          <button id="previewConfirmation" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">
-            Confirmation Email
-          </button>
-          <button id="previewPasswordReset" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">
-            Password Reset
-          </button>
-          <button id="previewWelcome" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">
-            Welcome Email
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Email Preview Container -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      <!-- Desktop Preview -->
-      <div class="glass card-border rounded-2xl p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-white">Desktop Preview</h3>
-          <div class="flex items-center text-sm text-white/60">
-            <i data-lucide="monitor" class="w-4 h-4 mr-2"></i>
-            Desktop
+        <!-- Email Display -->
+        <div class="bg-white/5 border border-white/10 rounded-lg p-4 mb-6">
+          <div class="flex items-center justify-center space-x-2">
+            <i data-lucide="mail" class="w-4 h-4 text-white/60"></i>
+            <span id="emailDisplay" class="text-white/80 font-medium">user@example.com</span>
           </div>
         </div>
-        <div class="bg-white rounded-lg overflow-hidden shadow-lg">
-          <iframe 
-            id="desktopPreview" 
-            class="w-full h-96 border-0"
-            src="about:blank"
-            sandbox="allow-same-origin"
-          ></iframe>
+
+        <!-- Confirm Email Button -->
+        <button id="confirmEmailBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 mb-4">
+          Confirm Email
+        </button>
+
+        <!-- Resend Email -->
+        <button id="resendEmailBtn" class="w-full px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/70 font-medium transition-all duration-300 mb-6">
+          Resend Confirmation Email
+        </button>
+
+        <!-- Help Text -->
+        <div class="text-sm text-white/50 space-y-2">
+          <p>Didn't receive the email? Check your spam folder.</p>
+          <p>Still having trouble? Contact our support team.</p>
         </div>
       </div>
 
-      <!-- Mobile Preview -->
-      <div class="glass card-border rounded-2xl p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-white">Mobile Preview</h3>
-          <div class="flex items-center text-sm text-white/60">
-            <i data-lucide="smartphone" class="w-4 h-4 mr-2"></i>
-            Mobile
-          </div>
-        </div>
-        <div class="bg-white rounded-lg overflow-hidden shadow-lg max-w-sm mx-auto">
-          <iframe 
-            id="mobilePreview" 
-            class="w-full h-96 border-0"
-            src="about:blank"
-            sandbox="allow-same-origin"
-          ></iframe>
-        </div>
+      <!-- Back to Login -->
+      <div class="text-center mt-6">
+        <a
+          href="#login"
+          class="text-sm text-purple-400 hover:text-purple-300 transition flex items-center justify-center space-x-2"
+        >
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          <span>Back to Login</span>
+        </a>
       </div>
-    </div>
-
-    <!-- Template Information -->
-    <div class="glass card-border rounded-2xl p-6 mt-8">
-      <h3 class="text-lg font-semibold text-white mb-4">Template Information</h3>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div>
-          <h4 class="text-sm font-medium text-white/70 mb-2">Confirmation Email</h4>
-          <p class="text-sm text-white/60">Sent when users sign up to verify their email address</p>
-        </div>
-        <div>
-          <h4 class="text-sm font-medium text-white/70 mb-2">Password Reset</h4>
-          <p class="text-sm text-white/60">Sent when users request to reset their password</p>
-        </div>
-        <div>
-          <h4 class="text-sm font-medium text-white/70 mb-2">Welcome Email</h4>
-          <p class="text-sm text-white/60">Sent after successful email confirmation</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Back to Login -->
-    <div class="text-center mt-8">
-      <a
-        href="#login"
-        class="text-sm text-purple-400 hover:text-purple-300 transition"
-      >
-        ← Back to Login
-      </a>
-    </div>
     </div>
   </div>
 </div>
 
 <script>
-// Email Preview Logic
+// Email Confirmation Logic
 document.addEventListener('DOMContentLoaded', function() {
-  const previewConfirmation = document.getElementById('previewConfirmation')
-  const previewPasswordReset = document.getElementById('previewPasswordReset')
-  const previewWelcome = document.getElementById('previewWelcome')
-  const desktopPreview = document.getElementById('desktopPreview')
-  const mobilePreview = document.getElementById('mobilePreview')
+  const confirmEmailBtn = document.getElementById('confirmEmailBtn')
+  const resendEmailBtn = document.getElementById('resendEmailBtn')
+  const emailDisplay = document.getElementById('emailDisplay')
+  const landingLoginBtn = document.getElementById('landingLoginBtn')
 
-  // Load email template
-  function loadEmailTemplate(templateName) {
-    const templatePath = `src/pages/EmailTemplates/${templateName}.html`
+  // Get email from URL parameters or localStorage
+  function getEmailFromParams() {
+    const urlParams = new URLSearchParams(window.location.search)
+    const email = urlParams.get('email') || localStorage.getItem('pendingEmail')
+    return email || 'user@example.com'
+  }
+
+  // Update email display
+  function updateEmailDisplay() {
+    const email = getEmailFromParams()
+    if (emailDisplay) {
+      emailDisplay.textContent = email
+    }
+  }
+
+  // Handle confirm email button click
+  function handleConfirmEmail() {
+    const email = getEmailFromParams()
     
-    // Update iframe sources
-    desktopPreview.src = templatePath
-    mobilePreview.src = templatePath
+    // Show loading state
+    confirmEmailBtn.innerHTML = `
+      <i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>
+      Confirming...
+    `
+    confirmEmailBtn.disabled = true
+
+    // Simulate API call to confirm email
+    setTimeout(() => {
+      // In a real app, this would make an API call to confirm the email
+      console.log('Confirming email for:', email)
+      
+      // Show success state
+      confirmEmailBtn.innerHTML = `
+        <i data-lucide="check" class="w-5 h-5 mr-2"></i>
+        Email Confirmed!
+      `
+      confirmEmailBtn.classList.remove('from-purple-500', 'to-pink-600', 'hover:from-purple-600', 'hover:to-pink-700')
+      confirmEmailBtn.classList.add('from-green-500', 'to-emerald-600', 'hover:from-green-600', 'hover:to-emerald-700')
+      
+      // Redirect to login after 2 seconds
+      setTimeout(() => {
+        window.location.href = '#login'
+      }, 2000)
+    }, 2000)
+  }
+
+  // Handle resend email button click
+  function handleResendEmail() {
+    const email = getEmailFromParams()
     
-    // Update active button
-    [previewConfirmation, previewPasswordReset, previewWelcome].forEach(btn => {
-      btn.classList.remove('bg-purple-500/80', 'border-purple-500')
-      btn.classList.add('bg-white/5', 'border-white/10')
-    })
-    
-    event.target.classList.remove('bg-white/5', 'border-white/10')
-    event.target.classList.add('bg-purple-500/80', 'border-purple-500')
+    // Show loading state
+    resendEmailBtn.innerHTML = `
+      <i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>
+      Sending...
+    `
+    resendEmailBtn.disabled = true
+
+    // Simulate API call to resend email
+    setTimeout(() => {
+      console.log('Resending confirmation email to:', email)
+      
+      // Show success state
+      resendEmailBtn.innerHTML = `
+        <i data-lucide="check" class="w-5 h-5 mr-2"></i>
+        Email Sent!
+      `
+      resendEmailBtn.classList.remove('bg-white/5', 'hover:bg-white/10', 'border-white/10')
+      resendEmailBtn.classList.add('bg-green-500/20', 'border-green-500/30', 'text-green-400')
+      
+      // Reset button after 3 seconds
+      setTimeout(() => {
+        resendEmailBtn.innerHTML = 'Resend Confirmation Email'
+        resendEmailBtn.classList.remove('bg-green-500/20', 'border-green-500/30', 'text-green-400')
+        resendEmailBtn.classList.add('bg-white/5', 'hover:bg-white/10', 'border-white/10', 'text-white/70')
+        resendEmailBtn.disabled = false
+      }, 3000)
+    }, 1500)
   }
 
   // Event listeners
-  previewConfirmation.addEventListener('click', (e) => {
-    loadEmailTemplate('confirmation')
-  })
-  
-  previewPasswordReset.addEventListener('click', (e) => {
-    loadEmailTemplate('password-reset')
-  })
-  
-  previewWelcome.addEventListener('click', (e) => {
-    loadEmailTemplate('welcome')
-  })
+  if (confirmEmailBtn) {
+    confirmEmailBtn.addEventListener('click', handleConfirmEmail)
+  }
 
-  // Load confirmation email by default
-  loadEmailTemplate('confirmation')
+  if (resendEmailBtn) {
+    resendEmailBtn.addEventListener('click', handleResendEmail)
+  }
+
+  if (landingLoginBtn) {
+    landingLoginBtn.addEventListener('click', () => {
+      window.location.href = '#login'
+    })
+  }
+
+  // Initialize email display
+  updateEmailDisplay()
+
+  // Initialize Lucide icons
+  if (window.lucide) {
+    window.lucide.createIcons()
+  }
 })
 </script>

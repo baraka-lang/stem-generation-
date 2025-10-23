@@ -72,17 +72,25 @@ export async function signUp(email, password, fullName) {
     const now = new Date()
     const timeDiff = now.getTime() - userCreatedAt.getTime()
     const isRecentUser = timeDiff < 5 * 60 * 1000 // 5 minutes in milliseconds
+    const isNewSignup = timeDiff < 10000 // Less than 10 seconds = fresh signup
     
     // Send confirmation email ONLY via our custom Edge Function
     if (data.user && !data.user.email_confirmed_at) {
-      const confirmationUrl = `${window.location.origin}#confirm-email`
-      const emailResult = await sendConfirmationEmail(email, confirmationUrl)
       
-      if (!emailResult.success) {
-        console.error('Custom confirmation email failed:', emailResult.error)
-        return { user: null, error: { message: 'Failed to send confirmation email' } }
+      // Only send email for truly fresh signups
+      if (isNewSignup) {
+        console.log('Sending confirmation email for fresh signup:', email)
+        const confirmationUrl = `${window.location.origin}#confirm-email`
+        const emailResult = await sendConfirmationEmail(email, confirmationUrl)
+        
+        if (!emailResult.success) {
+          console.error('Custom confirmation email failed:', emailResult.error)
+          return { user: null, error: { message: 'Failed to send confirmation email' } }
+        } else {
+          console.log('Custom confirmation email sent to:', email)
+        }
       } else {
-        console.log('Custom confirmation email sent to:', email)
+        console.log('Skipping email - not a fresh signup (may be existing unconfirmed user)')
       }
       
       // Return different response based on whether user is new or existing
@@ -90,7 +98,7 @@ export async function signUp(email, password, fullName) {
         console.log('New user signup successful:', data.user?.email)
         return { user: data.user, error: null, isNewUser: true }
       } else {
-        console.log('Existing user - confirmation email sent:', data.user?.email)
+        console.log('Existing user - skipped duplicate email:', data.user?.email)
         return { user: data.user, error: null, isNewUser: false }
       }
     }
@@ -124,6 +132,10 @@ export async function signIn(email, password) {
     
     if (error) {
       console.error('Sign in error:', error.message)
+      // Log specific error for unconfirmed emails
+      if (error.message.includes('Email not confirmed')) {
+        console.log('Login blocked: Email not confirmed for', email)
+      }
       return { user: null, error }
     }
     

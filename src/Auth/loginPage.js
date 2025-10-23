@@ -738,9 +738,9 @@ export function setupLoginPage() {
     if (message.includes('invalid login credentials')) {
       return 'Invalid email or password'
     }
-    if (message.includes('email not confirmed')) {
-      return 'Please check your email and click the verification link'
-    }
+  if (message.includes('email not confirmed')) {
+    return 'Please verify your email address before logging in. Check your inbox for the confirmation link.'
+  }
     if (message.includes('too many requests')) {
       return 'Too many attempts. Please try again later'
     }
