@@ -3314,8 +3314,9 @@ function handleHashChange() {
       // Check if user is authenticated before showing profile page
       const authGuard = getAuthGuard()
       if (!authGuard.getIsAuthenticated()) {
-        // Redirect to homepage (selection page) if not authenticated
-        showPage('selection-page')
+        // Redirect to homepage (techno generator page) if not authenticated
+        showPage('techno-generator-page')
+        initTechnoGenerator()
         break
       }
       showPage('profile-page')
@@ -3326,9 +3327,10 @@ function handleHashChange() {
         showPage('reset-password-page')
         break
       }
-      // Default to selection page if no valid hash
+      // Default to techno generator page if no valid hash
       if (!baseRoute) {
-        showPage('selection-page')
+        showPage('techno-generator-page')
+        initTechnoGenerator()
       }
       break
   }
@@ -3434,8 +3436,10 @@ export async function initApp() {
       // If there's a hash, use hash-based routing
       handleHashChange()
     } else {
-      // If no hash, show selection page by default
-      showPage('selection-page')
+      // If no hash, show techno generator page by default
+      console.log('🎛️ Showing techno generator page')
+      showPage('techno-generator-page')
+      initTechnoGenerator()
     }
 
     // console.log('✅ Navigation system ready')
@@ -3480,8 +3484,9 @@ async function handleAuthStateChange(event, session, user) {
         return
       }
       
-      if (!currentHash && currentPage !== 'selection-page') {
-        showPage('selection-page')
+      if (!currentHash && currentPage !== 'techno-generator-page') {
+        showPage('techno-generator-page')
+        initTechnoGenerator()
       } else {
       }
     } else if (event === 'SIGNED_OUT') {

@@ -7,13 +7,14 @@
 export async function loadTemplates() {
   try {
     // Fetch all template files in parallel
-    const [templatesResponse, selectionPageResponse, loginPageResponse, resetPasswordResponse, confirmEmailResponse, profilePageResponse] = await Promise.all([
+    const [templatesResponse, selectionPageResponse, loginPageResponse, resetPasswordResponse, confirmEmailResponse, profilePageResponse, technoGeneratorResponse] = await Promise.all([
       fetch('/src/templates.html'),
       fetch('/src/pages/selection-page.html'),
       fetch('/src/pages/login-page.html'),
       fetch('/src/pages/reset-password.html'),
       fetch('/src/pages/confirm-email.html'),
-      fetch('/src/pages/profile.html')
+      fetch('/src/pages/profile.html'),
+      fetch('/src/pages/techno-generator-page.html')
     ]);
     
  
@@ -42,13 +43,18 @@ export async function loadTemplates() {
       throw new Error(`Failed to load profile page: ${profilePageResponse.status} ${profilePageResponse.statusText}`);
     }
     
-    const [templatesContent, selectionPageContent, loginPageContent, resetPasswordContent, confirmEmailContent, profilePageContent] = await Promise.all([
+    if (!technoGeneratorResponse.ok) {
+      throw new Error(`Failed to load techno generator page: ${technoGeneratorResponse.status} ${technoGeneratorResponse.statusText}`);
+    }
+    
+    const [templatesContent, selectionPageContent, loginPageContent, resetPasswordContent, confirmEmailContent, profilePageContent, technoGeneratorContent] = await Promise.all([
       templatesResponse.text(),
       selectionPageResponse.text(),
       loginPageResponse.text(),
       resetPasswordResponse.text(),
       confirmEmailResponse.text(),
-      profilePageResponse.text()
+      profilePageResponse.text(),
+      technoGeneratorResponse.text()
     ]);
     
     // Find the app root container
@@ -89,6 +95,15 @@ export async function loadTemplates() {
     
     // Append confirm email page
     appRoot.insertAdjacentHTML('beforeend', confirmEmailContent);
+    
+    // Replace the techno generator page placeholder
+    const technoGeneratorPlaceholder = document.getElementById('techno-generator-page-placeholder');
+    if (technoGeneratorPlaceholder) {
+      technoGeneratorPlaceholder.outerHTML = technoGeneratorContent;
+    } else {
+      console.warn('Techno generator page placeholder not found, appending techno generator page to end');
+      appRoot.insertAdjacentHTML('beforeend', technoGeneratorContent);
+    }
     
     // Append profile page
     appRoot.insertAdjacentHTML('beforeend', profilePageContent);
