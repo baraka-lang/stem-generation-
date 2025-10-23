@@ -25,8 +25,7 @@ function setupEventListeners() {
   const backBtn = document.getElementById('backToSelectionBtn')
   if (backBtn) {
     backBtn.addEventListener('click', () => {
-      window.location.hash = '/'
-      // Fallback: directly show selection page if hash change doesn't work
+
       setTimeout(() => {
         if (window.showPage) {
           window.showPage('/')
