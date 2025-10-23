@@ -174,22 +174,36 @@ export function initConfirmEmailPage() {
   const resendEmailBtn = document.getElementById('resendEmailBtn')
   const landingLoginBtn = document.getElementById('landingLoginBtn')
 
+  console.log('Initializing confirm email page...')
+  console.log('Confirm button found:', !!confirmEmailBtn)
+  console.log('Resend button found:', !!resendEmailBtn)
+  console.log('Login button found:', !!landingLoginBtn)
+
   // Update email display
   updateEmailDisplay()
 
   // Event listeners
   if (confirmEmailBtn) {
+    console.log('Adding click listener to confirm button')
     confirmEmailBtn.addEventListener('click', handleConfirmEmail)
+  } else {
+    console.error('Confirm email button not found!')
   }
 
   if (resendEmailBtn) {
+    console.log('Adding click listener to resend button')
     resendEmailBtn.addEventListener('click', handleResendEmail)
+  } else {
+    console.log('Resend email button not found (this is OK if removed)')
   }
 
   if (landingLoginBtn) {
+    console.log('Adding click listener to login button')
     landingLoginBtn.addEventListener('click', () => {
       window.location.href = '#login'
     })
+  } else {
+    console.error('Login button not found!')
   }
 
   // Initialize Lucide icons
@@ -205,6 +219,8 @@ export function initConfirmEmailPage() {
     setTimeout(() => {
       handleConfirmEmail()
     }, 1000)
+  } else {
+    console.log('No token found in URL')
   }
 }
 
