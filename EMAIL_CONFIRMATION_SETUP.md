@@ -7,12 +7,12 @@ This project uses a custom Edge Function to send branded confirmation emails ins
 ## How It Works
 
 1. **User signs up** → `signUp()` called with `emailRedirectTo: null`
-2. **Supabase creates user** but doesn't send email (because `emailRedirectTo: null`)
+2. **Supabase creates user** but doesn't send email (because "Enable email confirmations" is OFF)
 3. **Client-side code** calls Edge Function to send custom branded email
 4. **User receives ONE email** with confirmation link
-5. **User clicks link** → email is confirmed in Supabase
-6. **User can now log in** (Supabase checks `email_confirmed_at` field)
-7. **Login blocked** if email not confirmed (enforced by Supabase Auth)
+5. **User clicks link** → calls `verifyOtp()` which sets `email_confirmed_at` field
+6. **User tries to log in** → custom check in `signIn()` verifies `email_confirmed_at` exists
+7. **Login succeeds only if email is confirmed** (enforced by our custom code)
 
 ## Required Supabase Dashboard Configuration
 
@@ -20,10 +20,11 @@ This project uses a custom Edge Function to send branded confirmation emails ins
 Navigate to: **Authentication > Providers > Email**
 
 **Required Settings:**
-- ✅ **Enable email confirmations**: ON (enforces verification)
-- ✅ **Confirm email**: ON (users must verify)
-- ✅ **Secure email change**: ON
-- ❌ **Mailer autoconfirm**: OFF (prevents automatic confirmation)
+- ❌ **Enable email confirmations**: OFF (disables Supabase's automatic emails)
+- ⚠️ **IMPORTANT**: This means Supabase won't enforce email verification automatically
+- ✅ **Secure email change**: ON (keep this enabled)
+
+**Why this works**: When "Enable email confirmations" is OFF, Supabase won't send any automatic confirmation emails, even if `emailRedirectTo` is set. This completely stops the duplicate emails.
 
 ### Email Template Configuration
 Navigate to: **Authentication > Email Templates > Confirm signup**
@@ -103,13 +104,13 @@ Remove any existing test users from Supabase Dashboard
 
 ### Users Can Login Without Confirming
 
-1. **Verify Supabase Settings**:
-   - Ensure "Confirm email" is checked
-   - Check that "Enable email confirmations" is ON
+1. **Verify Code Implementation**:
+   - Check that manual verification is implemented in `signIn()` function
+   - Ensure `email_confirmed_at` field is being checked
 
 2. **Test with Fresh User**:
    - Create new test user
-   - Try logging in immediately (should be blocked)
+   - Try logging in immediately (should be blocked with custom error message)
 
 ### No Confirmation Emails Being Sent
 
@@ -146,7 +147,7 @@ RESEND_API_KEY=your_resend_api_key  # In Edge Function environment
 ### Console Logs to Watch
 - `"Sending confirmation email for fresh signup"` - Email being sent
 - `"Skipping email - not a fresh signup"` - Duplicate prevented
-- `"Login blocked: Email not confirmed"` - Verification working
+- `"Login blocked: Email not verified for"` - Manual verification working
 - `"Custom confirmation email sent to:"` - Success
 
 ### Edge Function Logs
@@ -156,7 +157,8 @@ RESEND_API_KEY=your_resend_api_key  # In Edge Function environment
 
 ## Security Notes
 
-- Email verification is enforced at the Supabase Auth level
+- Email verification is enforced by our custom code in the `signIn()` function
 - Users cannot log in until `email_confirmed_at` is set
 - The 10-second fresh signup check prevents race conditions
 - Server-side duplicate prevention provides additional safety
+- Manual verification check ensures security even with Supabase's auto-verification disabled

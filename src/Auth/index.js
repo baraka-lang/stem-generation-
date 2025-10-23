@@ -139,6 +139,18 @@ export async function signIn(email, password) {
       return { user: null, error }
     }
     
+    // MANUAL EMAIL VERIFICATION CHECK
+    // Since we disabled Supabase's auto-verification, we check manually
+    if (data.user && !data.user.email_confirmed_at) {
+      console.log('Login blocked: Email not verified for', email)
+      return { 
+        user: null, 
+        error: { 
+          message: 'Email not confirmed. Please check your email and click the confirmation link.' 
+        } 
+      }
+    }
+    
     console.log('Sign in successful:', data.user?.email)
     return { user: data.user, error: null }
   } catch (error) {
