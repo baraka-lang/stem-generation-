@@ -67,42 +67,8 @@ export async function signUp(email, password, fullName) {
       return { user: null, error }
     }
     
-    // Check if this is an existing user or new user
-    const userCreatedAt = new Date(data.user.created_at)
-    const now = new Date()
-    const timeDiff = now.getTime() - userCreatedAt.getTime()
-    const isRecentUser = timeDiff < 5 * 60 * 1000 // 5 minutes in milliseconds
-    const isNewSignup = timeDiff < 10000 // Less than 10 seconds = fresh signup
-    
-    // Send confirmation email ONLY via our custom Edge Function
-    if (data.user && !data.user.email_confirmed_at) {
-      
-      // Only send email for truly fresh signups
-      if (isNewSignup) {
-        console.log('Sending confirmation email for fresh signup:', email)
-        const confirmationUrl = `${window.location.origin}#confirm-email`
-        const emailResult = await sendConfirmationEmail(email, confirmationUrl)
-        
-        if (!emailResult.success) {
-          console.error('Custom confirmation email failed:', emailResult.error)
-          return { user: null, error: { message: 'Failed to send confirmation email' } }
-        } else {
-          console.log('Custom confirmation email sent to:', email)
-        }
-      } else {
-        console.log('Skipping email - not a fresh signup (may be existing unconfirmed user)')
-      }
-      
-      // Return different response based on whether user is new or existing
-      if (isRecentUser) {
-        console.log('New user signup successful:', data.user?.email)
-        return { user: data.user, error: null, isNewUser: true }
-      } else {
-        console.log('Existing user - skipped duplicate email:', data.user?.email)
-        return { user: data.user, error: null, isNewUser: false }
-      }
-    }
-    
+    // Supabase will automatically send confirmation email via custom SMTP
+    // No need to call Edge Function - this prevents duplicate emails
     console.log('Sign up successful:', data.user?.email)
     return { user: data.user, error: null, isNewUser: true }
   } catch (error) {
