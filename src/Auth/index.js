@@ -48,8 +48,24 @@ export async function signUp(email, password, fullName) {
   }
 
   try {
-    // Create user WITHOUT triggering Supabase's default email confirmation
-    // We'll handle all email confirmation via our custom Edge Function
+    // First, check if user already exists by attempting to sign in with a dummy password
+    // This will fail if user doesn't exist, but won't log them in if they do exist
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password: 'dummy-password-to-check-existence'
+    })
+    
+    // If the error is about invalid credentials (not user not found), user exists
+    if (signInError && signInError.message.includes('Invalid login credentials')) {
+      console.log('User already exists:', email)
+      return { 
+        user: null, 
+        error: { message: 'User already registered' }, 
+        isNewUser: false 
+      }
+    }
+    
+    // If we get here, user doesn't exist, so proceed with signup
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -67,23 +83,13 @@ export async function signUp(email, password, fullName) {
       return { user: null, error }
     }
     
-    // Check if this is a new user or existing user
-    // If the user already exists, Supabase returns the user but doesn't send confirmation email
-    const isNewUser = data.user && data.user.created_at && 
-      new Date(data.user.created_at).getTime() > (Date.now() - 5000) // Created within last 5 seconds
-    
-    // Store email in localStorage for confirm-email page only for new users
-    if (data.user?.email && isNewUser) {
+    // Store email in localStorage for confirm-email page
+    if (data.user?.email) {
       localStorage.setItem('pendingEmail', data.user.email)
     }
     
-    console.log('Sign up result:', { 
-      email: data.user?.email, 
-      isNewUser, 
-      createdAt: data.user?.created_at 
-    })
-    
-    return { user: data.user, error: null, isNewUser }
+    console.log('Sign up successful for new user:', data.user?.email)
+    return { user: data.user, error: null, isNewUser: true }
   } catch (error) {
     console.error('Sign up exception:', error)
     return { user: null, error: { message: 'An unexpected error occurred' } }
