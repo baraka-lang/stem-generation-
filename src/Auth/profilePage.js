@@ -364,8 +364,25 @@ async function handleChangePassword(event) {
       throw new Error('New password must be at least 6 characters long')
     }
 
-    // Update password in Supabase
+    // Get current user email for verification
     const { supabase } = await import('./index.js')
+    const { data: { user }, error: userError } = await supabase.auth.getUser()
+    
+    if (userError || !user) {
+      throw new Error('Unable to verify current user')
+    }
+
+    // Verify current password by attempting to sign in
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword
+    })
+
+    if (signInError) {
+      throw new Error('Current password is incorrect')
+    }
+
+    // Current password is correct, proceed with password update
     const { error } = await supabase.auth.updateUser({
       password: newPassword
     })
