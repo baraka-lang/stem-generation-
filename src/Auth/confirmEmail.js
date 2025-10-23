@@ -211,16 +211,13 @@ export function initConfirmEmailPage() {
     window.lucide.createIcons()
   }
 
-  // Check if we have a token in the URL and auto-confirm
+  // Check if we have a token in the URL (for display purposes only)
   const token = getTokenFromParams()
   if (token) {
-    console.log('Token found in URL, auto-confirming email...')
-    // Auto-confirm if token is present
-    setTimeout(() => {
-      handleConfirmEmail()
-    }, 1000)
+    console.log('Token found in URL - user can click Confirm Email button')
+    // Don't auto-confirm - let user click the button
   } else {
-    console.log('No token found in URL')
+    console.log('No token found in URL - user needs to request new confirmation email')
   }
 }
 
