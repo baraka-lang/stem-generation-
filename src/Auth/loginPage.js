@@ -424,15 +424,16 @@ export function setupLoginPage() {
       if (user) {
         if (isNewUser) {
           showSignupSuccess('Account created! Please check your email to verify your account.')
+          
+          // Clear form only on successful new user creation
+          document.getElementById('signupEmail').value = ''
+          document.getElementById('fullName').value = ''
+          document.getElementById('signupPassword').value = ''
+          document.getElementById('signupConfirmPassword').value = ''
         } else {
-          showSignupSuccess('Account already exists! Please check your email and click the verification link to confirm your account.')
+          // This case should actually be handled as an error, not success
+          showSignupError('An account with this email already exists. Please try logging in instead.')
         }
-
-        // Clear form
-        document.getElementById('signupEmail').value = ''
-        document.getElementById('fullName').value = ''
-        document.getElementById('signupPassword').value = ''
-        document.getElementById('signupConfirmPassword').value = ''
       }
     } catch (error) {
       console.error('Sign up error:', error)
@@ -738,13 +739,20 @@ export function setupLoginPage() {
     if (message.includes('invalid login credentials')) {
       return 'Invalid email or password'
     }
-  if (message.includes('email not confirmed')) {
-    return 'Please verify your email address before logging in. Check your inbox for the confirmation link.'
-  }
+    if (message.includes('email not confirmed')) {
+      return 'Please verify your email address before logging in. Check your inbox for the confirmation link.'
+    }
     if (message.includes('too many requests')) {
       return 'Too many attempts. Please try again later'
     }
-    if (message.includes('user already registered') || message.includes('already registered')) {
+    // Handle various forms of "user already registered" messages
+    if (message.includes('user already registered') || 
+        message.includes('already registered') ||
+        message.includes('email address is already registered') ||
+        message.includes('user with this email already exists') ||
+        message.includes('email already in use') ||
+        message.includes('duplicate key value') ||
+        message.includes('already been registered')) {
       return 'An account with this email already exists. Please try logging in instead.'
     }
     if (message.includes('password should be at least')) {
