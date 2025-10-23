@@ -67,6 +67,11 @@ export async function signUp(email, password, fullName) {
       return { user: null, error }
     }
     
+    // Store email in localStorage for confirm-email page
+    if (data.user?.email) {
+      localStorage.setItem('pendingEmail', data.user.email)
+    }
+    
     // Supabase will automatically send confirmation email via custom SMTP
     // No need to call Edge Function - this prevents duplicate emails
     console.log('Sign up successful:', data.user?.email)
