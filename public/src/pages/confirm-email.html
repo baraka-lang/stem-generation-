@@ -111,7 +111,28 @@ document.addEventListener('DOMContentLoaded', function() {
   // Get confirmation token from URL parameters
   function getTokenFromParams() {
     const urlParams = new URLSearchParams(window.location.search)
-    return urlParams.get('token') || urlParams.get('token_hash')
+    const hash = window.location.hash
+    
+    console.log('URL search params:', Object.fromEntries(urlParams.entries()))
+    console.log('URL hash:', hash)
+    
+    // Try different token parameter names
+    let token = urlParams.get('token') || 
+                urlParams.get('token_hash') || 
+                urlParams.get('access_token') ||
+                urlParams.get('refresh_token')
+    
+    // Also check hash fragment for tokens
+    if (!token && hash) {
+      const hashParams = new URLSearchParams(hash.substring(1))
+      token = hashParams.get('access_token') || 
+              hashParams.get('refresh_token') ||
+              hashParams.get('token') ||
+              hashParams.get('token_hash')
+    }
+    
+    console.log('Extracted token:', token)
+    return token
   }
 
   // Update email display
@@ -147,11 +168,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
       console.log('Verifying token:', token)
 
-      // Verify the email using Supabase's verifyOtp function
+      // Verify the token using Supabase's verifyOtp function
+      // Based on the URL format, this is a token hash for email confirmation
+      console.log('Attempting to verify token with verifyOtp...')
+      
       const { data, error } = await window.supabase.auth.verifyOtp({
         token_hash: token,
         type: 'signup'
       })
+      
+      console.log('verifyOtp result:', { data, error })
 
       if (error) {
         throw new Error(error.message)
