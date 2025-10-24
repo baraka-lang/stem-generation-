@@ -2,7 +2,7 @@
 .lucide {
   display: inline-block;
   vertical-align: middle;
-  fill: none;
+  fill: none !important;
   stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
@@ -15,30 +15,11 @@
 [data-lucide] {
   display: inline-block;
   vertical-align: middle;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-/* Loading animation for spinner icons */
-.loading-spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Remove any emoji fallbacks - we want clean stroke icons only */
-.lucide::before {
-  display: none !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
 }
 
 /* Ensure SVG elements inside Lucide icons are properly styled */
@@ -65,4 +46,23 @@
 .lucide * {
   fill: none !important;
   stroke: currentColor !important;
+}
+
+/* Loading animation for spinner icons */
+.loading-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Remove any emoji fallbacks - we want clean stroke icons only */
+.lucide::before {
+  display: none !important;
 }

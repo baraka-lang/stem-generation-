@@ -8,9 +8,18 @@ const MAX_ATTEMPTS = 5;
 export function initializeIcons() {
   console.log('🎨 Initializing icons...');
   
-  // Skip Lucide createIcons entirely due to the icons property error
-  // Just use our fallback system which works reliably
-  console.log('🔄 Using reliable fallback icon initialization (bypassing Lucide createIcons)');
+  // Try Lucide first
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    try {
+      window.lucide.createIcons();
+      console.log('✅ Lucide icons initialized successfully');
+      return true;
+    } catch (error) {
+      console.warn('⚠️ Lucide createIcons failed:', error);
+    }
+  }
+  
+  // Fallback to manual initialization
   return initializeFallbackIcons();
 }
 

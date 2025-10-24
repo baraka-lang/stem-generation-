@@ -98,14 +98,12 @@ function waitForLibraries() {
       
       if (supabaseLoaded && lucideLoaded) {
         console.log('✅ All libraries loaded successfully');
-        console.log('Lucide version:', window.lucide.version || 'unknown');
         resolve();
       } else {
         console.log('⏳ Waiting for libraries...', {
           supabase: supabaseLoaded,
           lucide: lucideLoaded,
-          lucideHasCreateIcons: window.lucide && typeof window.lucide.createIcons === 'function',
-          lucideVersion: window.lucide?.version || 'not loaded'
+          lucideHasCreateIcons: window.lucide && typeof window.lucide.createIcons === 'function'
         });
         setTimeout(checkLibraries, 100);
       }
@@ -114,14 +112,23 @@ function waitForLibraries() {
   });
 }
 
-// Safe Lucide icon initialization helper - now uses the new icon manager
+// Safe Lucide icon initialization helper
 function safeCreateIcons() {
-  // Use the new icon manager system
-  if (window.initializeIcons) {
-    return window.initializeIcons();
-  } else {
-    console.warn('⚠️ Icon manager not available, using basic fallback');
-    return initializeFallbackIcons();
+  try {
+    // Check if Lucide is available and has the required function
+    if (!window.lucide || typeof window.lucide.createIcons !== 'function') {
+      console.warn('⚠️ Lucide not ready for createIcons()');
+      return false;
+    }
+
+    // Try to call createIcons directly - don't check for icons property as it might not exist in all versions
+    window.lucide.createIcons();
+    return true;
+  } catch (error) {
+    console.error('❌ Error calling createIcons():', error);
+    // Use fallback icon initialization
+    initializeFallbackIcons();
+    return false;
   }
 }
 
@@ -162,15 +169,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('⏳ Waiting for external libraries...');
     await waitForLibraries();
     
-    // Import and initialize icon manager FIRST
-    const { initializeIcons, reinitializeIcons } = await import('./iconManager.js');
-    
-    // Make icon manager functions available globally immediately
-    window.initializeIcons = initializeIcons;
-    window.reinitializeIcons = reinitializeIcons;
-    
     // Initialize enharmonic toggle functionality
     initEnharmonicToggle();
+    
+    // Import and initialize icon manager
+    const { initializeIcons, reinitializeIcons } = await import('./iconManager.js');
     
     // Initialize icons
     initializeIcons();
