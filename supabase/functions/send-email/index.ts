@@ -280,56 +280,101 @@ const templateVariables = {
 }
 /**
  * Handle password reset email
+ * Improved version with better error handling and URL validation
  */ async function handlePasswordResetEmail(data) {
   try {
+    const email = data.user?.email || data.email;
     console.log('handlePasswordResetEmail called with:', {
-      email: data.user?.email || data.email,
+      email,
       hasUser: !!data.user,
       hasEmail: !!data.email
     });
+    
+    if (!email) {
+      throw new Error('Email address is required for password reset');
+    }
+    
     // Generate proper password reset URL with tokens
-    const resetUrl = await generatePasswordResetUrl(data.user?.email || data.email);
+    console.log('Generating password reset URL for:', email);
+    const resetUrl = await generatePasswordResetUrl(email);
     console.log('Generated reset URL:', resetUrl);
+    
+    // Validate the generated URL
+    if (!resetUrl || !resetUrl.includes('#reset-password')) {
+      throw new Error('Generated reset URL is invalid or malformed');
+    }
+    
     // Update the data with the actual reset URL containing tokens
     const emailData = {
       ...data,
-      reset_url: resetUrl
+      reset_url: resetUrl,
+      email: email
     };
+    
+    // Load and process the email template
     const template = await loadEmailTemplate(emailTemplates.password_reset.template);
     console.log('Template loaded, length:', template.length);
-    console.log('Email data for template:', emailData);
+    
     const htmlContent = replaceTemplateVariables(template, emailData);
     console.log('Template processed, HTML length:', htmlContent.length);
-    console.log('Reset URL in processed content:', htmlContent.includes('{{RESET_LINK}}') ? 'PLACEHOLDER NOT REPLACED' : 'Placeholder replaced');
-    // Log a snippet of the processed HTML to verify the link is there
-    const linkMatch = htmlContent.match(/href="([^"]+)"/);
-    if (linkMatch) {
-      console.log('Found link in HTML:', linkMatch[1]);
-      console.log('Link length:', linkMatch[1].length);
-      console.log('Link starts with http:', linkMatch[1].startsWith('http'));
-    } else {
-      console.warn('No href attribute found in processed HTML');
+    
+    // Validate that the URL was properly inserted
+    if (htmlContent.includes('{{RESET_LINK}}')) {
+      throw new Error('Reset link placeholder was not replaced in email template');
     }
-    // Also check for the reset button specifically
+    
+    // Verify the reset button contains the correct URL
     const resetButtonMatch = htmlContent.match(/<a[^>]*class="[^"]*reset-button[^"]*"[^>]*href="([^"]+)"[^>]*>/);
     if (resetButtonMatch) {
-      console.log('Found reset button link:', resetButtonMatch[1]);
+      const buttonUrl = resetButtonMatch[1];
+      console.log('Reset button URL:', buttonUrl);
+      
+      // Validate that the button URL matches our generated URL
+      if (!buttonUrl.includes('#reset-password')) {
+        console.warn('Reset button URL does not contain expected reset-password fragment');
+      }
+      
+      // Check if URL contains tokens
+      const hasTokens = buttonUrl.includes('token_hash') || 
+                       buttonUrl.includes('token=') || 
+                       buttonUrl.includes('access_token') ||
+                       buttonUrl.includes('fallback=true');
+      
+      if (!hasTokens) {
+        console.warn('Reset button URL does not appear to contain authentication tokens');
+      }
+      
+      console.log('Reset button URL validation:', {
+        hasResetPassword: buttonUrl.includes('#reset-password'),
+        hasTokens: hasTokens,
+        urlLength: buttonUrl.length
+      });
     } else {
-      console.warn('Reset button link not found in HTML');
+      console.warn('Reset button not found in email template');
     }
-    // Log a larger snippet of the HTML around the button area
-    const buttonAreaMatch = htmlContent.match(/<div class="button-container">[\s\S]*?<\/div>/);
-    if (buttonAreaMatch) {
-      console.log('Button area HTML:', buttonAreaMatch[0]);
-    }
-    await sendEmail(data.user?.email || data.email, emailTemplates.password_reset.subject, htmlContent);
-    console.log('Password reset email sent successfully to:', data.user?.email || data.email);
+    
+    // Send the email
+    await sendEmail(email, emailTemplates.password_reset.subject, htmlContent);
+    console.log('Password reset email sent successfully to:', email);
+    
+    // Return success information for debugging
+    return {
+      success: true,
+      email: email,
+      resetUrl: resetUrl,
+      urlType: resetUrl.includes('token_hash') ? 'PKCE' : 
+               resetUrl.includes('token=') ? 'OTP' :
+               resetUrl.includes('access_token') ? 'Legacy' :
+               resetUrl.includes('fallback=true') ? 'Fallback' : 'Unknown'
+    };
+    
   } catch (error) {
     console.error('Failed to send password reset email:', error);
     console.error('Error details:', {
       message: error.message,
       stack: error.stack,
-      name: error.name
+      name: error.name,
+      email: data.user?.email || data.email
     });
     throw error;
   }
@@ -407,77 +452,124 @@ const templateVariables = {
 }
 /**
  * Generate password reset URL with Supabase tokens
+ * Improved version that aligns with frontend requirements
  */ async function generatePasswordResetUrl(email) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   const appUrl = Deno.env.get('APP_URL');
+  
   console.log('generatePasswordResetUrl called with:', {
     email,
     supabaseUrl: !!supabaseUrl,
     supabaseServiceKey: !!supabaseServiceKey,
     appUrl
   });
+  
   if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('Supabase configuration missing');
+    throw new Error('Supabase configuration missing - please set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in Edge Function environment variables');
   }
+  
+  if (!appUrl) {
+    throw new Error('APP_URL environment variable is required for password reset links');
+  }
+  
   const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
     auth: {
       autoRefreshToken: false,
       persistSession: false
     }
   });
-  const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-    type: 'recovery',
-    email: email,
-    options: {
-      redirectTo: `${appUrl}/#reset-password`
+  
+  try {
+    // Use Supabase's generateLink API for recovery
+    const { data, error } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'recovery',
+      email: email,
+      options: {
+        redirectTo: `${appUrl}/#reset-password`
+      }
+    });
+    
+    if (error) {
+      console.error('generateLink error:', error);
+      throw new Error(`Failed to generate reset link: ${error.message}`);
     }
-  });
-  if (error) {
-    console.error('generateLink error:', error);
-    console.error('Falling back to manual URL construction');
-    // Fallback: construct a basic recovery URL manually
-    // This is a temporary fallback while we debug the generateLink API
-    const fallbackUrl = `${appUrl}/#reset-password?email=${encodeURIComponent(email)}&type=recovery&fallback=true`;
-    console.log('Using fallback URL:', fallbackUrl);
+    
+    console.log('generateLink response:', data);
+    
+    // Handle different response structures from Supabase
+    let resetUrl = '';
+    
+    // Check for direct action_link (most common)
+    if (data.properties?.action_link) {
+      console.log('Using data.properties.action_link');
+      resetUrl = data.properties.action_link;
+    } else if (data.action_link) {
+      console.log('Using data.action_link');
+      resetUrl = data.action_link;
+    } 
+    // Handle PKCE flow with token_hash (recommended for security)
+    else if (data.properties?.hashed_token) {
+      console.log('Using PKCE flow with token_hash');
+      resetUrl = `${appUrl}/#reset-password?token_hash=${data.properties.hashed_token}&type=recovery`;
+    } 
+    // Handle OTP flow with token
+    else if (data.properties?.email_otp) {
+      console.log('Using OTP flow with token');
+      resetUrl = `${appUrl}/#reset-password?token=${data.properties.email_otp}&type=recovery`;
+    }
+    // Handle access_token and refresh_token flow (legacy)
+    else if (data.properties?.access_token && data.properties?.refresh_token) {
+      console.log('Using legacy access_token/refresh_token flow');
+      const accessToken = data.properties.access_token;
+      const refreshToken = data.properties.refresh_token;
+      resetUrl = `${appUrl}/#reset-password#access_token=${accessToken}&refresh_token=${refreshToken}&type=recovery`;
+    }
+    else {
+      console.error('Unexpected generateLink response structure:', data);
+      console.error('Available keys in data:', Object.keys(data));
+      if (data.properties) {
+        console.error('Available keys in data.properties:', Object.keys(data.properties));
+      }
+      throw new Error('Unexpected response structure from generateLink');
+    }
+    
+    // Validate the generated URL
+    if (!resetUrl || resetUrl.length === 0) {
+      throw new Error('Generated reset URL is empty');
+    }
+    
+    if (!resetUrl.startsWith('http')) {
+      console.warn('Generated URL does not start with http, this might cause issues');
+    }
+    
+    // Log the final URL structure for debugging
+    console.log('Generated reset URL:', resetUrl);
+    console.log('URL length:', resetUrl.length);
+    console.log('URL structure analysis:', {
+      hasTokenHash: resetUrl.includes('token_hash'),
+      hasToken: resetUrl.includes('token='),
+      hasAccessToken: resetUrl.includes('access_token'),
+      hasRefreshToken: resetUrl.includes('refresh_token'),
+      hasType: resetUrl.includes('type=recovery'),
+      isHashFormat: resetUrl.includes('#reset-password#'),
+      isQueryFormat: resetUrl.includes('#reset-password?')
+    });
+    
+    return resetUrl;
+    
+  } catch (error) {
+    console.error('Error generating password reset URL:', error);
+    
+    // Create a secure fallback that doesn't expose the email
+    // This fallback will be handled by the frontend as a special case
+    const fallbackUrl = `${appUrl}/#reset-password?fallback=true&timestamp=${Date.now()}`;
+    console.log('Using secure fallback URL:', fallbackUrl);
+    
+    // Note: The frontend will detect this fallback and show an appropriate error message
+    // asking the user to request a new password reset
     return fallbackUrl;
   }
-  console.log('generateLink response:', data);
-  // The response structure might be different - let's try different possible paths
-  let resetUrl = '';
-  if (data.properties && data.properties.action_link) {
-    console.log('Using data.properties.action_link');
-    resetUrl = data.properties.action_link;
-  } else if (data.action_link) {
-    console.log('Using data.action_link');
-    resetUrl = data.action_link;
-  } else if (data.properties && data.properties.hashed_token) {
-    // If it's a hashed token, we need to construct the URL differently
-    console.log('Using hashed_token approach');
-    resetUrl = `${appUrl}/#reset-password?token_hash=${data.properties.hashed_token}&type=recovery`;
-  } else if (data.properties && data.properties.email_otp) {
-    // If it's an OTP, we need to handle it differently
-    console.log('Using email_otp approach');
-    resetUrl = `${appUrl}/#reset-password?token=${data.properties.email_otp}&type=recovery`;
-  } else {
-    console.error('Unexpected generateLink response structure:', data);
-    console.error('Available keys in data:', Object.keys(data));
-    if (data.properties) {
-      console.error('Available keys in data.properties:', Object.keys(data.properties));
-    }
-    throw new Error('Unexpected response structure from generateLink');
-  }
-  // Ensure the URL is properly formatted and log it
-  console.log('Generated reset URL:', resetUrl);
-  console.log('URL length:', resetUrl.length);
-  console.log('URL starts with http:', resetUrl.startsWith('http'));
-  if (!resetUrl || resetUrl.length === 0) {
-    throw new Error('Generated reset URL is empty');
-  }
-  if (!resetUrl.startsWith('http')) {
-    console.warn('Generated URL does not start with http, this might cause issues');
-  }
-  return resetUrl;
 }
 /**
  * Main handler for the Edge Function
@@ -497,10 +589,34 @@ const templateVariables = {
       console.log('Test URL generation request for:', body.email);
       try {
         const testUrl = await generatePasswordResetUrl(body.email);
+        
+        // Analyze the generated URL structure
+        const urlAnalysis = {
+          hasTokenHash: testUrl.includes('token_hash'),
+          hasToken: testUrl.includes('token='),
+          hasAccessToken: testUrl.includes('access_token'),
+          hasRefreshToken: testUrl.includes('refresh_token'),
+          hasType: testUrl.includes('type=recovery'),
+          isHashFormat: testUrl.includes('#reset-password#'),
+          isQueryFormat: testUrl.includes('#reset-password?'),
+          isFallback: testUrl.includes('fallback=true'),
+          urlType: testUrl.includes('token_hash') ? 'PKCE' : 
+                   testUrl.includes('token=') ? 'OTP' :
+                   testUrl.includes('access_token') ? 'Legacy' :
+                   testUrl.includes('fallback=true') ? 'Fallback' : 'Unknown'
+        };
+        
         return new Response(JSON.stringify({
           success: true,
           testUrl: testUrl,
-          message: 'Test URL generated successfully'
+          urlAnalysis: urlAnalysis,
+          message: 'Test URL generated successfully',
+          frontendCompatibility: {
+            supportsPKCE: urlAnalysis.hasTokenHash,
+            supportsOTP: urlAnalysis.hasToken,
+            supportsLegacy: urlAnalysis.hasAccessToken && urlAnalysis.hasRefreshToken,
+            isFallback: urlAnalysis.isFallback
+          }
         }), {
           headers: {
             ...corsHeaders,
