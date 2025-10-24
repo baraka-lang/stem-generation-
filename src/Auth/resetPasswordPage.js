@@ -143,12 +143,10 @@ function updateRequirementIndicator(element, isValid) {
     icon.setAttribute('class', 'lucide lucide-x w-3 h-3 mr-2')
   }
   
-  // Update Lucide icons safely
-  if (window.lucide && typeof window.lucide.createIcons === 'function') {
-    try {
-      window.lucide.createIcons()
-    } catch (error) {
-      console.error('Error updating Lucide icons:', error)
+  // Update Lucide icons safely using global safe function
+  if (window.safeCreateIcons) {
+    const success = window.safeCreateIcons()
+    if (!success) {
       // Fallback: manually set the icon classes if Lucide fails
       const icon = element.querySelector('i[data-lucide]')
       if (icon) {
@@ -255,8 +253,8 @@ export function setupResetPasswordPage() {
         const icon = newPasswordToggle.querySelector('i[data-lucide]')
         if (icon) {
           icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
-          if (window.lucide && typeof window.lucide.createIcons === 'function') {
-            window.lucide.createIcons()
+          if (window.safeCreateIcons) {
+            window.safeCreateIcons()
           }
         }
       }
@@ -278,8 +276,8 @@ export function setupResetPasswordPage() {
         const icon = confirmPasswordToggle.querySelector('i[data-lucide]')
         if (icon) {
           icon.setAttribute('data-lucide', isPassword ? 'eye-off' : 'eye')
-          if (window.lucide && typeof window.lucide.createIcons === 'function') {
-            window.lucide.createIcons()
+          if (window.safeCreateIcons) {
+            window.safeCreateIcons()
           }
         }
       }
@@ -904,8 +902,14 @@ export function setupResetPasswordPage() {
 
   // Initialize password validation when Lucide is ready
   const waitForLucide = () => {
-    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
-      validatePassword()
+    if (window.lucide && typeof window.lucide.createIcons === 'function') {
+      try {
+        validatePassword()
+      } catch (error) {
+        console.error('Error during initial password validation:', error)
+        // Still try to validate even if there's an error
+        validatePassword()
+      }
     } else {
       setTimeout(waitForLucide, 200)
     }

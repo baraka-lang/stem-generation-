@@ -115,12 +115,10 @@ function updateRequirementIndicator(element, isValid) {
     icon.setAttribute('class', 'lucide lucide-x w-3 h-3 mr-2')
   }
 
-  // Update Lucide icons safely
-  if (window.lucide && typeof window.lucide.createIcons === 'function') {
-    try {
-      window.lucide.createIcons()
-    } catch (error) {
-      console.error('Error updating Lucide icons:', error)
+  // Update Lucide icons safely using global safe function
+  if (window.safeCreateIcons) {
+    const success = window.safeCreateIcons()
+    if (!success) {
       // Fallback: manually set the icon classes if Lucide fails
       const icon = element.querySelector('i[data-lucide]')
       if (icon) {
@@ -279,9 +277,9 @@ export function setupLoginPage() {
         console.log('Signup password toggled, new type:', signupPasswordInput.type)
 
         // Refresh Lucide icons after toggling
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons()
-        }
+          if (window.safeCreateIcons) {
+            window.safeCreateIcons()
+          }
       } else {
         console.error('Signup password toggle elements not found')
       }
@@ -307,9 +305,9 @@ export function setupLoginPage() {
         console.log('Signup confirm password toggled, new type:', confirmPasswordInput.type)
 
         // Refresh Lucide icons after toggling
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          window.lucide.createIcons()
-        }
+          if (window.safeCreateIcons) {
+            window.safeCreateIcons()
+          }
       } else {
         console.error('Signup confirm password toggle elements not found')
       }
@@ -733,8 +731,8 @@ export function setupLoginPage() {
     document.body.appendChild(notification)
     
     // Initialize Lucide icons
-    if (window.lucide) {
-      window.lucide.createIcons()
+    if (window.safeCreateIcons) {
+      window.safeCreateIcons()
     }
     
     // Auto-remove after 5 seconds

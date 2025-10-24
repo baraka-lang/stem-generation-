@@ -94,18 +94,18 @@ function waitForLibraries() {
       
       // Check if Lucide is loaded and has the required methods
       const lucideLoaded = window.lucide && 
-                          typeof window.lucide.createIcons === 'function' &&
-                          window.lucide.icons; // Ensure icons property exists
+                          typeof window.lucide.createIcons === 'function';
       
       if (supabaseLoaded && lucideLoaded) {
         console.log('✅ All libraries loaded successfully');
+        console.log('Lucide version:', window.lucide.version || 'unknown');
         resolve();
       } else {
         console.log('⏳ Waiting for libraries...', {
           supabase: supabaseLoaded,
           lucide: lucideLoaded,
           lucideHasCreateIcons: window.lucide && typeof window.lucide.createIcons === 'function',
-          lucideHasIcons: window.lucide && !!window.lucide.icons
+          lucideVersion: window.lucide?.version || 'not loaded'
         });
         setTimeout(checkLibraries, 100);
       }
@@ -114,24 +114,39 @@ function waitForLibraries() {
   });
 }
 
-// Safe Lucide icon initialization helper
+// Safe Lucide icon initialization helper - now uses the new icon manager
 function safeCreateIcons() {
-  try {
-    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
-      window.lucide.createIcons();
-      return true;
-    } else {
-      console.warn('⚠️ Lucide not ready for createIcons()');
-      return false;
-    }
-  } catch (error) {
-    console.error('❌ Error calling createIcons():', error);
-    return false;
+  // Use the new icon manager system
+  if (window.initializeIcons) {
+    return window.initializeIcons();
+  } else {
+    console.warn('⚠️ Icon manager not available, using basic fallback');
+    return initializeFallbackIcons();
   }
 }
 
-// Make safeCreateIcons available globally
+// Fallback function to manually initialize icons
+function initializeFallbackIcons() {
+  console.log('🔧 Initializing fallback icons');
+  // Find all elements with data-lucide attributes and ensure they have proper classes
+  const iconElements = document.querySelectorAll('[data-lucide]');
+  console.log(`Found ${iconElements.length} icon elements to initialize`);
+  
+  iconElements.forEach(element => {
+    const iconName = element.getAttribute('data-lucide');
+    if (iconName) {
+      // Remove any existing lucide classes
+      element.className = element.className.replace(/lucide[-\w]*/g, '').trim();
+      // Add the correct lucide classes
+      element.classList.add('lucide', `lucide-${iconName}`);
+      console.log(`Initialized icon: ${iconName}`);
+    }
+  });
+}
+
+// Make functions available globally
 window.safeCreateIcons = safeCreateIcons;
+window.initializeFallbackIcons = initializeFallbackIcons;
 
 // Initialize when both DOM and libraries are ready
 document.addEventListener('DOMContentLoaded', async () => {
@@ -147,14 +162,27 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('⏳ Waiting for external libraries...');
     await waitForLibraries();
     
+    // Import and initialize icon manager FIRST
+    const { initializeIcons, reinitializeIcons } = await import('./iconManager.js');
+    
+    // Make icon manager functions available globally immediately
+    window.initializeIcons = initializeIcons;
+    window.reinitializeIcons = reinitializeIcons;
+    
     // Initialize enharmonic toggle functionality
     initEnharmonicToggle();
     
-    // Initialize Lucide icons safely
-    safeCreateIcons();
+    // Initialize icons
+    initializeIcons();
     
     console.log('🎯 Initializing main app...');
     initApp();
+    
+    // Run icon initialization again after a delay to catch any dynamically loaded icons
+    setTimeout(() => {
+      console.log('🔄 Running delayed icon initialization...');
+      reinitializeIcons();
+    }, 1000);
     
     console.log('✅ App initialization completed successfully');
   } catch (error) {

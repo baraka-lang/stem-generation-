@@ -207,8 +207,8 @@ export function initConfirmEmailPage() {
   }
 
   // Initialize Lucide icons
-  if (window.lucide) {
-    window.lucide.createIcons()
+  if (window.safeCreateIcons) {
+    window.safeCreateIcons()
   }
 
   // Check if we have a token in the URL (for display purposes only)

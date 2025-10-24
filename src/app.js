@@ -1079,9 +1079,11 @@ function updatePlayButtonIcon() {
   const icon = btn.querySelector('[data-lucide]')
   if (icon) { 
     icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play'); 
-    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+    if (window.lucide && typeof window.lucide.createIcons === 'function') {
       try {
-        window.lucide.createIcons()
+        if (window.safeCreateIcons) {
+          window.safeCreateIcons()
+        }
       } catch (error) {
         console.error('Error updating play/pause icon:', error)
       }
@@ -1585,12 +1587,8 @@ async function generateStem(st) {
       if (icon) { 
         icon.setAttribute('data-lucide', 'loader-2'); 
         icon.classList.add('loading-spin'); 
-        if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
-          try {
-            window.lucide.createIcons()
-          } catch (error) {
-            console.error('Error updating loading icon:', error)
-          }
+        if (window.safeCreateIcons) {
+          window.safeCreateIcons()
         }
       }
     }
@@ -1815,9 +1813,11 @@ async function generateStem(st) {
       if (icon) { 
         icon.setAttribute('data-lucide', 'wand-2'); 
         icon.classList.remove('loading-spin'); 
-        if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
           try {
-            window.lucide.createIcons()
+            if (window.safeCreateIcons) {
+          window.safeCreateIcons()
+        }
           } catch (error) {
             console.error('Error updating wand icon:', error)
           }
@@ -2267,9 +2267,11 @@ function toggleMute(st) {
   const icon = document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"] [data-lucide]`)
   if (icon) { 
     icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2'); 
-    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+    if (window.lucide && typeof window.lucide.createIcons === 'function') {
       try {
-        window.lucide.createIcons()
+        if (window.safeCreateIcons) {
+          window.safeCreateIcons()
+        }
       } catch (error) {
         console.error('Error updating volume icon:', error)
       }
@@ -3299,9 +3301,9 @@ function showEmailVerificationSuccess(message) {
     </div>
   `
   
-  // Initialize Lucide icons
-  if (window.lucide) {
-    window.lucide.createIcons()
+  // Initialize Lucide icons safely
+  if (window.safeCreateIcons) {
+    window.safeCreateIcons()
   }
 }
 
@@ -3330,9 +3332,9 @@ function showEmailVerificationError(message) {
     </div>
   `
   
-  // Initialize Lucide icons
-  if (window.lucide) {
-    window.lucide.createIcons()
+  // Initialize Lucide icons safely
+  if (window.safeCreateIcons) {
+    window.safeCreateIcons()
   }
 }
 
@@ -3426,17 +3428,27 @@ function initTechnoGenerator() {
   if (container && PROMPTS_MODE === 'builder') {
     container.innerHTML = ''
     STEM_ORDER.forEach(st => container.appendChild(createBuilderStemCard(st, stemConfigs[st])))
+    
+    // Re-initialize Lucide icons after cards are created
+    setTimeout(() => {
+      if (window.initializeIcons) {
+        window.initializeIcons()
+      } else if (window.safeCreateIcons) {
+        window.safeCreateIcons()
+      }
+    }, 50)
   }
 
   setupEventListeners()
-  // Safe Lucide icon initialization
-  if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
-    try {
-      window.lucide.createIcons()
-    } catch (error) {
-      console.error('Error initializing Lucide icons in techno generator:', error)
+  
+  // Initialize Lucide icons with a delay to ensure templates are loaded
+  setTimeout(() => {
+    if (window.initializeIcons) {
+      window.initializeIcons()
+    } else if (window.safeCreateIcons) {
+      window.safeCreateIcons()
     }
-  }
+  }, 200) // Small delay to ensure templates are fully loaded
 
   // Build docked mixer
   buildFloatingMixerPanel()
@@ -3504,12 +3516,14 @@ export async function initApp() {
     setupRouteHandling()
 
     // Set up UI components
-    // Safe Lucide icon initialization
-    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
-      try {
-        window.lucide.createIcons()
-      } catch (error) {
-        console.error('Error initializing Lucide icons in main app:', error)
+    // Safe Lucide icon initialization using global safe function
+    if (window.safeCreateIcons) {
+      const success = window.safeCreateIcons()
+      if (!success) {
+        console.warn('Lucide icons initialization failed in main app')
+        if (window.initializeFallbackIcons) {
+          window.initializeFallbackIcons()
+        }
       }
     }
     setupHelpModal()
@@ -3763,9 +3777,11 @@ async function applyGenerateSettingsAndStart() {
       startBtn.dataset.originalLabel = startBtn.innerHTML
     }
     startBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 loading-spin"></i>`
-    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+    if (window.lucide && typeof window.lucide.createIcons === 'function') {
       try {
-        window.lucide.createIcons()
+        if (window.safeCreateIcons) {
+          window.safeCreateIcons()
+        }
       } catch (error) {
         console.error('Error updating Lucide icons:', error)
       }
