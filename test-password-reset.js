@@ -76,13 +76,17 @@ async function testPasswordResetLink(email) {
       const accessToken = hashParams.get('access_token') || searchParams.get('access_token');
       const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token');
       const isFallback = hashParams.get('fallback') === 'true' || searchParams.get('fallback') === 'true';
+      const checkEmail = hashParams.get('check_email') === 'true' || searchParams.get('check_email') === 'true';
+      const requestReset = hashParams.get('request') === 'true' || searchParams.get('request') === 'true';
       
-      console.log('Extracted Tokens:');
+      console.log('Extracted Parameters:');
       console.log('- token_hash:', tokenHash ? tokenHash.substring(0, 20) + '...' : 'None');
       console.log('- token:', token ? token.substring(0, 20) + '...' : 'None');
       console.log('- access_token:', accessToken ? accessToken.substring(0, 20) + '...' : 'None');
       console.log('- refresh_token:', refreshToken ? refreshToken.substring(0, 20) + '...' : 'None');
       console.log('- isFallback:', isFallback);
+      console.log('- checkEmail:', checkEmail);
+      console.log('- requestReset:', requestReset);
       
       // Determine which flow the frontend would use
       let flowType = 'Unknown';
@@ -92,6 +96,10 @@ async function testPasswordResetLink(email) {
         flowType = 'OTP (token)';
       } else if (accessToken && refreshToken) {
         flowType = 'Legacy (access_token + refresh_token)';
+      } else if (checkEmail) {
+        flowType = 'Check Email (user should check email for reset link)';
+      } else if (requestReset) {
+        flowType = 'Request Reset (user should request new reset)';
       } else if (isFallback) {
         flowType = 'Fallback (no tokens)';
       }
@@ -100,6 +108,10 @@ async function testPasswordResetLink(email) {
       
       if (isFallback) {
         console.log('⚠️  This is a fallback URL - user will need to request a new reset');
+      } else if (checkEmail) {
+        console.log('📧 User should check their email for the password reset link');
+      } else if (requestReset) {
+        console.log('🔄 User should request a new password reset from the login page');
       } else {
         console.log('✅ This URL should work with the frontend password reset page');
       }

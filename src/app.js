@@ -1077,7 +1077,16 @@ function updatePlayButtonIcon() {
   const btn = document.getElementById('playBtn')
   if (!btn) return
   const icon = btn.querySelector('[data-lucide]')
-  if (icon) { icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play'); window.lucide?.createIcons() }
+  if (icon) { 
+    icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play'); 
+    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+      try {
+        window.lucide.createIcons()
+      } catch (error) {
+        console.error('Error updating play/pause icon:', error)
+      }
+    }
+  }
   else { btn.textContent = isPlaying ? 'Pause' : 'Play' }
 }
 
@@ -1573,7 +1582,17 @@ async function generateStem(st) {
     if (button) {
       button.disabled = true
       const icon = button.querySelector('[data-lucide]')
-      if (icon) { icon.setAttribute('data-lucide', 'loader-2'); icon.classList.add('loading-spin'); window.lucide?.createIcons() }
+      if (icon) { 
+        icon.setAttribute('data-lucide', 'loader-2'); 
+        icon.classList.add('loading-spin'); 
+        if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+          try {
+            window.lucide.createIcons()
+          } catch (error) {
+            console.error('Error updating loading icon:', error)
+          }
+        }
+      }
     }
     if (card) card.classList.add('is-generating')
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
@@ -1793,7 +1812,17 @@ async function generateStem(st) {
     if (button) {
       button.disabled = false
       const icon = button.querySelector('[data-lucide]')
-      if (icon) { icon.setAttribute('data-lucide', 'wand-2'); icon.classList.remove('loading-spin'); window.lucide?.createIcons() }
+      if (icon) { 
+        icon.setAttribute('data-lucide', 'wand-2'); 
+        icon.classList.remove('loading-spin'); 
+        if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+          try {
+            window.lucide.createIcons()
+          } catch (error) {
+            console.error('Error updating wand icon:', error)
+          }
+        }
+      }
     }
     if (card) card.classList.remove('is-generating')
   }
@@ -2236,7 +2265,16 @@ function toggleMute(st) {
     p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
   }
   const icon = document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"] [data-lucide]`)
-  if (icon) { icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2'); window.lucide?.createIcons() }
+  if (icon) { 
+    icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2'); 
+    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+      try {
+        window.lucide.createIcons()
+      } catch (error) {
+        console.error('Error updating volume icon:', error)
+      }
+    }
+  }
   reflectMuteSoloButtons(st); updateMixerGlow(st)
   updateCardNumberColor(st)
   updateMutedBorder(st)
@@ -3391,7 +3429,14 @@ function initTechnoGenerator() {
   }
 
   setupEventListeners()
-  window.lucide?.createIcons()
+  // Safe Lucide icon initialization
+  if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+    try {
+      window.lucide.createIcons()
+    } catch (error) {
+      console.error('Error initializing Lucide icons in techno generator:', error)
+    }
+  }
 
   // Build docked mixer
   buildFloatingMixerPanel()
@@ -3459,7 +3504,14 @@ export async function initApp() {
     setupRouteHandling()
 
     // Set up UI components
-    window.lucide?.createIcons()
+    // Safe Lucide icon initialization
+    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+      try {
+        window.lucide.createIcons()
+      } catch (error) {
+        console.error('Error initializing Lucide icons in main app:', error)
+      }
+    }
     setupHelpModal()
     setupUserMenu() // Setup main header user menu
     updateUserMenuVisibility() // Set initial visibility based on auth state
@@ -3711,7 +3763,13 @@ async function applyGenerateSettingsAndStart() {
       startBtn.dataset.originalLabel = startBtn.innerHTML
     }
     startBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 loading-spin"></i>`
-    window.lucide?.createIcons()
+    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+      try {
+        window.lucide.createIcons()
+      } catch (error) {
+        console.error('Error updating Lucide icons:', error)
+      }
+    }
   }
   if (cancelBtn) {
     cancelBtn.disabled = true

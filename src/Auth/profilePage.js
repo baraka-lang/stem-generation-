@@ -28,7 +28,7 @@ function setupEventListeners() {
 
       setTimeout(() => {
         if (window.showPage) {
-          window.showPage('/#selection')
+          window.showPage('/')
         }
       }, 50)
     })

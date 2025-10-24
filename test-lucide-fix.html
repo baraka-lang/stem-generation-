@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lucide Fix Test</title>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <h1>Lucide Fix Test</h1>
+    <div id="test-icons">
+        <i data-lucide="heart" class="w-6 h-6"></i>
+        <i data-lucide="star" class="w-6 h-6"></i>
+        <i data-lucide="check" class="w-6 h-6"></i>
+    </div>
+    
+    <div id="status"></div>
+    
+    <script>
+        // Test the safe initialization
+        function testLucideInitialization() {
+            const status = document.getElementById('status');
+            
+            // Test 1: Check if Lucide is loaded
+            if (window.lucide) {
+                status.innerHTML += '<p>✅ Lucide library loaded</p>';
+                
+                // Test 2: Check if createIcons function exists
+                if (typeof window.lucide.createIcons === 'function') {
+                    status.innerHTML += '<p>✅ createIcons function exists</p>';
+                    
+                    // Test 3: Check if icons property exists
+                    if (window.lucide.icons) {
+                        status.innerHTML += '<p>✅ icons property exists</p>';
+                        
+                        // Test 4: Try to call createIcons safely
+                        try {
+                            window.lucide.createIcons();
+                            status.innerHTML += '<p>✅ createIcons() called successfully</p>';
+                            status.innerHTML += '<p style="color: green;">🎉 All tests passed! Lucide is working correctly.</p>';
+                        } catch (error) {
+                            status.innerHTML += '<p style="color: red;">❌ Error calling createIcons(): ' + error.message + '</p>';
+                        }
+                    } else {
+                        status.innerHTML += '<p style="color: red;">❌ icons property does not exist</p>';
+                    }
+                } else {
+                    status.innerHTML += '<p style="color: red;">❌ createIcons function does not exist</p>';
+                }
+            } else {
+                status.innerHTML += '<p style="color: red;">❌ Lucide library not loaded</p>';
+            }
+        }
+        
+        // Wait for DOM and Lucide to load
+        document.addEventListener('DOMContentLoaded', () => {
+            // Wait a bit for Lucide to fully load
+            setTimeout(testLucideInitialization, 1000);
+        });
+    </script>
+</body>
+</html>

@@ -143,9 +143,13 @@ function updateRequirementIndicator(element, isValid) {
     icon.setAttribute('class', 'lucide lucide-x w-3 h-3 mr-2')
   }
   
-  // Update Lucide icons
-  if (window.lucide && typeof window.lucide.createIcons === 'function') {
-    window.lucide.createIcons()
+  // Update Lucide icons safely
+  if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+    try {
+      window.lucide.createIcons()
+    } catch (error) {
+      console.error('Error updating Lucide icons:', error)
+    }
   }
 }
 
@@ -568,6 +572,26 @@ export function setupResetPasswordPage() {
         return
       }
 
+      // Check for special URL parameters
+      const checkEmail = hashParams.get('check_email') === 'true' || searchParams.get('check_email') === 'true'
+      const requestReset = hashParams.get('request') === 'true' || searchParams.get('request') === 'true'
+      
+      console.log('[spa-reset] Special URL parameters:', { checkEmail, requestReset, isFallback })
+      
+      if (checkEmail) {
+        // User should check their email for the reset link
+        showError('Please check your email for the password reset link. If you don\'t see it, check your spam folder.')
+        console.groupEnd()
+        return
+      }
+      
+      if (requestReset) {
+        // User needs to request a new password reset
+        showError('Please request a new password reset from the login page.')
+        console.groupEnd()
+        return
+      }
+      
       // No valid tokens found - check if user is already authenticated
       console.log('[spa-reset] No tokens found, checking if user is already authenticated')
       
@@ -612,7 +636,7 @@ export function setupResetPasswordPage() {
       }
       
       // No session and no tokens - show error
-      if (isFallback && email) {
+      if (isFallback) {
         // Handle fallback mode - show error but allow user to request new reset
         showError('This is a fallback reset link. Please request a new password reset email.')
         console.groupEnd()
@@ -764,12 +788,16 @@ export function setupResetPasswordPage() {
     const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token')
     const isFallback = hashParams.get('fallback') === 'true' || searchParams.get('fallback') === 'true'
     const email = hashParams.get('email') || searchParams.get('email')
+    const checkEmail = hashParams.get('check_email') === 'true' || searchParams.get('check_email') === 'true'
+    const requestReset = hashParams.get('request') === 'true' || searchParams.get('request') === 'true'
     
     console.log('[spa-reset] Token check:', { 
       hasAccess: !!accessToken, 
       hasRefresh: !!refreshToken, 
       isFallback, 
       email,
+      checkEmail,
+      requestReset,
       hashTokens: { 
         access: hashParams.get('access_token'), 
         refresh: hashParams.get('refresh_token') 
@@ -779,6 +807,17 @@ export function setupResetPasswordPage() {
         refresh: searchParams.get('refresh_token') 
       }
     })
+    
+    // Handle special URL parameters
+    if (checkEmail) {
+      showError('Please check your email for the password reset link. If you don\'t see it, check your spam folder.')
+      return
+    }
+    
+    if (requestReset) {
+      showError('Please request a new password reset from the login page.')
+      return
+    }
     
     // Only show error if we have NO tokens at all
     if (!accessToken && !refreshToken) {
@@ -835,7 +874,7 @@ export function setupResetPasswordPage() {
 
   // Initialize password validation when Lucide is ready
   const waitForLucide = () => {
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
       validatePassword()
     } else {
       setTimeout(waitForLucide, 200)

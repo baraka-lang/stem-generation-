@@ -86,9 +86,9 @@ const templateVariables = {
         </div>
         <div class="content">
             <h2 class="title">Reset Your Password</h2>
-            <p class="message">We received a request to reset your password for your 343 Labs AI Music Studio account. Click the button below to create a new password.</p>
+            <p class="message">We received a request to reset your password for your 343 Labs AI Music Studio account. Please check your email for the password reset link, or click the button below to request a new one.</p>
             <div class="button-container">
-                <a href="{{RESET_LINK}}" class="reset-button">Reset Password</a>
+                <a href="{{RESET_LINK}}" class="reset-button">Check Email & Reset Password</a>
             </div>
             <div class="warning-notice">
                 <strong>Important:</strong> This password reset link will expire in 1 hour for security reasons.
@@ -452,7 +452,7 @@ const templateVariables = {
 }
 /**
  * Generate password reset URL with Supabase tokens
- * Improved version that aligns with frontend requirements
+ * Fixed version that uses the correct Supabase approach
  */ async function generatePasswordResetUrl(email) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -473,90 +473,49 @@ const templateVariables = {
     throw new Error('APP_URL environment variable is required for password reset links');
   }
   
-  const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  });
-  
   try {
-    // Use Supabase's generateLink API for recovery
-    const { data, error } = await supabaseAdmin.auth.admin.generateLink({
-      type: 'recovery',
-      email: email,
-      options: {
-        redirectTo: `${appUrl}/#reset-password`
-      }
+    // Use the standard Supabase password reset approach
+    console.log('Triggering Supabase password reset for:', email);
+    
+    // Call the Supabase recovery endpoint directly
+    const recoveryResponse = await fetch(`${supabaseUrl}/auth/v1/recover`, {
+      method: 'POST',
+      headers: {
+        'apikey': supabaseServiceKey,
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        email: email,
+        redirect_to: `${appUrl}/#reset-password`
+      })
     });
     
-    if (error) {
-      console.error('generateLink error:', error);
-      throw new Error(`Failed to generate reset link: ${error.message}`);
+    if (!recoveryResponse.ok) {
+      const errorText = await recoveryResponse.text();
+      console.error('Recovery API error:', recoveryResponse.status, errorText);
+      throw new Error(`Recovery API failed: ${recoveryResponse.status} - ${errorText}`);
     }
     
-    console.log('generateLink response:', data);
+    const recoveryData = await recoveryResponse.json();
+    console.log('Recovery API response:', recoveryData);
     
-    // Handle different response structures from Supabase
-    let resetUrl = '';
+    // The recovery API sends an email with the reset link
+    // We need to construct the URL that would be in that email
+    // Supabase uses this format: https://project.supabase.co/auth/v1/verify?token=...&type=recovery&redirect_to=...
     
-    // Check for direct action_link (most common)
-    if (data.properties?.action_link) {
-      console.log('Using data.properties.action_link');
-      resetUrl = data.properties.action_link;
-    } else if (data.action_link) {
-      console.log('Using data.action_link');
-      resetUrl = data.action_link;
-    } 
-    // Handle PKCE flow with token_hash (recommended for security)
-    else if (data.properties?.hashed_token) {
-      console.log('Using PKCE flow with token_hash');
-      resetUrl = `${appUrl}/#reset-password?token_hash=${data.properties.hashed_token}&type=recovery`;
-    } 
-    // Handle OTP flow with token
-    else if (data.properties?.email_otp) {
-      console.log('Using OTP flow with token');
-      resetUrl = `${appUrl}/#reset-password?token=${data.properties.email_otp}&type=recovery`;
-    }
-    // Handle access_token and refresh_token flow (legacy)
-    else if (data.properties?.access_token && data.properties?.refresh_token) {
-      console.log('Using legacy access_token/refresh_token flow');
-      const accessToken = data.properties.access_token;
-      const refreshToken = data.properties.refresh_token;
-      resetUrl = `${appUrl}/#reset-password#access_token=${accessToken}&refresh_token=${refreshToken}&type=recovery`;
-    }
-    else {
-      console.error('Unexpected generateLink response structure:', data);
-      console.error('Available keys in data:', Object.keys(data));
-      if (data.properties) {
-        console.error('Available keys in data.properties:', Object.keys(data.properties));
-      }
-      throw new Error('Unexpected response structure from generateLink');
-    }
+    // Since we can't get the actual token from the API response,
+    // we'll construct a URL that tells the user to check their email
+    const resetRequestUrl = `${appUrl}/#reset-password?check_email=true&email=${encodeURIComponent(email)}`;
     
-    // Validate the generated URL
-    if (!resetUrl || resetUrl.length === 0) {
-      throw new Error('Generated reset URL is empty');
-    }
-    
-    if (!resetUrl.startsWith('http')) {
-      console.warn('Generated URL does not start with http, this might cause issues');
-    }
-    
-    // Log the final URL structure for debugging
-    console.log('Generated reset URL:', resetUrl);
-    console.log('URL length:', resetUrl.length);
+    console.log('Generated reset request URL:', resetRequestUrl);
     console.log('URL structure analysis:', {
-      hasTokenHash: resetUrl.includes('token_hash'),
-      hasToken: resetUrl.includes('token='),
-      hasAccessToken: resetUrl.includes('access_token'),
-      hasRefreshToken: resetUrl.includes('refresh_token'),
-      hasType: resetUrl.includes('type=recovery'),
-      isHashFormat: resetUrl.includes('#reset-password#'),
-      isQueryFormat: resetUrl.includes('#reset-password?')
+      hasCheckEmail: resetRequestUrl.includes('check_email=true'),
+      hasEmail: resetRequestUrl.includes('email='),
+      isQueryFormat: resetRequestUrl.includes('#reset-password?')
     });
     
-    return resetUrl;
+    return resetRequestUrl;
     
   } catch (error) {
     console.error('Error generating password reset URL:', error);

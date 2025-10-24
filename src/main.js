@@ -89,9 +89,24 @@ function initEnharmonicToggle() {
 function waitForLibraries() {
   return new Promise((resolve) => {
     const checkLibraries = () => {
-      if (window.supabase && window.lucide) {
+      // Check if Supabase is loaded
+      const supabaseLoaded = window.supabase && typeof window.supabase.createClient === 'function';
+      
+      // Check if Lucide is loaded and has the required methods
+      const lucideLoaded = window.lucide && 
+                          typeof window.lucide.createIcons === 'function' &&
+                          window.lucide.icons; // Ensure icons property exists
+      
+      if (supabaseLoaded && lucideLoaded) {
+        console.log('✅ All libraries loaded successfully');
         resolve();
       } else {
+        console.log('⏳ Waiting for libraries...', {
+          supabase: supabaseLoaded,
+          lucide: lucideLoaded,
+          lucideHasCreateIcons: window.lucide && typeof window.lucide.createIcons === 'function',
+          lucideHasIcons: window.lucide && !!window.lucide.icons
+        });
         setTimeout(checkLibraries, 100);
       }
     };
@@ -99,24 +114,49 @@ function waitForLibraries() {
   });
 }
 
+// Safe Lucide icon initialization helper
+function safeCreateIcons() {
+  try {
+    if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+      window.lucide.createIcons();
+      return true;
+    } else {
+      console.warn('⚠️ Lucide not ready for createIcons()');
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Error calling createIcons():', error);
+    return false;
+  }
+}
+
+// Make safeCreateIcons available globally
+window.safeCreateIcons = safeCreateIcons;
+
 // Initialize when both DOM and libraries are ready
 document.addEventListener('DOMContentLoaded', async () => {
-  
+  console.log('🚀 Starting app initialization...');
   
   try {
-
     const templatesLoaded = await loadTemplates();
     if (!templatesLoaded) {
-        console.error('❌ Failed to load templates, stopping initialization');
+      console.error('❌ Failed to load templates, stopping initialization');
       return;
     }
     
+    console.log('⏳ Waiting for external libraries...');
     await waitForLibraries();
     
     // Initialize enharmonic toggle functionality
     initEnharmonicToggle();
     
+    // Initialize Lucide icons safely
+    safeCreateIcons();
+    
+    console.log('🎯 Initializing main app...');
     initApp();
+    
+    console.log('✅ App initialization completed successfully');
   } catch (error) {
     console.error('❌ App initialization failed:', error);
     console.error('Error details:', error.stack);
@@ -142,11 +182,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Fallback: try to init without external libraries
     setTimeout(async () => {
-      // Try to load templates again in fallback
-      const templatesLoaded = await loadTemplates();
-      if (templatesLoaded) {
-        initEnharmonicToggle();
-        initApp();
+      console.log('🔄 Attempting fallback initialization...');
+      try {
+        const templatesLoaded = await loadTemplates();
+        if (templatesLoaded) {
+          initEnharmonicToggle();
+          safeCreateIcons();
+          initApp();
+        }
+      } catch (fallbackError) {
+        console.error('❌ Fallback initialization also failed:', fallbackError);
       }
     }, 2000);
   }
