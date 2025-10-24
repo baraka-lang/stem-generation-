@@ -45,8 +45,8 @@ function getRedirectUrl() {
  * Validate password in real-time and update visual indicators
  */
 function validatePassword() {
-  const passwordInput = document.getElementById('newPassword')
-  const confirmPasswordInput = document.getElementById('confirmPassword')
+  const passwordInput = document.getElementById('newPasswordReset')
+  const confirmPasswordInput = document.getElementById('confirmPasswordReset')
   
   // Early return if input elements don't exist
   if (!passwordInput || !confirmPasswordInput) {
@@ -232,7 +232,7 @@ export function setupResetPasswordPage() {
 
   // Real-time password validation
   document.addEventListener('input', (e) => {
-    if (e.target.id === 'newPassword' || e.target.id === 'confirmPassword') {
+    if (e.target.id === 'newPasswordReset' || e.target.id === 'confirmPasswordReset') {
       hideMessages() // Clear any error/success messages when user starts typing
       validatePassword()
     }
@@ -241,12 +241,12 @@ export function setupResetPasswordPage() {
   // Password visibility toggles
   document.addEventListener('click', (e) => {
     // New password toggle
-    const newPasswordToggle = e.target.closest('#toggleNewPassword')
+    const newPasswordToggle = e.target.closest('#toggleNewPasswordReset')
     if (newPasswordToggle) {
       e.preventDefault()
       e.stopPropagation()
       
-      const newPasswordInput = document.getElementById('newPassword')
+      const newPasswordInput = document.getElementById('newPasswordReset')
       if (newPasswordInput) {
         const isPassword = newPasswordInput.type === 'password'
         newPasswordInput.type = isPassword ? 'text' : 'password'
@@ -264,12 +264,12 @@ export function setupResetPasswordPage() {
     }
 
     // Confirm password toggle
-    const confirmPasswordToggle = e.target.closest('#toggleConfirmPassword')
+    const confirmPasswordToggle = e.target.closest('#toggleConfirmPasswordReset')
     if (confirmPasswordToggle) {
       e.preventDefault()
       e.stopPropagation()
       
-      const confirmPasswordInput = document.getElementById('confirmPassword')
+      const confirmPasswordInput = document.getElementById('confirmPasswordReset')
       if (confirmPasswordInput) {
         const isPassword = confirmPasswordInput.type === 'password'
         confirmPasswordInput.type = isPassword ? 'text' : 'password'
@@ -294,8 +294,8 @@ export function setupResetPasswordPage() {
     console.group('[spa-reset] handlePasswordReset')
     console.log('[spa-reset] Password reset initiated at:', new Date().toISOString())
     
-    const password = document.getElementById('newPassword')?.value
-    const confirmPassword = document.getElementById('confirmPassword')?.value
+    const password = document.getElementById('newPasswordReset')?.value
+    const confirmPassword = document.getElementById('confirmPasswordReset')?.value
     console.log('[spa-reset] Form validation:', { hasPassword: !!password, hasConfirm: !!confirmPassword })
     console.log('[spa-reset] Current URL:', window.location.href)
 
