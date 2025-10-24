@@ -451,8 +451,9 @@ const templateVariables = {
   }
 }
 /**
- * Generate password reset URL with Supabase tokens
- * Fixed version that uses the correct Supabase approach
+ * Generate password reset URL using Supabase's standard approach
+ * This function triggers Supabase to send the password reset email
+ * and returns a URL that tells the user to check their email
  */ async function generatePasswordResetUrl(email) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
@@ -474,10 +475,9 @@ const templateVariables = {
   }
   
   try {
-    // Use the standard Supabase password reset approach
     console.log('Triggering Supabase password reset for:', email);
     
-    // Call the Supabase recovery endpoint directly
+    // Use the standard Supabase recovery endpoint to trigger password reset
     const recoveryResponse = await fetch(`${supabaseUrl}/auth/v1/recover`, {
       method: 'POST',
       headers: {
@@ -500,33 +500,27 @@ const templateVariables = {
     const recoveryData = await recoveryResponse.json();
     console.log('Recovery API response:', recoveryData);
     
-    // The recovery API sends an email with the reset link
-    // We need to construct the URL that would be in that email
-    // Supabase uses this format: https://project.supabase.co/auth/v1/verify?token=...&type=recovery&redirect_to=...
+    // Supabase will send an email with the actual reset link
+    // The email will contain a link like: https://project.supabase.co/auth/v1/verify?token=...&type=recovery&redirect_to=...
+    // We return a URL that tells the user to check their email
+    const checkEmailUrl = `${appUrl}/#reset-password?check_email=true&email=${encodeURIComponent(email)}`;
     
-    // Since we can't get the actual token from the API response,
-    // we'll construct a URL that tells the user to check their email
-    const resetRequestUrl = `${appUrl}/#reset-password?check_email=true&email=${encodeURIComponent(email)}`;
-    
-    console.log('Generated reset request URL:', resetRequestUrl);
+    console.log('Generated check email URL:', checkEmailUrl);
     console.log('URL structure analysis:', {
-      hasCheckEmail: resetRequestUrl.includes('check_email=true'),
-      hasEmail: resetRequestUrl.includes('email='),
-      isQueryFormat: resetRequestUrl.includes('#reset-password?')
+      hasCheckEmail: checkEmailUrl.includes('check_email=true'),
+      hasEmail: checkEmailUrl.includes('email='),
+      isQueryFormat: checkEmailUrl.includes('#reset-password?')
     });
     
-    return resetRequestUrl;
+    return checkEmailUrl;
     
   } catch (error) {
     console.error('Error generating password reset URL:', error);
     
-    // Create a secure fallback that doesn't expose the email
-    // This fallback will be handled by the frontend as a special case
+    // Final fallback - create a URL that tells user to request a new reset
     const fallbackUrl = `${appUrl}/#reset-password?fallback=true&timestamp=${Date.now()}`;
-    console.log('Using secure fallback URL:', fallbackUrl);
+    console.log('Using fallback URL:', fallbackUrl);
     
-    // Note: The frontend will detect this fallback and show an appropriate error message
-    // asking the user to request a new password reset
     return fallbackUrl;
   }
 }

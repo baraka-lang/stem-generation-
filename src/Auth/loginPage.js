@@ -25,10 +25,10 @@ function validatePassword() {
   const confirmPassword = confirmPasswordInput.value || ''
 
   // Get requirement elements
-  const lengthEl = document.getElementById('password-length')
-  const lowercaseEl = document.getElementById('password-lowercase')
-  const uppercaseEl = document.getElementById('password-uppercase')
-  const numberEl = document.getElementById('password-number')
+  const lengthEl = document.getElementById('login-password-length-requirement')
+  const lowercaseEl = document.getElementById('login-password-lowercase-requirement')
+  const uppercaseEl = document.getElementById('login-password-uppercase-requirement')
+  const numberEl = document.getElementById('login-password-number-requirement')
 
   const signupFormContainer = document.getElementById('signupFormContainer')
 
@@ -54,7 +54,7 @@ function validatePassword() {
   const passwordsMatch = password === confirmPassword && confirmPassword.length > 0
 
   // Update password match indicator
-  const passwordMatchEl = document.getElementById('password-match')
+  const passwordMatchEl = document.getElementById('login-password-match-requirement')
   if (passwordMatchEl) {
     if (confirmPassword.length > 0) {
       updateRequirementIndicator(passwordMatchEl, passwordsMatch)
@@ -115,9 +115,24 @@ function updateRequirementIndicator(element, isValid) {
     icon.setAttribute('class', 'lucide lucide-x w-3 h-3 mr-2')
   }
 
-  // Update Lucide icons
+  // Update Lucide icons safely
   if (window.lucide && typeof window.lucide.createIcons === 'function') {
-    window.lucide.createIcons()
+    try {
+      window.lucide.createIcons()
+    } catch (error) {
+      console.error('Error updating Lucide icons:', error)
+      // Fallback: manually set the icon classes if Lucide fails
+      const icon = element.querySelector('i[data-lucide]')
+      if (icon) {
+        icon.className = isValid ? 'lucide lucide-check w-3 h-3 mr-2' : 'lucide lucide-x w-3 h-3 mr-2'
+      }
+    }
+  } else {
+    // Fallback: manually set the icon classes if Lucide is not available
+    const icon = element.querySelector('i[data-lucide]')
+    if (icon) {
+      icon.className = isValid ? 'lucide lucide-check w-3 h-3 mr-2' : 'lucide lucide-x w-3 h-3 mr-2'
+    }
   }
 }
 

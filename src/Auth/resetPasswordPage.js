@@ -57,10 +57,10 @@ function validatePassword() {
   const confirmPassword = confirmPasswordInput.value || ''
   
   // Get requirement elements
-  const lengthEl = document.getElementById('password-length-reset')
-  const lowercaseEl = document.getElementById('password-lowercase-reset')
-  const uppercaseEl = document.getElementById('password-uppercase-reset')
-  const numberEl = document.getElementById('password-number-reset')
+  const lengthEl = document.getElementById('reset-password-length-requirement')
+  const lowercaseEl = document.getElementById('reset-password-lowercase-requirement')
+  const uppercaseEl = document.getElementById('reset-password-uppercase-requirement')
+  const numberEl = document.getElementById('reset-password-number-requirement')
   
   // Only proceed if all elements are found
   if (!lengthEl || !lowercaseEl || !uppercaseEl || !numberEl) {
@@ -84,7 +84,7 @@ function validatePassword() {
   const passwordsMatch = password === confirmPassword && confirmPassword.length > 0
   
   // Update password match indicator
-  const passwordMatchEl = document.getElementById('password-match-reset')
+  const passwordMatchEl = document.getElementById('reset-password-match-requirement')
   if (passwordMatchEl) {
     if (confirmPassword.length > 0) {
       updateRequirementIndicator(passwordMatchEl, passwordsMatch)
@@ -144,11 +144,22 @@ function updateRequirementIndicator(element, isValid) {
   }
   
   // Update Lucide icons safely
-  if (window.lucide && typeof window.lucide.createIcons === 'function' && window.lucide.icons) {
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
     try {
       window.lucide.createIcons()
     } catch (error) {
       console.error('Error updating Lucide icons:', error)
+      // Fallback: manually set the icon classes if Lucide fails
+      const icon = element.querySelector('i[data-lucide]')
+      if (icon) {
+        icon.className = isValid ? 'lucide lucide-check w-3 h-3 mr-2' : 'lucide lucide-x w-3 h-3 mr-2'
+      }
+    }
+  } else {
+    // Fallback: manually set the icon classes if Lucide is not available
+    const icon = element.querySelector('i[data-lucide]')
+    if (icon) {
+      icon.className = isValid ? 'lucide lucide-check w-3 h-3 mr-2' : 'lucide lucide-x w-3 h-3 mr-2'
     }
   }
 }
@@ -340,14 +351,16 @@ export function setupResetPasswordPage() {
       
       // Get tokens from either source - prioritize token_hash for PKCE flow
       // Also check for 'token' parameter (used by Supabase verification endpoint)
+      // Check for JWT token_hash from window object (set by checkResetTokens)
       const tokenHashFromHash = hashParams.get('token_hash') || searchParams.get('token_hash')
       const tokenFromHash = hashParams.get('token') || searchParams.get('token')
-      const tokenHash = tokenHashFromHash || tokenFromHash
+      const tokenHashFromWindow = window.resetTokenHash
+      const tokenHash = tokenHashFromHash || tokenFromHash || tokenHashFromWindow
       const accessToken = hashParams.get('access_token') || searchParams.get('access_token')
       const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token')
       const isFallback = hashParams.get('fallback') === 'true' || searchParams.get('fallback') === 'true'
       const email = hashParams.get('email') || searchParams.get('email')
-      const isTokenHash = !!tokenHashFromHash
+      const isTokenHash = !!tokenHashFromHash || !!tokenHashFromWindow
       
       console.log('[spa-reset] Token detection:', { 
         hasToken: !!tokenHash,
@@ -786,6 +799,8 @@ export function setupResetPasswordPage() {
     // Get tokens from either source
     const accessToken = hashParams.get('access_token') || searchParams.get('access_token')
     const refreshToken = hashParams.get('refresh_token') || searchParams.get('refresh_token')
+    const tokenHash = hashParams.get('token') || searchParams.get('token')
+    const tokenType = hashParams.get('type') || searchParams.get('type')
     const isFallback = hashParams.get('fallback') === 'true' || searchParams.get('fallback') === 'true'
     const email = hashParams.get('email') || searchParams.get('email')
     const checkEmail = hashParams.get('check_email') === 'true' || searchParams.get('check_email') === 'true'
@@ -793,18 +808,24 @@ export function setupResetPasswordPage() {
     
     console.log('[spa-reset] Token check:', { 
       hasAccess: !!accessToken, 
-      hasRefresh: !!refreshToken, 
+      hasRefresh: !!refreshToken,
+      hasTokenHash: !!tokenHash,
+      tokenType,
       isFallback, 
       email,
       checkEmail,
       requestReset,
       hashTokens: { 
         access: hashParams.get('access_token'), 
-        refresh: hashParams.get('refresh_token') 
+        refresh: hashParams.get('refresh_token'),
+        token: hashParams.get('token'),
+        type: hashParams.get('type')
       },
       searchTokens: { 
         access: searchParams.get('access_token'), 
-        refresh: searchParams.get('refresh_token') 
+        refresh: searchParams.get('refresh_token'),
+        token: searchParams.get('token'),
+        type: searchParams.get('type')
       }
     })
     
@@ -819,8 +840,17 @@ export function setupResetPasswordPage() {
       return
     }
     
+    // Handle JWT token_hash format (from /auth/v1/verify endpoint)
+    if (tokenHash && tokenType === 'recovery') {
+      console.log('[spa-reset] JWT token_hash found, will verify on form submission')
+      // Store the token_hash for later verification
+      window.resetTokenHash = tokenHash
+      window.resetTokenType = tokenType
+      return
+    }
+    
     // Only show error if we have NO tokens at all
-    if (!accessToken && !refreshToken) {
+    if (!accessToken && !refreshToken && !tokenHash) {
       if (isFallback && email) {
         showError('This is a fallback reset link. Please request a new password reset email.')
       } else {
@@ -829,7 +859,7 @@ export function setupResetPasswordPage() {
       return
     }
     
-    // Tokens are present (either access_token, refresh_token, or both), user can proceed
+    // Tokens are present (either access_token, refresh_token, token_hash, or combination), user can proceed
     console.log('[spa-reset] Valid reset tokens found, user can proceed with password reset')
     // Don't call setSession() here - only when user submits the form
   }
