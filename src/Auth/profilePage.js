@@ -21,17 +21,33 @@ export function setupProfilePage() {
  * Setup all event listeners for the profile page
  */
 function setupEventListeners() {
-  // Back to selection button
-  const backBtn = document.getElementById('backToSelectionBtn')
+  // Back to home button
+  const backBtn = document.getElementById('backHomeBtn')
   if (backBtn) {
+    console.log('✅ Back to Studio button found and event listener added')
     backBtn.addEventListener('click', () => {
-
+      console.log('🏠 Back to Studio button clicked')
+      // Navigate to home page using hash routing
+      window.location.hash = '#studio'
+      // Fallback: directly show techno generator page if hash change doesn't work
       setTimeout(() => {
         if (window.showPage) {
-          window.showPage('/')
+          console.log('🔄 Fallback: showing techno-generator-page directly')
+          window.showPage('techno-generator-page')
+          // Also initialize the techno generator
+          if (window.initTechnoGenerator) {
+            console.log('🎛️ Initializing techno generator')
+            window.initTechnoGenerator()
+          } else {
+            console.warn('⚠️ initTechnoGenerator not available globally')
+          }
+        } else {
+          console.error('❌ showPage not available globally')
         }
-      }, 50)
+      }, 100)
     })
+  } else {
+    console.error('❌ Back to Studio button not found!')
   }
 
   // Profile form submission

@@ -3160,8 +3160,9 @@ async function updateGuestModeNotice() {
   }
 }
 
-// Make showPage globally accessible
+// Make showPage and initTechnoGenerator globally accessible
 window.showPage = showPage
+window.initTechnoGenerator = initTechnoGenerator
 function setupNavigationListeners() {
   // Note: loginBtn is now handled by setupLoginPage() in Auth/loginPage.js
   const launchTechno = document.getElementById('launchTechno')

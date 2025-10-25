@@ -115,36 +115,49 @@ export async function composeOnce(payload, signal){
     return generateFallbackAudio(payload)
   }
   
-  const functionUrl = `${supabaseUrl}/functions/v1/eleven-music-compose`
-  const tryPayload = (fmt) => ({ ...payload, output_format: fmt, model_id: 'music_v1', respect_sections_durations: true })
-  let lastErr = null
-  for (const fmt of [PRIMARY_OUTPUT_FORMAT, FALLBACK_OUTPUT_FORMAT]) {
-    try {
-      const res = await fetch(functionUrl, {
-        method: 'POST', signal,
-        headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(tryPayload(fmt))
-      })
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`
-        try {
-          const e = await res.json()
-          if (e.error) msg = e.error
-          if (e.upstream) msg += ` • upstream: ${e.upstream}`
-        } catch { msg += ` • Raw: ${await res.text()}` }
-        if (fmt === PRIMARY_OUTPUT_FORMAT && /only allowed for Pro|PCM/i.test(msg)) { lastErr = new Error(msg); continue }
-        throw new Error(msg)
-      }
-      return res.arrayBuffer()
-    } catch (e) { 
-      lastErr = e
-      console.warn('Supabase Edge Function failed, falling back to local generation:', e.message)
-    }
+  const functionUrl = `${supabaseUrl}/functions/v1/generate-techno-stem`
+  const requestPayload = { 
+    stem: payload.stem || 'kick',
+    controls: payload.controls || {},
+    master: payload.master || { tempo: 130, bars: 4, rootBase: 'A', accidental: 'natural', mode: 'Minor' }
   }
   
-  // If all attempts failed, use fallback
-  console.warn('All Supabase attempts failed, using fallback audio generation')
-  return generateFallbackAudio(payload)
+  try {
+    const res = await fetch(functionUrl, {
+      method: 'POST', 
+      signal,
+      headers: { 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestPayload)
+    })
+    
+    if (!res.ok) {
+      let msg = `HTTP ${res.status}`
+      try {
+        const e = await res.json()
+        if (e.error) msg = e.error
+        if (e.upstream) msg += ` • upstream: ${e.upstream}`
+      } catch { msg += ` • Raw: ${await res.text()}` }
+      throw new Error(msg)
+    }
+    
+    // The Edge Function returns JSON with audio_b64 field
+    const result = await res.json()
+    if (result.audio_b64) {
+      // Convert base64 data URL to ArrayBuffer
+      const base64Data = result.audio_b64.split(',')[1] // Remove data:audio/wav;base64, prefix
+      const binaryString = atob(base64Data)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+      return bytes.buffer
+    }
+    
+    throw new Error('No audio data in response')
+  } catch (e) { 
+    console.warn('Supabase Edge Function failed, falling back to local generation:', e.message)
+    return generateFallbackAudio(payload)
+  }
 }
 
 export async function composeWithRetries(st, tempo, bars, signal, deps){

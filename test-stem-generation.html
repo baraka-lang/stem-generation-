@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Stem Generation</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            background: #1a1a1a; 
+            color: white; 
+            padding: 20px; 
+        }
+        .test-container { 
+            max-width: 800px; 
+            margin: 0 auto; 
+        }
+        button { 
+            background: #3b82f6; 
+            color: white; 
+            border: none; 
+            padding: 10px 20px; 
+            border-radius: 5px; 
+            cursor: pointer; 
+            margin: 10px 5px; 
+        }
+        button:hover { 
+            background: #2563eb; 
+        }
+        button:disabled { 
+            background: #6b7280; 
+            cursor: not-allowed; 
+        }
+        .status { 
+            margin: 10px 0; 
+            padding: 10px; 
+            border-radius: 5px; 
+        }
+        .success { 
+            background: #10b981; 
+        }
+        .error { 
+            background: #ef4444; 
+        }
+        .info { 
+            background: #3b82f6; 
+        }
+        audio { 
+            width: 100%; 
+            margin: 10px 0; 
+        }
+        .log { 
+            background: #2d2d2d; 
+            padding: 10px; 
+            border-radius: 5px; 
+            font-family: monospace; 
+            white-space: pre-wrap; 
+            max-height: 300px; 
+            overflow-y: auto; 
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>Test Stem Generation</h1>
+        <p>This page tests the stem generation functionality after fixing the Supabase Edge Function URL.</p>
+        
+        <div>
+            <button id="testKick" onclick="testStem('kick')">Test Kick</button>
+            <button id="testSnare" onclick="testStem('perc')">Test Snare</button>
+            <button id="testBass" onclick="testStem('bass')">Test Bass</button>
+            <button id="testLead" onclick="testStem('lead')">Test Lead</button>
+            <button id="testHihat" onclick="testStem('hihat')">Test Hi-hat</button>
+        </div>
+        
+        <div id="status" class="status info">Ready to test stem generation...</div>
+        
+        <div id="audioContainer"></div>
+        
+        <h3>Test Log:</h3>
+        <div id="log" class="log"></div>
+    </div>
+
+    <script type="module">
+        // Import the stem generation function
+        import { composeOnce } from './src/TechnoGenerators/index.js';
+        
+        let testCount = 0;
+        
+        function log(message) {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logDiv.textContent += `[${timestamp}] ${message}\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+        
+        async function testStem(stemType) {
+            testCount++;
+            const button = document.getElementById(`test${stemType.charAt(0).toUpperCase() + stemType.slice(1)}`);
+            button.disabled = true;
+            
+            try {
+                log(`Starting test ${testCount}: ${stemType} stem generation`);
+                updateStatus(`Testing ${stemType} stem generation...`, 'info');
+                
+                const payload = {
+                    stem: stemType,
+                    controls: {
+                        // Add some basic controls for testing
+                        attack: 50,
+                        decay: 50,
+                        punch: 50,
+                        body: 50,
+                        tone: 50
+                    },
+                    master: {
+                        tempo: 130,
+                        bars: 4,
+                        rootBase: 'A',
+                        accidental: 'natural',
+                        mode: 'Minor'
+                    }
+                };
+                
+                log(`Payload: ${JSON.stringify(payload, null, 2)}`);
+                
+                const startTime = Date.now();
+                const audioBuffer = await composeOnce(payload, new AbortController().signal);
+                const endTime = Date.now();
+                
+                log(`✅ ${stemType} stem generated successfully in ${endTime - startTime}ms`);
+                log(`Audio buffer size: ${audioBuffer.byteLength} bytes`);
+                
+                // Create audio element and play the generated audio
+                const audioBlob = new Blob([audioBuffer], { type: 'audio/wav' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                const audioContainer = document.getElementById('audioContainer');
+                const audioElement = document.createElement('audio');
+                audioElement.controls = true;
+                audioElement.src = audioUrl;
+                audioElement.style.marginBottom = '10px';
+                
+                const label = document.createElement('div');
+                label.textContent = `${stemType.toUpperCase()} Stem (Test ${testCount})`;
+                label.style.marginBottom = '5px';
+                label.style.fontWeight = 'bold';
+                
+                audioContainer.appendChild(label);
+                audioContainer.appendChild(audioElement);
+                
+                updateStatus(`✅ ${stemType} stem generated successfully!`, 'success');
+                
+            } catch (error) {
+                log(`❌ Error generating ${stemType} stem: ${error.message}`);
+                log(`Error details: ${error.stack}`);
+                updateStatus(`❌ Error generating ${stemType} stem: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+            }
+        }
+        
+        // Make testStem available globally
+        window.testStem = testStem;
+        
+        log('Test page loaded. Click a button to test stem generation.');
+    </script>
+</body>
+</html>
