@@ -52,6 +52,8 @@ import { stemConfigs, STEM_ORDER } from './Config/stems.js'
 import { downloadStem as saveDownloadStem, downloadAllActiveStems as saveDownloadAllActiveStems } from './SaveAudio/index.js'
 import { openDownloadConfirmModal, closeDownloadConfirmModal, confirmDownloadAll, setDownloadAllHandler } from './DownloadAudio/index.js'
 import { scaleKnob, roleDirectives, negatives } from './TechnoGenerators/stemHelper.js'
+import { showSuccessToast, showErrorToast } from './UI/toast.js'
+import { saveStem } from './Auth/stemApi.js'
 
 /* =========================================================
    Global state
@@ -1439,7 +1441,11 @@ function closeWaveformEditModal(save) {
    Transport
    ========================================================= */
 function startTransport() {
-  if (isPlaying) return
+  if (isPlaying) {
+    console.log('Transport already playing, ignoring start request')
+    return
+  }
+  console.log('Starting transport...')
   isPlaying = true
   updatePlayButtonIcon()
 
@@ -1477,11 +1483,17 @@ function startTransport() {
   updateAllMixerGlows()
 }
 function stopTransport() {
-  if (!isPlaying) return
+  if (!isPlaying) {
+    console.log('Transport not playing, ignoring stop request')
+    return
+  }
+  console.log('Stopping transport...')
   isPlaying = false
   updatePlayButtonIcon()
 
-  const stopAt = audioContext.currentTime + 0.005
+  const now = audioContext.currentTime
+  const stopAt = now + 0.01 // Slightly longer fade to ensure smooth stop
+  
   Object.keys(stemConfigs).forEach(st => {
     const indicator = document.querySelector(`[data-stem-indicator="${st}"]`)
     if (indicator) { indicator.style.left = '0%'; indicator.style.opacity = '0' }
@@ -1489,14 +1501,41 @@ function stopTransport() {
 
   Object.values(stemNodes).forEach(n => {
     if (!n?.source) return
-    n.env.gain.cancelScheduledValues(audioContext.currentTime)
-    n.env.gain.setValueAtTime(n.env.gain.value, audioContext.currentTime)
+    
+    // Cancel any scheduled gain changes
+    n.env.gain.cancelScheduledValues(now)
+    
+    // Get current gain value and set it immediately
+    const currentGain = n.env.gain.value
+    n.env.gain.setValueAtTime(currentGain, now)
+    
+    // Fade out smoothly
     n.env.gain.linearRampToValueAtTime(0, stopAt)
-    try { n.source.stop(stopAt) } catch { }
+    
+    // Stop the source with proper error handling
+    try {
+      // Check if source is still playing before stopping
+      if (n.source.playbackState !== undefined) {
+        // Web Audio API source
+        n.source.stop(stopAt)
+      } else {
+        // Fallback: try to stop immediately
+        n.source.stop(now)
+      }
+    } catch (error) {
+      // Source might already be stopped or invalid
+      console.warn('Could not stop audio source:', error)
+    }
   })
+  
+  // Clear all stem nodes
   Object.keys(stemNodes).forEach(k => delete stemNodes[k])
-  if (transportTicker) clearInterval(transportTicker)
-  transportTicker = null
+  
+  // Clear transport ticker
+  if (transportTicker) {
+    clearInterval(transportTicker)
+    transportTicker = null
+  }
 
   updateAllMixerGlows()
 }
@@ -1744,6 +1783,11 @@ async function generateStem(st) {
       }
     }
     renderHistoryDrawer(st)
+
+    // Save stem to database (run asynchronously without blocking UI)
+    saveStemToDatabase(st, usedPrompt, tempo, bars, stemRaw[st], tier, !failedValidation).catch(err => {
+      console.error(`Background stem save failed for ${st}:`, err)
+    })
     // Draw waveform for the new loop
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
@@ -2106,6 +2150,59 @@ function getRootText() {
   const acc = stemControlValues.master?.accidental || 'natural'
   return acc === 'sharp' ? `${base}#` : acc === 'flat' ? `${base}b` : base
 }
+/**
+ * Save a generated stem to the database
+ * Runs in background without blocking UI
+ * @param {string} st - Stem type
+ * @param {string} prompt - Generation prompt
+ * @param {number} tempo - Tempo in BPM
+ * @param {number} bars - Number of bars
+ * @param {AudioBuffer} audioBuffer - Audio buffer
+ * @param {number} tier - Generation tier
+ * @param {boolean} validated - Whether validation passed
+ */
+async function saveStemToDatabase(st, prompt, tempo, bars, audioBuffer, tier, validated) {
+  try {
+    // Only save if user is authenticated
+    const user = getAuthGuard().getCurrentUser()
+    if (!user) {
+      console.log('Skipping database save for guest user')
+      return
+    }
+
+    // Get master settings for key signature
+    const master = getMasterForPrompt()
+    const keySignature = `${master.root} ${master.mode}`
+
+    // Prepare stem data for persistence
+    const stemData = {
+      stemType: st,
+      prompt: prompt,
+      tempo: tempo,
+      bars: bars,
+      keySignature: keySignature,
+      generationTier: tier || 0,
+      validated: validated || false,
+      audioData: audioBuffer, // AudioBuffer will be converted to ArrayBuffer in saveStem
+      durationSeconds: audioBuffer.duration
+    }
+
+    // Save the stem
+    const result = await saveStem(stemData)
+
+    if (result.success) {
+      console.log(`✅ Stem saved to database: ${st} (ID: ${result.stemId})`)
+      showSuccessToast(`${st} saved to cloud`, 3000)
+    } else {
+      console.warn(`Failed to save stem to database: ${st}`, result.error)
+      // Don't show error toast to avoid annoying users with background saves
+    }
+  } catch (error) {
+    console.error(`Error saving stem ${st} to database:`, error)
+    // Don't show error toast to avoid annoying users with background saves
+  }
+}
+
 function getMasterForPrompt() {
   return {
     tempo: clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO),
@@ -2341,9 +2438,13 @@ function setupEventListeners() {
   // Player Play/Pause
   const playBtn = document.getElementById('playBtn')
   if (playBtn) playBtn.addEventListener('click', async () => {
+    console.log('Play/Pause button clicked, isPlaying:', isPlaying)
     await ensureAudioContext()
-    if (isPlaying) stopTransport()
-    else {
+    if (isPlaying) {
+      console.log('Stopping transport...')
+      stopTransport()
+    } else {
+      console.log('Starting transport...')
       // Do not rebuild loops when starting transport.  Each stem retains its own
       // loop duration and tempo.
       startTransport()
