@@ -393,9 +393,6 @@ export function showSaveLoginModal() {
         <button id="saveModalLoginBtn" class="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">
           Login
         </button>
-        <button id="saveModalSignupBtn" class="flex-1 px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-sm font-medium">
-          Sign Up
-        </button>
         <button id="saveModalCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">
           Cancel
         </button>
@@ -406,19 +403,62 @@ export function showSaveLoginModal() {
   document.body.appendChild(modal)
   
   // Add event listeners
-  document.getElementById('saveModalLoginBtn').addEventListener('click', () => {
-    document.body.removeChild(modal)
-    window.location.hash = '#login'
-  })
+  const goToLogin = () => {
+    try { console.log('[saveLoginModal] goToLogin invoked') } catch {}
+    if (document.body.contains(modal)) {
+      try { console.log('[saveLoginModal] removing modal from DOM') } catch {}
+      document.body.removeChild(modal)
+    }
+    if (window.location.hash === '#login') {
+      try { console.log('[saveLoginModal] already at #login, calling showPage directly') } catch {}
+      if (window.showPage) {
+        window.showPage('login-page')
+      }
+    } else {
+      try { console.log('[saveLoginModal] setting hash to #login (was:', window.location.hash, ')') } catch {}
+      window.location.hash = '#login'
+    }
+    // Fallback to ensure navigation even if hash routing is delayed
+    setTimeout(() => {
+      try { console.log('[saveLoginModal] fallback showPage check running') } catch {}
+      if (window.showPage) {
+        try { console.log('[saveLoginModal] calling showPage(\"login-page\")') } catch {}
+        window.showPage('login-page')
+      }
+    }, 50)
+  }
   
-  document.getElementById('saveModalSignupBtn').addEventListener('click', () => {
-    document.body.removeChild(modal)
-    window.location.hash = '#login'
-  })
+  const loginBtnEl = modal.querySelector('#saveModalLoginBtn')
+  if (loginBtnEl) {
+    try { console.log('[saveLoginModal] wiring click for #saveModalLoginBtn') } catch {}
+    loginBtnEl.addEventListener('click', (e) => {
+      try { console.log('[saveLoginModal] login button clicked', { target: e?.target, time: Date.now(), hash: window.location.hash }) } catch (logErr) {
+        try { console.warn('[saveLoginModal] failed to log click', logErr) } catch {}
+      }
+      document.body.removeChild(modal)
+      goToLogin()
+      // document.body.removeChild(modal)
+      // Additional safety: ensure modal is gone shortly after click (covers routed re-render timing)
+      setTimeout(() => {
+        if (document.body.contains(modal)) {
+          try { console.log('[saveLoginModal] post-click cleanup removing lingering modal') } catch {}
+          document.body.removeChild(modal)
+        }
+      }, 150)
+    })
+  } else {
+    try { console.warn('[saveLoginModal] #saveModalLoginBtn not found inside modal') } catch {}
+  }
   
-  document.getElementById('saveModalCancelBtn').addEventListener('click', () => {
+  const cancelBtnEl = modal.querySelector('#saveModalCancelBtn')
+  if (cancelBtnEl) {
+    cancelBtnEl.addEventListener('click', () => {
+      try { console.log('[saveLoginModal] cancel button clicked, removing modal') } catch {}
     document.body.removeChild(modal)
-  })
+    })
+  } else {
+    try { console.warn('[saveLoginModal] #saveModalCancelBtn not found inside modal') } catch {}
+  }
   
   // Close on backdrop click
   modal.addEventListener('click', (e) => {
