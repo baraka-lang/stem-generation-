@@ -32,7 +32,7 @@ export function triggerDownload(blob, filename) {
 
 export function bufferToWavAndDownload(buffer, filename) {
   const wav = encodeWAV(buffer)
-  triggerDownload(wav, filename)
+  triggerDownload(wav, filename) 
 }
 
 // ---------------- Download confirmation modal helpers ----------------

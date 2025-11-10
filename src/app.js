@@ -52,8 +52,24 @@ import { stemConfigs, STEM_ORDER } from './Config/stems.js'
 import { downloadStem as saveDownloadStem, downloadAllActiveStems as saveDownloadAllActiveStems } from './SaveAudio/index.js'
 import { openDownloadConfirmModal, closeDownloadConfirmModal, confirmDownloadAll, setDownloadAllHandler } from './DownloadAudio/index.js'
 import { scaleKnob, roleDirectives, negatives } from './TechnoGenerators/stemHelper.js'
+import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl, clearSessionSettingsFromStorage } from './TechnoGenerators/sessionSetup.js'
 import { showSuccessToast, showErrorToast } from './UI/toast.js'
+import { updatePlayButtonIcon as updatePlayButtonIconImpl, updateSessionInfoCard as updateSessionInfoCardImpl, setMixerOpen as setMixerOpenImpl, toggleMixerOpen as toggleMixerOpenImpl, buildFloatingMixerPanel as buildFloatingMixerPanelImpl, initializeMasterVolumeSlider as initializeMasterVolumeSliderImpl } from './playerControl/index.js'
 import { saveStem } from './Auth/stemApi.js'
+
+let fsModule = null
+try {
+  if (typeof window !== 'undefined' && typeof window.require === 'function') {
+    fsModule = window.require('fs')
+  } else {
+    const req = Function('return typeof require !== "undefined" ? require : null')()
+    if (req) {
+      fsModule = req('fs')
+    }
+  }
+} catch (fsError) {
+  console.warn('Filesystem module not available; audio files will not be written to disk.', fsError)
+}
 
 /* =========================================================
    Global state
@@ -138,25 +154,9 @@ function getCurrentPlayerState() {
   return snapshot
 }
 
-/**
- * Refresh the session information displayed in the bottom player bar.  This
- * helper derives the current master tempo, bar count and key from
- * stemControlValues.master and updates the text elements.  Some stems
- * may have been generated at different tempos/bars; however, the
- * session master values remain fixed after setup and are shown here.
- */
+// Wrapper function for updating session info card
 function updateSessionInfoCard() {
-  const infoEl = document.getElementById('sessionInfoText')
-  const infoElMob = document.getElementById('sessionInfoTextMobile')
-  const master = stemControlValues.master || {}
-  // Use helper getRootText() to derive the proper root name with accidentals
-  const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || '')
-  const tempo = master.tempo ?? DEFAULT_TEMPO
-  const bars = master.bars ?? DEFAULT_BARS
-  const mode = master.mode ?? 'Minor'
-  const infoString = `${tempo} BPM • ${bars} bars • ${rootName} ${mode}`
-  if (infoEl) infoEl.textContent = infoString
-  if (infoElMob) infoElMob.textContent = infoString
+  updateSessionInfoCardImpl(stemControlValues, getRootText)
 }
 
 /**
@@ -362,7 +362,7 @@ function initSavedStateFeature() {
       // Check if user is authenticated before allowing save
       const { canUserSave } = await import('./Auth/selectionPage.js')
       const canSave = await canUserSave()
-      
+
       if (canSave) {
         // User is authenticated, proceed with save
         openSaveSetModal()
@@ -374,7 +374,38 @@ function initSavedStateFeature() {
     })
   }
   const dropdown = document.getElementById('savedSetsDropdown')
+
   if (dropdown) {
+    ;(async () => {
+      try {
+        // Populate dropdown from cloud sets (ascending by name)
+        const { loadSavedStemsStatesFromCloudStorage } = await import('./playerControl/index.js')
+        const sets = await loadSavedStemsStatesFromCloudStorage()
+        if (Array.isArray(sets)) {
+          // Reset options, keep placeholder
+          dropdown.innerHTML = ''
+          const placeholder = document.createElement('option')
+          placeholder.value = ''
+          placeholder.textContent = '------'
+          dropdown.appendChild(placeholder)
+          const sorted = [...sets].sort((a, b) => {
+            const an = (a?.name || '').toLowerCase()
+            const bn = (b?.name || '').toLowerCase()
+            if (an < bn) return -1
+            if (an > bn) return 1
+            return 0
+          })
+          sorted.forEach(s => {
+            const opt = document.createElement('option')
+            opt.value = String(s.id)
+            opt.textContent = s.name || s.id
+            dropdown.appendChild(opt)
+          })
+        }
+      } catch (e) {
+        console.warn('Could not populate saved sets dropdown from cloud:', e)
+      }
+    })()
     dropdown.addEventListener('change', (e) => {
       const val = e.target.value
       // If no set selected, do nothing
@@ -417,9 +448,10 @@ function initSavedStateFeature() {
   }
   const saveModalConfirm = document.getElementById('saveSetConfirmBtn')
   if (saveModalConfirm) {
-    saveModalConfirm.addEventListener('click', () => {
+    saveModalConfirm.onclick = () => {
+      console.log("saveNewSetBtn Clicked")
       saveNewSet()
-    })
+    }
   }
   // Hook up download confirmation modal buttons
   const dlCancel = document.getElementById('downloadConfirmCancelBtn')
@@ -493,7 +525,91 @@ function closeSaveSetModal() {
  * saving, updates the dropdown, selects the new set and closes the
  * modal when complete.
  */
-function saveNewSet() {
+
+function encodeWAV(audioBuffer) {
+  try {
+    if (!audioBuffer || typeof audioBuffer.numberOfChannels !== 'number') {
+      throw new Error('Invalid AudioBuffer: missing numberOfChannels')
+    }
+    const srcCh = audioBuffer.numberOfChannels
+    const len = audioBuffer.length
+    const sr = audioBuffer.sampleRate
+    if (srcCh <= 0 || len <= 0 || !sr) {
+      throw new Error(`Invalid AudioBuffer dimensions: channels=${srcCh}, length=${len}, sampleRate=${sr}`)
+    }
+    const bps = 2
+    const chans = Array.from({ length: srcCh }, (_, c) => audioBuffer.getChannelData(c))
+    const interleaved = new Float32Array(len * srcCh)
+    let o = 0; for (let i = 0; i < len; i++) for (let c = 0; c < srcCh; c++) interleaved[o++] = chans[c][i]
+    const blockAlign = srcCh * bps, byteRate = sr * blockAlign, dataSize = interleaved.length * bps
+    const buffer = new ArrayBuffer(44 + dataSize); const view = new DataView(buffer)
+    writeAscii(view, 0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeAscii(view, 8, 'WAVE')
+    writeAscii(view, 12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true)
+    writeAscii(view, 22, String.fromCharCode(srcCh)); view.setUint16(22, srcCh, true)
+    view.setUint32(24, sr, true); view.setUint32(28, byteRate, true)
+    view.setUint16(32, blockAlign, true); view.setUint16(34, 16, true)
+    writeAscii(view, 36, 'data'); view.setUint32(40, dataSize, true)
+    let off = 44
+    for (let i = 0; i < interleaved.length; i++, off += 2) { let s = Math.max(-1, Math.min(1, interleaved[i])); s = s < 0 ? s * 0x8000 : s * 0x7FFF; view.setInt16(off, s, true) }
+    return new Blob([view], { type: 'audio/wav' })
+    function writeAscii(v, o, s) { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)) }
+  } catch (error) {
+    console.error('encodeWAV failed', error)
+    throw error
+  }
+}
+const SUPABASE_AUDIO_BUCKET = import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files'
+
+async function bufferToWavAndSave(buffer, filename) {
+  try {
+    const wav = encodeWAV(buffer)
+    const timestampedFilename = `${Date.now()}_${filename}`
+
+    if (fsModule) {
+      // save the audio to a directory in the public folder
+      const audio_dir = 'public/audio'
+      if (!fsModule.existsSync(audio_dir)) {
+        fsModule.mkdirSync(audio_dir, { recursive: true })
+      }
+      const audio_path = `${audio_dir}/${timestampedFilename}`
+      fsModule.writeFileSync(audio_path, wav)
+      console.log('wav saved to', audio_path)
+      return audio_path
+    }
+
+    if (!supabase) {
+      throw new Error('Supabase client not initialized for storage upload')
+    }
+
+    const storagePath = `audio/${timestampedFilename}`
+    const { error: uploadError } = await supabase.storage
+      .from(SUPABASE_AUDIO_BUCKET)
+      .upload(storagePath, wav, {
+        contentType: 'audio/wav',
+        cacheControl: '3600',
+        upsert: false
+      })
+
+    if (uploadError) {
+      throw uploadError
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from(SUPABASE_AUDIO_BUCKET)
+      .getPublicUrl(storagePath)
+
+    if (!publicUrl) {
+      throw new Error('Failed to obtain public URL for uploaded audio')
+    }
+
+    console.log('wav uploaded to Supabase storage', publicUrl)
+    return publicUrl
+  } catch (error) {
+    console.error('Failed to save WAV file', error)
+    throw error
+  }
+}
+async function saveNewSet() {
   const spinner = document.getElementById('saveSetSpinner')
   const label = document.getElementById('saveSetConfirmLabel')
   if (spinner && label) {
@@ -502,9 +618,146 @@ function saveNewSet() {
   }
   // Save the state
   const snapshot = getCurrentPlayerState()
+  console.log("snapshot", snapshot)
   savedSets.push(snapshot)
   // Determine new index
   const newIndex = savedSets.length - 1
+  const set_name = `Set ${newIndex + 1}`
+  const set_description = `Saved on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`
+  const set_data = {
+    id: null,
+    name: set_name,
+    description: set_description,
+    stems_states: snapshot
+  }
+  console.log("set_data", set_data)
+  console.log("savedSets", savedSets)
+
+  // fetching the current session setting from localStorage
+  const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+  console.log("currentSessionSetting", currentSessionSetting)
+  if (currentSessionSetting) {
+    const currentSessionSettingObj = JSON.parse(currentSessionSetting)
+    const existingSessionSettingIdRaw = currentSessionSettingObj.session_setting_id ?? currentSessionSettingObj.id ?? null
+    const existingSessionSettingId =
+      typeof existingSessionSettingIdRaw === 'number'
+        ? existingSessionSettingIdRaw
+        : (typeof existingSessionSettingIdRaw === 'string' && /^\d+$/.test(existingSessionSettingIdRaw)
+            ? Number(existingSessionSettingIdRaw)
+            : null)
+
+    // check if the current session setting is saved in the database
+    if (existingSessionSettingId) {
+      if (currentSessionSettingObj.session_setting_id !== existingSessionSettingId) {
+        currentSessionSettingObj.session_setting_id = existingSessionSettingId
+        currentSessionSettingObj.id = existingSessionSettingId
+        localStorage.setItem('currentSessionSetting', JSON.stringify(currentSessionSettingObj))
+      }
+      // Save the set data to the database in relation to the session setting
+      const { saveSetToDb } = await import('./Auth/stemApi.js')
+      const saveResult = await saveSetToDb(set_data, existingSessionSettingId)
+      console.log("saveResult", saveResult)
+      if (saveResult.success) {
+        set_data.id = saveResult.set_id
+
+        // save stems to the database
+        const stemsToSave = collectStemsToSave();
+        const stemSetId = saveResult.set_id
+        let successCount = 0
+        let failCount = 0
+        const savedStemIds = []
+
+        for (let i = 0; i < stemsToSave.length; i++) {
+          const stemData = stemsToSave[i]
+          try {
+
+            // creating the audio from the audio buffer
+           const audio_path = await bufferToWavAndSave(stemData.audioBuffer, `techno_${stemData.stemType}_${Date.now()}.wav`)
+            const saveStemResult = await saveStemToDatabase(
+              stemSetId,
+              stemData.stemType,
+              stemData.prompt,
+              stemData.tempo,
+              stemData.bars,
+              stemData.audioBuffer,
+              stemData.tier,
+              stemData.validated,
+              audio_path
+            )
+
+            if (saveStemResult && saveStemResult.success && saveStemResult.stemId) {
+              savedStemIds.push({
+                stemId: saveStemResult.stemId,
+                stemType: stemData.stemType,
+                position: i
+              })
+              successCount++
+            } else {
+              failCount++
+            }
+          } catch (error) {
+            console.error(`Error saving stem ${stemData.stemType}:`, error)
+            failCount++
+          }
+        }
+      }
+    } else {
+      // Save the session setting to the database and get the id
+      const { saveSessionSettingToDb } = await import('./Auth/stemApi.js')
+      const result = await saveSessionSettingToDb(currentSessionSettingObj)
+      console.log("result", result)
+      if (result.success) {
+        currentSessionSettingObj.session_setting_id = Number(result.session_setting_id)
+        currentSessionSettingObj.id = Number(result.session_setting_id)
+        localStorage.setItem('currentSessionSetting', JSON.stringify(currentSessionSettingObj))
+
+        // Save the set data to the database in relation to the session setting
+        const { saveSetToDb } = await import('./Auth/stemApi.js')
+        const saveResult = await saveSetToDb(set_data, result.session_setting_id)
+        console.log("saveResult", saveResult)
+        if (saveResult.success) {
+          set_data.id = saveResult.set_id
+          const stemsToSave = collectStemsToSave();
+          const stemSetId = saveResult.set_id
+          let successCount = 0
+          let failCount = 0
+          const savedStemIds = []
+
+          for (let i = 0; i < stemsToSave.length; i++) {
+            const stemData = stemsToSave[i]
+            try {
+              const audio_path = await bufferToWavAndSave(stemData.audioBuffer, `techno_${stemData.stemType}_${Date.now()}.wav`)
+              const saveStemResult = await saveStemToDatabase(
+                stemSetId,
+                stemData.stemType,
+                stemData.prompt,
+                stemData.tempo,
+                stemData.bars,
+                stemData.audioBuffer,
+                stemData.tier,
+                stemData.validated,
+                audio_path,
+              )
+
+              if (saveStemResult && saveStemResult.success && saveStemResult.stemId) {
+                savedStemIds.push({
+                  stemId: saveStemResult.stemId,
+                  stemType: stemData.stemType,
+                  position: i
+                })
+                successCount++
+              } else {
+                failCount++
+              }
+            } catch (error) {
+              console.error(`Error saving stem ${stemData.stemType}:`, error)
+              failCount++
+            }
+          }
+        }
+      }
+    }
+  }
   // Update dropdown and select new set
   updateSavedSetsDropdown()
   const dropdown = document.getElementById('savedSetsDropdown')
@@ -727,7 +980,7 @@ async function ensureAudioContext() {
     // set to silent.  To unmute web audio, we play a very short silent
     // MP3 via a temporary <audio> element and also trigger a one‑sample
     // buffer through a secondary AudioContext.  This pattern is based on
-    // community recommendations and WaveSurfer’s ignoreSilenceMode
+    // community recommendations and WaveSurfer's ignoreSilenceMode
     // implementation and ensures that the browser promotes the audio
     // session to media playback【76389239852111†L94-L98】.  Because the
     // silent track is inaudible and removed immediately after playback
@@ -747,7 +1000,7 @@ async function ensureAudioContext() {
                 src.buffer = buf
                 src.connect(ac2.destination)
                 src.start(0)
-                // 2. Create an <audio> element with a short silent MP3 (3 ms)
+                // 2. Create an <audio> element with a short silent MP3 (3 ms)
                 const audio = document.createElement('audio')
                 // iOS requires playsinline and denies AirPlay for such sounds
                 audio.setAttribute('playsinline', '')
@@ -1075,23 +1328,9 @@ function updatePlaybackIndicators() {
     indicator.style.opacity = '1'
   })
 }
+// Wrapper function for updating play button icon
 function updatePlayButtonIcon() {
-  const btn = document.getElementById('playBtn')
-  if (!btn) return
-  const icon = btn.querySelector('[data-lucide]')
-  if (icon) { 
-    icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play'); 
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
-      try {
-        if (window.safeCreateIcons) {
-          window.safeCreateIcons()
-        }
-      } catch (error) {
-        console.error('Error updating play/pause icon:', error)
-      }
-    }
-  }
-  else { btn.textContent = isPlaying ? 'Pause' : 'Play' }
+  updatePlayButtonIconImpl(isPlaying)
 }
 
 // ----- Waveform dial controls -----
@@ -1493,7 +1732,7 @@ function stopTransport() {
 
   const now = audioContext.currentTime
   const stopAt = now + 0.01 // Slightly longer fade to ensure smooth stop
-  
+
   Object.keys(stemConfigs).forEach(st => {
     const indicator = document.querySelector(`[data-stem-indicator="${st}"]`)
     if (indicator) { indicator.style.left = '0%'; indicator.style.opacity = '0' }
@@ -1501,17 +1740,17 @@ function stopTransport() {
 
   Object.values(stemNodes).forEach(n => {
     if (!n?.source) return
-    
+
     // Cancel any scheduled gain changes
     n.env.gain.cancelScheduledValues(now)
-    
+
     // Get current gain value and set it immediately
     const currentGain = n.env.gain.value
     n.env.gain.setValueAtTime(currentGain, now)
-    
+
     // Fade out smoothly
     n.env.gain.linearRampToValueAtTime(0, stopAt)
-    
+
     // Stop the source with proper error handling
     try {
       // Check if source is still playing before stopping
@@ -1527,10 +1766,10 @@ function stopTransport() {
       console.warn('Could not stop audio source:', error)
     }
   })
-  
+
   // Clear all stem nodes
   Object.keys(stemNodes).forEach(k => delete stemNodes[k])
-  
+
   // Clear transport ticker
   if (transportTicker) {
     clearInterval(transportTicker)
@@ -1586,21 +1825,21 @@ async function generateStem(st) {
   const user = getAuthGuard().getCurrentUser()
   let hasCredits = true
   let currentCredits = 0
-  
+
   if (user) {
     // User is authenticated, check credits
     const CREDITS_PER_GENERATION = 5 // Cost per stem generation
     const creditsResult = await checkCredits(user.id, CREDITS_PER_GENERATION)
-    
+
     if (creditsResult.error) {
       console.error('Error checking credits:', creditsResult.error)
       alert('Unable to check credits. Please try again.')
       return
     }
-    
+
     hasCredits = creditsResult.hasCredits
     currentCredits = creditsResult.currentCredits
-    
+
     if (!hasCredits) {
       alert(`Insufficient credits. You need ${CREDITS_PER_GENERATION} credits to generate a stem. You currently have ${currentCredits} credits.`)
       return
@@ -1623,9 +1862,9 @@ async function generateStem(st) {
     if (button) {
       button.disabled = true
       const icon = button.querySelector('[data-lucide]')
-      if (icon) { 
-        icon.setAttribute('data-lucide', 'loader-2'); 
-        icon.classList.add('loading-spin'); 
+      if (icon) {
+        icon.setAttribute('data-lucide', 'loader-2');
+        icon.classList.add('loading-spin');
         if (window.safeCreateIcons) {
           window.safeCreateIcons()
         }
@@ -1637,10 +1876,10 @@ async function generateStem(st) {
 
     // For guest mode or when Supabase functions are not available, use demo mode
     let audioBuffer, usedPrompt, tier = 0, validated = true, failedValidation = false
-    
+
     // Check if we should use Supabase functions (only for authenticated users)
     let useSupabaseFunctions = user && supabase
-    
+
     if (statusEl) {
       if (useSupabaseFunctions) {
         statusEl.textContent = `Creating… (Eleven Music v1)`
@@ -1648,7 +1887,7 @@ async function generateStem(st) {
         statusEl.textContent = `Creating… (Fallback Mode)`
       }
     }
-    
+
     if (useSupabaseFunctions) {
       try {
         const payload = {
@@ -1707,11 +1946,11 @@ async function generateStem(st) {
         useSupabaseFunctions = false
       }
     }
-    
+
     if (!useSupabaseFunctions) {
       // Fallback to local generation using the original logic
       console.log('🎵 Using fallback generation for stem:', st)
-      
+
       if (st === 'hihat' || st === 'perc') {
         const res = await composeWithRetriesGen(st, tempo, bars, signal, {
           genTailPadMs: GEN_TAIL_PAD_MS,
@@ -1746,19 +1985,19 @@ async function generateStem(st) {
         tier = 0
         failedValidation = false
       }
-      
+
       // Determine head index and build a strict loop from the raw buffer
       referenceHeadIndex = detectHeadIndex(audioBuffer)
       referenceStemType = st
       const strictLoop = buildLoopBufferFromRawStrictGen(audioBuffer, tempo, bars, referenceHeadIndex, { loopXfadeMs: LOOP_XFADE_MS, edgeRampMs: EDGE_RAMP_MS, alignSearchMs: ALIGN_SEARCH_MS })
-      
+
       // Store the newly generated raw buffer and strict loop
       stemRaw[st] = audioBuffer
       stemLoop[st] = strictLoop
       stemLoopDuration[st] = strictLoop.duration
       endpointFactors[st] = 1
     }
-    
+
     // If not using Supabase functions, we already generated demo audio above
     // No additional fallback logic needed
 
@@ -1784,10 +2023,7 @@ async function generateStem(st) {
     }
     renderHistoryDrawer(st)
 
-    // Save stem to database (run asynchronously without blocking UI)
-    saveStemToDatabase(st, usedPrompt, tempo, bars, stemRaw[st], tier, !failedValidation).catch(err => {
-      console.error(`Background stem save failed for ${st}:`, err)
-    })
+    // Note: saveStemToDatabase is now only called when user explicitly clicks the save button
     // Draw waveform for the new loop
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
@@ -1854,14 +2090,14 @@ async function generateStem(st) {
     if (button) {
       button.disabled = false
       const icon = button.querySelector('[data-lucide]')
-      if (icon) { 
-        icon.setAttribute('data-lucide', 'wand-2'); 
-        icon.classList.remove('loading-spin'); 
+      if (icon) {
+        icon.setAttribute('data-lucide', 'wand-2');
+        icon.classList.remove('loading-spin');
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
           try {
             if (window.safeCreateIcons) {
-          window.safeCreateIcons()
-        }
+              window.safeCreateIcons()
+            }
           } catch (error) {
             console.error('Error updating wand icon:', error)
           }
@@ -2025,7 +2261,7 @@ function createBuilderStemCard(st, cfg) {
       historySpan.remove()
     }
 
-  
+
     // for volume changes is provided exclusively in the edit modal.
 
     // On small screens, show the number indicator within the header row; hide it on
@@ -2161,13 +2397,13 @@ function getRootText() {
  * @param {number} tier - Generation tier
  * @param {boolean} validated - Whether validation passed
  */
-async function saveStemToDatabase(st, prompt, tempo, bars, audioBuffer, tier, validated) {
+async function saveStemToDatabase(stemSetId, st, prompt, tempo, bars, audioBuffer, tier, validated, audioUrl) {
   try {
     // Only save if user is authenticated
     const user = getAuthGuard().getCurrentUser()
     if (!user) {
       console.log('Skipping database save for guest user')
-      return
+      return { success: false, error: 'User not authenticated' }
     }
 
     // Get master settings for key signature
@@ -2176,6 +2412,7 @@ async function saveStemToDatabase(st, prompt, tempo, bars, audioBuffer, tier, va
 
     // Prepare stem data for persistence
     const stemData = {
+      stemSetId: stemSetId,
       stemType: st,
       prompt: prompt,
       tempo: tempo,
@@ -2184,22 +2421,394 @@ async function saveStemToDatabase(st, prompt, tempo, bars, audioBuffer, tier, va
       generationTier: tier || 0,
       validated: validated || false,
       audioData: audioBuffer, // AudioBuffer will be converted to ArrayBuffer in saveStem
+      audioUrl: audioUrl || null,
       durationSeconds: audioBuffer.duration
     }
 
-    // Save the stem
+    // Save the stem (this links it to the set via stem_set_id)
     const result = await saveStem(stemData)
 
     if (result.success) {
       console.log(`✅ Stem saved to database: ${st} (ID: ${result.stemId})`)
-      showSuccessToast(`${st} saved to cloud`, 3000)
+      return result
     } else {
       console.warn(`Failed to save stem to database: ${st}`, result.error)
-      // Don't show error toast to avoid annoying users with background saves
+      return result
     }
   } catch (error) {
     console.error(`Error saving stem ${st} to database:`, error)
-    // Don't show error toast to avoid annoying users with background saves
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Collect all stems that have been generated and can be saved
+ * @returns {Array} Array of stem data objects ready for saving
+ */
+function collectStemsToSave() {
+  const stemsToSave = []
+
+  STEM_ORDER.forEach(st => {
+    const activeIndex = stemActiveIndex[st] ?? -1
+    if (activeIndex >= 0 && stemHistory[st] && stemHistory[st][activeIndex]) {
+      const version = stemHistory[st][activeIndex]
+      if (version.raw) {
+        const master = getMasterForPrompt()
+        stemsToSave.push({
+          stemType: st,
+          prompt: version.prompt || '',
+          tempo: version.tempo || clampTempo(master.tempo),
+          bars: version.bars || master.bars,
+          audioBuffer: version.raw,
+          tier: version.meta?.tier || 0,
+          validated: version.meta?.validated !== false
+        })
+      }
+    }
+  })
+
+  return stemsToSave
+}
+
+/**
+ * Show the save to database confirmation modal for authenticated users
+ * @param {Array} stemsToSave - Array of stems to save
+ */
+function showSaveToDbConfirmModal(stemsToSave) {
+  const modal = document.getElementById('saveToDbConfirmModal')
+  if (!modal) return
+
+  // Update stem list
+  const stemListEl = document.getElementById('saveToDbStemList')
+  if (stemListEl) {
+    if (stemsToSave.length === 0) {
+      stemListEl.innerHTML = '<p class="text-white/60">No stems available to save.</p>'
+    } else {
+      stemListEl.innerHTML = stemsToSave.map(s => {
+        const cfg = stemConfigs[s.stemType]
+        return `<div class="flex items-center gap-2">
+          <div class="w-2 h-2 rounded-full" style="background-color: rgb(${getColorRGB(cfg.color)})"></div>
+          <span>${cfg.name}</span>
+        </div>`
+      }).join('')
+    }
+  }
+
+  // Update description
+  const descEl = document.getElementById('saveToDbConfirmDescription')
+  if (descEl) {
+    descEl.textContent = stemsToSave.length === 0
+      ? 'No stems available to save.'
+      : `Save ${stemsToSave.length} stem${stemsToSave.length > 1 ? 's' : ''} to your cloud storage?`
+  }
+
+  // Show modal
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
+    if (content) {
+      content.classList.remove('scale-95')
+      content.classList.add('scale-100')
+    }
+    // Initialize icons
+    if (window.safeCreateIcons) {
+      window.safeCreateIcons()
+    }
+  })
+}
+
+/**
+ * Close the save to database confirmation modal
+ */
+function closeSaveToDbConfirmModal() {
+  const modal = document.getElementById('saveToDbConfirmModal')
+  if (!modal) return
+
+  modal.style.opacity = '0'
+  const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
+  if (content) {
+    content.classList.remove('scale-100')
+    content.classList.add('scale-95')
+  }
+
+  setTimeout(() => {
+    modal.classList.add('hidden')
+  }, 300)
+}
+
+/**
+ * Show the email input modal for non-authenticated users
+ */
+function showSaveToDbEmailModal() {
+  const modal = document.getElementById('saveToDbEmailModal')
+  if (!modal) return
+
+  // Reset to email input state
+  const emailInputState = document.getElementById('saveToDbEmailInputState')
+  const checkEmailState = document.getElementById('saveToDbCheckEmailState')
+  if (emailInputState) emailInputState.classList.remove('hidden')
+  if (checkEmailState) checkEmailState.classList.add('hidden')
+
+  const emailInput = document.getElementById('saveToDbEmailInput')
+  if (emailInput) {
+    emailInput.value = ''
+    emailInput.disabled = false
+  }
+
+  const errorEl = document.getElementById('saveToDbEmailError')
+  if (errorEl) {
+    errorEl.classList.add('hidden')
+    errorEl.textContent = ''
+  }
+
+  // Show modal
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
+    if (content) {
+      content.classList.remove('scale-95')
+      content.classList.add('scale-100')
+    }
+    // Initialize icons
+    if (window.safeCreateIcons) {
+      window.safeCreateIcons()
+    }
+  })
+}
+
+/**
+ * Close the email input modal
+ */
+function closeSaveToDbEmailModal() {
+  const modal = document.getElementById('saveToDbEmailModal')
+  if (!modal) return
+
+  modal.style.opacity = '0'
+  const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
+  if (content) {
+    content.classList.remove('scale-100')
+    content.classList.add('scale-95')
+  }
+
+  setTimeout(() => {
+    modal.classList.add('hidden')
+  }, 300)
+}
+
+/**
+ * Show check email state in the email modal
+ * @param {string} email - User's email address
+ */
+function showSaveToDbCheckEmailState(email) {
+  const emailInputState = document.getElementById('saveToDbEmailInputState')
+  const checkEmailState = document.getElementById('saveToDbCheckEmailState')
+  const userEmailEl = document.getElementById('saveToDbUserEmail')
+
+  if (emailInputState) emailInputState.classList.add('hidden')
+  if (checkEmailState) checkEmailState.classList.remove('hidden')
+  if (userEmailEl) userEmailEl.textContent = email
+}
+
+/**
+ * Handle save to database button click - check auth and show appropriate modal
+ */
+async function handleSaveToDbClick() {
+  const stemsToSave = collectStemsToSave()
+
+  if (stemsToSave.length === 0) {
+    showErrorToast('No stems available to save. Please generate some stems first.', 3000)
+    return
+  }
+
+  // Check if a saved set exists - user must save set first
+  if (currentSavedSetIndex === null || !savedSets[currentSavedSetIndex]) {
+    // No saved set exists, prompt user to save set first
+    showErrorToast('Please save your set first before saving to cloud. Use the "Save Set" button.', 4000)
+    // Optionally open the save set modal
+    const saveStateBtn = document.getElementById('saveStateBtn')
+    if (saveStateBtn) {
+      // Highlight the save set button or show a helper message
+      setTimeout(() => {
+        openSaveSetModal()
+      }, 500)
+    }
+    return
+  }
+
+  // Check authentication status
+  const user = getAuthGuard().getCurrentUser()
+
+  if (user) {
+    // User is authenticated, show confirmation modal
+    showSaveToDbConfirmModal(stemsToSave)
+  } else {
+    // User is not authenticated, show email input modal
+    showSaveToDbEmailModal()
+  }
+}
+
+/**
+ * Save all collected stems to database after user confirmation
+ * Links stems -> stem_set -> session_setting according to database structure
+ * @param {Array} stemsToSave - Array of stems to save
+ */
+async function saveAllStemsToDatabase(stemsToSave) {
+  const spinner = document.getElementById('saveToDbConfirmSpinner')
+  const label = document.getElementById('saveToDbConfirmLabel')
+  const confirmBtn = document.getElementById('saveToDbConfirmBtn')
+
+  try {
+    // Show loading state
+    if (spinner) spinner.classList.remove('hidden')
+    if (label) label.textContent = 'Saving...'
+    if (confirmBtn) confirmBtn.disabled = true
+
+    // Import required functions
+    const { saveSessionSetting, createStemSet } = await import('./Auth/stemApi.js')
+
+    // Get current saved set for set name
+    const currentSet = savedSets[currentSavedSetIndex]
+    if (!currentSet) {
+      throw new Error('No saved set found')
+    }
+
+    // Get session settings from stemControlValues.master
+    const master = stemControlValues.master || {}
+    // Generate default session name if not set
+    const generateDefaultSessionName = () => {
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = String(now.getMonth() + 1).padStart(2, '0')
+      const day = String(now.getDate()).padStart(2, '0')
+      const hours = String(now.getHours()).padStart(2, '0')
+      const minutes = String(now.getMinutes()).padStart(2, '0')
+      const seconds = String(now.getSeconds()).padStart(2, '0')
+      return `Session_${year}-${month}-${day}_${hours}-${minutes}-${seconds}`
+    }
+    const sessionData = {
+      genre: 'techno', // Default genre
+      sessionName: master.sessionName || generateDefaultSessionName(),
+      temp: String(master.tempo || DEFAULT_TEMPO),
+      bars: String(master.bars || DEFAULT_BARS),
+      rootBase: master.rootBase || 'A',
+      selectedAccidental: master.accidental || 'natural',
+      mode: master.mode || 'Minor'
+    }
+
+    // Step 1: Save or get session setting
+    const sessionResult = await saveSessionSetting(sessionData)
+    if (!sessionResult.success) {
+      throw new Error(`Failed to save session setting: ${sessionResult.error}`)
+    }
+    const sessionSettingId = sessionResult.sessionSettingId
+    console.log('Session setting saved:', sessionSettingId)
+
+    // Step 2: Create stem set linked to session setting
+    const setName = `Set ${currentSavedSetIndex + 1}`
+    const setResult = await createStemSet({
+      name: setName,
+      sessionSettingId: sessionSettingId
+    })
+    if (!setResult.success) {
+      throw new Error(`Failed to create stem set: ${setResult.error}`)
+    }
+    const setId = setResult.setId
+    console.log('Stem set created:', setId)
+
+    // Step 3: Save each stem and link to set
+    let successCount = 0
+    let failCount = 0
+    const savedStemIds = []
+
+    for (let i = 0; i < stemsToSave.length; i++) {
+      const stemData = stemsToSave[i]
+      try {
+        // Save stem to database (state is stored in stem_sets.stems_states array)
+        const result = await saveStemToDatabase(
+          setId,
+          stemData.stemType,
+          stemData.prompt,
+          stemData.tempo,
+          stemData.bars,
+          stemData.audioBuffer,
+          stemData.tier,
+          stemData.validated
+        )
+
+        if (result && result.success && result.stemId) {
+          savedStemIds.push({
+            stemId: result.stemId,
+            stemType: stemData.stemType,
+            position: i
+          })
+          successCount++
+        } else {
+          failCount++
+        }
+      } catch (error) {
+        console.error(`Error saving stem ${stemData.stemType}:`, error)
+        failCount++
+      }
+    }
+
+    // Step 4: State information is stored in stem_sets.stems_states array
+    // The stems are linked to the set via stems.stem_set_id
+
+    // Close modal
+    closeSaveToDbConfirmModal()
+
+    // Show result
+    if (successCount > 0) {
+      showSuccessToast(`Successfully saved ${successCount} stem${successCount > 1 ? 's' : ''} to cloud in "${setName}"`, 3000)
+    }
+    if (failCount > 0) {
+      showErrorToast(`Failed to save ${failCount} stem${failCount > 1 ? 's' : ''}`, 3000)
+    }
+  } catch (error) {
+    console.error('Error saving stems:', error)
+    showErrorToast(`Error saving stems to cloud: ${error.message}`, 4000)
+  } finally {
+    // Reset button state
+    if (spinner) spinner.classList.add('hidden')
+    if (label) label.textContent = 'Save'
+    if (confirmBtn) confirmBtn.disabled = false
+  }
+}
+
+/**
+ * Send confirmation email for non-authenticated users
+ * @param {string} email - User's email address
+ */
+async function sendSaveToDbConfirmationEmail(email) {
+  try {
+    const { supabase } = await import('./Auth/index.js')
+    if (!supabase) {
+      throw new Error('Supabase not configured')
+    }
+
+    // Send magic link email
+    const { error } = await supabase.auth.signInWithOtp({
+      email: email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/#auth-callback`
+      }
+    })
+
+    if (error) {
+      throw error
+    }
+
+    // Show check email state
+    showSaveToDbCheckEmailState(email)
+  } catch (error) {
+    console.error('Error sending confirmation email:', error)
+    const errorEl = document.getElementById('saveToDbEmailError')
+    if (errorEl) {
+      errorEl.textContent = error.message || 'Failed to send email. Please try again.'
+      errorEl.classList.remove('hidden')
+    }
   }
 }
 
@@ -2284,72 +2893,18 @@ function mixChannelRowHTML(st) {
     </div>
   `
 }
+// Wrapper function for building floating mixer panel
 function buildFloatingMixerPanel() {
-  const tray = document.getElementById('mixerTray')
-  if (!tray) return
-  let grid = tray.querySelector('#mixerGrid')
-  // Create the grid element if it doesn't exist
-  if (!grid) {
-    grid = document.createElement('div')
-    grid.id = 'mixerGrid'
-    tray.querySelector('.mixer-inner')?.appendChild(grid)
-  }
-  // Always apply responsive classes: single column on extra small screens and two columns on small screens and above
-  // On desktop (sm and up) this results in two channels per row; on very small screens there is one channel per row
-  // Use two columns for the mixer on all screen sizes; maintain gap scaling on larger screens
-  // Use two columns on small screens and three columns on medium and larger screens for the mixer layout
-  // Display three channels per row on all screen sizes for consistency.
-  grid.className = 'grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 md:grid-cols-3'
-  // Populate with full-width channel rows
-  grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
-  // Update mixer glow and card number colours
-  STEM_ORDER.forEach(updateMixerGlow)
-  STEM_ORDER.forEach(updateCardNumberColor)
+  buildFloatingMixerPanelImpl(mixChannelRowHTML, updateMixerGlow, updateCardNumberColor)
 }
+// Wrapper function for setting mixer open state
 function setMixerOpen(open) {
-  const tray = document.getElementById('mixerTray')
-  if (!tray) return
-  // Expand the mixer to full viewport height when open; collapse to zero when closed
-  tray.style.maxHeight = open ? '100vh' : '0px'
-  tray.dataset.open = open ? '1' : '0'
-  // Update player toggle button label + ARIA
-  const toggleBtn = document.getElementById('mixerToggleBtn')
-  if (toggleBtn) {
-    // Update the desktop label only.  The mobile label remains 'mixer' regardless of state.
-    const desktopSpan = toggleBtn.querySelector('span.hidden.sm\\:inline')
-    const mobileSpan = toggleBtn.querySelector('span.inline.sm\\:hidden')
-    if (desktopSpan) desktopSpan.textContent = open ? 'close mixer' : 'open mixer'
-    // Do not modify the mobile label (mobileSpan) so it stays 'mixer'
-    toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
-  }
-
-  // When the mixer is open on mobile, prevent the page from scrolling or panning.
-  // Disable body overflow so touch interactions are confined to the mixer.
-  if (open) {
-    // Hide page scrolling and prevent gestures from propagating outside the mixer
-    document.body.style.overflow = 'hidden'
-    // When the mixer is open, disable touch-action on the tray so that horizontal drags are consumed by sliders and not by the page
-    tray.style.touchAction = 'none'
-    // Show overlay and close button when mixer is open
-    const overlay = document.getElementById('mixerOverlay')
-    if (overlay) overlay.classList.remove('hidden')
-    const closeBtn = document.getElementById('mixerCloseBtn')
-    if (closeBtn) closeBtn.classList.remove('hidden')
-  } else {
-    document.body.style.overflow = ''
-    tray.style.touchAction = ''
-    // Hide overlay and close button when mixer is closed
-    const overlay = document.getElementById('mixerOverlay')
-    if (overlay) overlay.classList.add('hidden')
-    const closeBtn = document.getElementById('mixerCloseBtn')
-    if (closeBtn) closeBtn.classList.add('hidden')
-  }
+  setMixerOpenImpl(open)
 }
+
+// Wrapper function for toggling mixer open state
 function toggleMixerOpen() {
-  const tray = document.getElementById('mixerTray')
-  if (!tray) return
-  const open = tray.dataset.open === '1'
-  setMixerOpen(!open)
+  toggleMixerOpenImpl(setMixerOpen)
 }
 
 /* ---------- Hotkey helpers ---------- */
@@ -2362,8 +2917,8 @@ function toggleMute(st) {
     p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
   }
   const icon = document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"] [data-lucide]`)
-  if (icon) { 
-    icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2'); 
+  if (icon) {
+    icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2');
     if (window.lucide && typeof window.lucide.createIcons === 'function') {
       try {
         if (window.safeCreateIcons) {
@@ -2459,6 +3014,18 @@ function setupEventListeners() {
   const mixerCloseBtn = document.getElementById('mixerCloseBtn')
   if (mixerCloseBtn) mixerCloseBtn.addEventListener('click', () => setMixerOpen(false))
 
+  // Session setup button: allow user to reconfigure session settings
+  const sessionSetupBtn = document.getElementById('sessionSetupBtn')
+  if (sessionSetupBtn) {
+    sessionSetupBtn.addEventListener('click', () => {
+      // Reset session setup flag and clear localStorage
+      sessionSetupDone = false
+      clearSessionSettingsFromStorage()
+      // Show the session setup modal again
+      showSessionSetupModal()
+    })
+  }
+
   // Download all button: prompt the user to confirm downloading all files
   const downloadAllBtn = document.getElementById('downloadAllBtn')
   if (downloadAllBtn) {
@@ -2466,7 +3033,7 @@ function setupEventListeners() {
       // Check if user can download (requires email confirmation)
       const { canUserDownload } = await import('./Auth/selectionPage.js')
       const canDownload = await canUserDownload()
-      
+
       if (canDownload) {
         // User can download, proceed with download
         openDownloadConfirmModal()
@@ -2476,6 +3043,113 @@ function setupEventListeners() {
         showDownloadRestrictionModal()
       }
     })
+  }
+
+  // Save to database button: check auth and show appropriate modal
+  const saveToDbTrigger = document.getElementById('saveToDbTrigger')
+  if (saveToDbTrigger) {
+    saveToDbTrigger.addEventListener('click', handleSaveToDbClick)
+  }
+
+  // Save to database confirmation modal handlers
+  const saveToDbConfirmModal = document.getElementById('saveToDbConfirmModal')
+  if (saveToDbConfirmModal) {
+    const overlay = document.getElementById('saveToDbConfirmOverlay')
+    const closeBtn = document.getElementById('saveToDbConfirmCloseBtn')
+    const cancelBtn = document.getElementById('saveToDbConfirmCancelBtn')
+    const confirmBtn = document.getElementById('saveToDbConfirmBtn')
+
+    const closeModal = () => closeSaveToDbConfirmModal()
+
+    if (overlay) overlay.addEventListener('click', closeModal)
+    if (closeBtn) closeBtn.addEventListener('click', closeModal)
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal)
+    if (confirmBtn) {
+      confirmBtn.addEventListener('click', () => {
+        const stemsToSave = collectStemsToSave()
+        saveAllStemsToDatabase(stemsToSave)
+      })
+    }
+  }
+
+  // Save to database email modal handlers
+  const saveToDbEmailModal = document.getElementById('saveToDbEmailModal')
+  if (saveToDbEmailModal) {
+    const overlay = document.getElementById('saveToDbEmailOverlay')
+    const closeBtn = document.getElementById('saveToDbEmailCloseBtn')
+    const cancelBtn = document.getElementById('saveToDbEmailCancelBtn')
+    const continueBtn = document.getElementById('saveToDbEmailContinueBtn')
+    const resendBtn = document.getElementById('saveToDbResendEmailBtn')
+    const changeEmailBtn = document.getElementById('saveToDbChangeEmailBtn')
+    const emailInput = document.getElementById('saveToDbEmailInput')
+
+    const closeModal = () => closeSaveToDbEmailModal()
+
+    if (overlay) overlay.addEventListener('click', closeModal)
+    if (closeBtn) closeBtn.addEventListener('click', closeModal)
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal)
+
+    if (continueBtn) {
+      continueBtn.addEventListener('click', async () => {
+        const email = emailInput?.value?.trim()
+        if (!email) {
+          const errorEl = document.getElementById('saveToDbEmailError')
+          if (errorEl) {
+            errorEl.textContent = 'Please enter your email address'
+            errorEl.classList.remove('hidden')
+          }
+          return
+        }
+
+        // Validate email
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        if (!emailRegex.test(email)) {
+          const errorEl = document.getElementById('saveToDbEmailError')
+          if (errorEl) {
+            errorEl.textContent = 'Please enter a valid email address'
+            errorEl.classList.remove('hidden')
+          }
+          return
+        }
+
+        // Send confirmation email
+        await sendSaveToDbConfirmationEmail(email)
+      })
+    }
+
+    if (resendBtn) {
+      resendBtn.addEventListener('click', async () => {
+        const email = emailInput?.value?.trim()
+        if (email) {
+          await sendSaveToDbConfirmationEmail(email)
+        }
+      })
+    }
+
+    if (changeEmailBtn) {
+      changeEmailBtn.addEventListener('click', () => {
+        const emailInputState = document.getElementById('saveToDbEmailInputState')
+        const checkEmailState = document.getElementById('saveToDbCheckEmailState')
+        if (emailInputState) emailInputState.classList.remove('hidden')
+        if (checkEmailState) checkEmailState.classList.add('hidden')
+      })
+    }
+
+    if (emailInput) {
+      emailInput.addEventListener('input', () => {
+        const errorEl = document.getElementById('saveToDbEmailError')
+        if (errorEl) {
+          errorEl.classList.add('hidden')
+          errorEl.textContent = ''
+        }
+      })
+
+      emailInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          continueBtn?.click()
+        }
+      })
+    }
   }
 
   // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
@@ -2593,31 +3267,8 @@ function setupEventListeners() {
     })
   }
 
-  // Master Volume: controls the global output gain.  Updates the text display and ramps the master gain.
-  const masterVolSlider = document.getElementById('masterVolumeSlider')
-  const masterVolValue = document.getElementById('masterVolumeValue')
-  if (masterVolSlider) {
-    // Initialize the slider display based on the current masterGain value, if available
-    if (masterVolValue && typeof masterGain?.gain?.value === 'number') {
-      const initVal = Math.round((masterGain.gain.value || 0) * 100)
-      masterVolSlider.value = String(initVal)
-      masterVolValue.textContent = `${initVal}%`
-    }
-    masterVolSlider.addEventListener('input', async e => {
-      const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0)))
-      // Update displayed percentage
-      if (masterVolValue) masterVolValue.textContent = `${v}%`
-      // Ensure the audio context exists and update the gain
-      await ensureAudioContext()
-      if (masterGain) {
-        const now = audioContext.currentTime
-        // Ramp smoothly to new gain value
-        masterGain.gain.cancelScheduledValues(now)
-        masterGain.gain.setValueAtTime(masterGain.gain.value, now)
-        masterGain.gain.linearRampToValueAtTime(v / 100, now + 0.02)
-      }
-    })
-  }
+  // Master Volume: controls the global output gain.  Uses imported function
+  initializeMasterVolumeSliderImpl(masterGain, ensureAudioContext, audioContext)
 
   // Key: root + accidental + mode
   const rootSelector = document.getElementById('rootSelector')
@@ -2766,7 +3417,7 @@ function setupEventListeners() {
     -------------------------------------------------------------------------
     Dial plus/minus button handlers
 
-    The volume and endpoint infinite dials are flanked by "−" and "+" buttons.
+    The volume and endpoint infinite dials are flanked by "-" and "+" buttons.
     These buttons allow fine adjustments without dragging the dial.  Holding
     a button continuously steps the value up or down.  Each button has
     data-dial-type ("volume" or "endpoint"), data-dial-step ("-1" or "1"),
@@ -3215,10 +3866,10 @@ function selectStemVersion(st, index) {
    App init + navigation
    ========================================================= */
 function showPage(pageId) {
-  try { console.log('[router] showPage ->', pageId) } catch {}
+  try { console.log('[router] showPage ->', pageId) } catch { }
   const pages = ['login-page', 'selection-page', 'techno-generator-page', 'reset-password-page', 'confirm-email-page', 'profile-page']
   pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
-  const targetPage = document.getElementById(pageId); 
+  const targetPage = document.getElementById(pageId);
   if (targetPage) {
     targetPage.classList.remove('hidden')
     console.log('[router] Page shown:', pageId, 'Element:', targetPage, 'Classes:', targetPage.className)
@@ -3226,21 +3877,21 @@ function showPage(pageId) {
     console.error('[router] Page not found:', pageId)
   }
 
-    // Show studio header only on studio pages (techno-generator-page)
-    const studioHeader = document.getElementById('studioHeader')
-    const showStudioHeader = pageId === 'techno-generator-page'
-    if (studioHeader) studioHeader.classList.toggle('hidden', !showStudioHeader)
+  // Show studio header only on studio pages (techno-generator-page)
+  const studioHeader = document.getElementById('studioHeader')
+  const showStudioHeader = pageId === 'techno-generator-page'
+  if (studioHeader) studioHeader.classList.toggle('hidden', !showStudioHeader)
 
-    // Show bottom player only on Studio page
-    const playerBar = document.getElementById('playerBar')
-    const showDock = pageId === 'techno-generator-page'
-    if (playerBar) playerBar.classList.toggle('hidden', !showDock)
-    if (!showDock) setMixerOpen(false)
-    
-    // Show guest mode notice on techno generator page if user is not authenticated
-    if (pageId === 'techno-generator-page') {
-      updateGuestModeNotice()
-    }
+  // Show bottom player only on Studio page
+  const playerBar = document.getElementById('playerBar')
+  const showDock = pageId === 'techno-generator-page'
+  if (playerBar) playerBar.classList.toggle('hidden', !showDock)
+  if (!showDock) setMixerOpen(false)
+
+  // Show guest mode notice on techno generator page if user is not authenticated
+  if (pageId === 'techno-generator-page') {
+    updateGuestModeNotice()
+  }
 }
 
 
@@ -3250,7 +3901,7 @@ function showPage(pageId) {
 async function updateGuestModeNotice() {
   const guestModeNotice = document.getElementById('guestModeNotice')
   if (!guestModeNotice) return
-  
+
   const user = getAuthGuard().getCurrentUser()
   if (user) {
     // User is authenticated, hide guest mode notice
@@ -3267,9 +3918,9 @@ window.initTechnoGenerator = initTechnoGenerator
 function setupNavigationListeners() {
   // Note: loginBtn is now handled by setupLoginPage() in Auth/loginPage.js
   const launchTechno = document.getElementById('launchTechno')
-  if (launchTechno) launchTechno.addEventListener('click', () => { 
-    showPage('techno-generator-page'); 
-    initTechnoGenerator() 
+  if (launchTechno) launchTechno.addEventListener('click', () => {
+    showPage('techno-generator-page');
+    initTechnoGenerator()
   })
   const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => { })
   const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => { })
@@ -3278,10 +3929,10 @@ function setupNavigationListeners() {
 function setupRouteHandling() {
   // Handle hash changes for routing
   window.addEventListener('hashchange', handleHashChange)
-  
+
   // Handle initial hash on page load
   handleHashChange()
-  
+
 }
 
 /**
@@ -3290,88 +3941,88 @@ function setupRouteHandling() {
 async function handleEmailVerification() {
   try {
     console.log('[email-verification] Starting email verification process')
-    
+
     // Parse URL parameters to get verification tokens
     const urlParams = new URLSearchParams(window.location.search)
     const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '')
-    
+
     // Check for new token format (from custom email template)
     const token = urlParams.get('token') || hashParams.get('token')
     const email = urlParams.get('email') || hashParams.get('email')
-    
+
     // Check for old token format (from Supabase default)
     const accessToken = urlParams.get('access_token') || hashParams.get('access_token')
     const refreshToken = urlParams.get('refresh_token') || hashParams.get('refresh_token')
     const type = urlParams.get('type') || hashParams.get('type')
-    
-    console.log('[email-verification] Found tokens:', { 
+
+    console.log('[email-verification] Found tokens:', {
       hasToken: !!token,
       hasEmail: !!email,
-      hasAccessToken: !!accessToken, 
-      hasRefreshToken: !!refreshToken, 
-      type 
+      hasAccessToken: !!accessToken,
+      hasRefreshToken: !!refreshToken,
+      type
     })
-    
+
     // Import supabase client
     const { supabase } = await import('./Auth/index.js')
-    
+
     let data, error
-    
+
     // Handle new token format (token hash for verifyOtp)
     if (token) {
       console.log('[email-verification] Using new token format (verifyOtp)')
-      
+
       const result = await supabase.auth.verifyOtp({
         token_hash: token,
         type: 'signup'
       })
-      
+
       data = result.data
       error = result.error
-      
-    } 
+
+    }
     // Handle old token format (access_token/refresh_token for setSession)
     else if (accessToken && refreshToken) {
       console.log('[email-verification] Using old token format (setSession)')
-      
+
       if (type !== 'signup') {
         console.log('[email-verification] Not a signup verification, type:', type)
         return
       }
-      
+
       const result = await supabase.auth.setSession({
         access_token: accessToken,
         refresh_token: refreshToken
       })
-      
+
       data = result.data
       error = result.error
-      
+
     } else {
       console.log('[email-verification] No verification tokens found')
       return
     }
-    
+
     if (error) {
       console.error('[email-verification] Failed to verify email:', error)
       showEmailVerificationError('Email verification failed. Please try again.')
       return
     }
-    
+
     console.log('[email-verification] Email verified successfully:', data.user?.email)
-    
+
     // Show success message and redirect to login
     showEmailVerificationSuccess('Email verified successfully! You can now log in.')
-    
+
     // Store verification success flag for login page
     localStorage.setItem('emailVerified', 'true')
     localStorage.setItem('verifiedEmail', data.user?.email || email || '')
-    
+
     // Clear URL parameters and redirect to login after a delay
     setTimeout(() => {
       window.location.hash = '#login'
     }, 3000)
-    
+
   } catch (error) {
     console.error('[email-verification] Unexpected error:', error)
     showEmailVerificationError('An unexpected error occurred during email verification.')
@@ -3384,7 +4035,7 @@ async function handleEmailVerification() {
 function showEmailVerificationSuccess(message) {
   const page = document.getElementById('confirm-email-page')
   if (!page) return
-  
+
   // Update the page content to show success message
   page.innerHTML = `
     <div class="min-h-screen flex items-center justify-center p-4">
@@ -3402,7 +4053,7 @@ function showEmailVerificationSuccess(message) {
       </div>
     </div>
   `
-  
+
   // Initialize Lucide icons safely
   if (window.safeCreateIcons) {
     window.safeCreateIcons()
@@ -3415,7 +4066,7 @@ function showEmailVerificationSuccess(message) {
 function showEmailVerificationError(message) {
   const page = document.getElementById('confirm-email-page')
   if (!page) return
-  
+
   // Update the page content to show error message
   page.innerHTML = `
     <div class="min-h-screen flex items-center justify-center p-4">
@@ -3433,7 +4084,7 @@ function showEmailVerificationError(message) {
       </div>
     </div>
   `
-  
+
   // Initialize Lucide icons safely
   if (window.safeCreateIcons) {
     window.safeCreateIcons()
@@ -3442,16 +4093,16 @@ function showEmailVerificationError(message) {
 
 function handleHashChange() {
   const rawHash = window.location.hash.substring(1) // Remove the # symbol
-  try { console.log('[router] handleHashChange rawHash=', rawHash) } catch {}
+  try { console.log('[router] handleHashChange rawHash=', rawHash) } catch { }
   const baseRoute = rawHash.split('?')[0].replace(/\/$/, '') // support params like reset-password?x=1
-  try { console.log('[router] baseRoute=', baseRoute) } catch {}
-  
+  try { console.log('[router] baseRoute=', baseRoute) } catch { }
+
   // Check for Supabase password reset parameters in hash
   const hashParams = new URLSearchParams(rawHash.split('?')[1] || '')
   const hasResetToken = hashParams.get('token') || hashParams.get('access_token')
   const hasResetEmail = hashParams.get('email')
-  try { console.log('[router] reset params in hash:', { hasToken: !!hasResetToken, hasEmail: !!hasResetEmail }) } catch {}
-  
+  try { console.log('[router] reset params in hash:', { hasToken: !!hasResetToken, hasEmail: !!hasResetEmail }) } catch { }
+
   switch (baseRoute) {
     case 'login':
       showPage('login-page')
@@ -3465,7 +4116,7 @@ function handleHashChange() {
       initTechnoGenerator()
       break
     case 'reset-password':
-      try { console.log('[router] showing reset-password-page') } catch {}
+      try { console.log('[router] showing reset-password-page') } catch { }
       showPage('reset-password-page')
       console.log('[router] Reset password page should be visible now')
       // Force a small delay to ensure DOM is ready
@@ -3530,7 +4181,7 @@ function initTechnoGenerator() {
   if (container && PROMPTS_MODE === 'builder') {
     container.innerHTML = ''
     STEM_ORDER.forEach(st => container.appendChild(createBuilderStemCard(st, stemConfigs[st])))
-    
+
     // Re-initialize Lucide icons after cards are created
     setTimeout(() => {
       if (window.initializeIcons) {
@@ -3542,7 +4193,7 @@ function initTechnoGenerator() {
   }
 
   setupEventListeners()
-  
+
   // Initialize Lucide icons with a delay to ensure templates are loaded
   setTimeout(() => {
     if (window.initializeIcons) {
@@ -3641,7 +4292,7 @@ export async function initApp() {
     const hash = window.location.hash.substring(1)
     const authGuard = getAuthGuard()
     const isAuthenticated = authGuard.isAuthenticated
-    
+
     if (hash) {
       // If there's a hash, use hash-based routing
       handleHashChange()
@@ -3672,13 +4323,13 @@ async function handleAuthStateChange(event, session, user) {
 
       // Update user menu with user info
       await updateUserMenu()
-      
+
       // Show user menu since user is now authenticated
       updateUserMenuVisibility()
 
       // Dispatch auth state change event for other components
-      window.dispatchEvent(new CustomEvent('authStateChanged', { 
-        detail: { event, session, user } 
+      window.dispatchEvent(new CustomEvent('authStateChanged', {
+        detail: { event, session, user }
       }))
 
       // Update guest mode notice if on techno generator page
@@ -3687,13 +4338,13 @@ async function handleAuthStateChange(event, session, user) {
       // Only navigate if we're not already on the selection page and there's no hash
       const currentHash = window.location.hash.substring(1)
       const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
-      
+
       // Don't redirect if we're on the reset-password page (user is in the middle of resetting)
       if (currentPage === 'reset-password-page') {
         console.log('User is on reset-password page, not redirecting')
         return
       }
-      
+
       if (!currentHash && currentPage !== 'techno-generator-page') {
         showPage('techno-generator-page')
         initTechnoGenerator()
@@ -3704,13 +4355,13 @@ async function handleAuthStateChange(event, session, user) {
 
       // Clear user menu
       await updateUserMenu()
-      
+
       // Hide user menu since user is no longer authenticated
       updateUserMenuVisibility()
 
       // Dispatch auth state change event for other components
-      window.dispatchEvent(new CustomEvent('authStateChanged', { 
-        detail: { event, session: null, user: null } 
+      window.dispatchEvent(new CustomEvent('authStateChanged', {
+        detail: { event, session: null, user: null }
       }))
 
       // Update guest mode notice if on techno generator page
@@ -3719,9 +4370,9 @@ async function handleAuthStateChange(event, session, user) {
       // Only navigate if we're not already on the login page and there's no hash
       const currentHash = window.location.hash.substring(1)
       const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
-      
+
       console.log('🚪 Current page:', currentPage, 'Current hash:', currentHash)
-      
+
       if (!currentHash && currentPage !== 'login-page') {
         console.log('🚪 Redirecting to login page...')
         showPage('login-page')
@@ -3906,120 +4557,20 @@ async function applyGenerateSettingsAndStart() {
 // stored in stemControlValues.master and the bottom controls are
 // disabled accordingly.  The selected values persist for the
 // remainder of the session.
+// Wrapper function that calls the imported session setup function
 function showSessionSetupModal() {
-  if (sessionSetupDone) return
-  const modal = document.getElementById('sessionSetupModal')
-  if (!modal) return
-  const overlay = document.getElementById('sessionSetupOverlay')
-  const tempoSlider = document.getElementById('setupTempoSlider')
-  const tempoValue = document.getElementById('setupTempoValue')
-  const barsSelector = document.getElementById('setupBarsSelector')
-  const rootSelector = document.getElementById('setupRootSelector')
-  const accidentalSelector = document.getElementById('setupAccidentalSelector')
-  const modeSelector = document.getElementById('setupModeSelector')
-  // The cancel button has been removed (the session setup cannot be dismissed).  It may
-  // still exist in older templates, but we treat it as optional.
-  const cancelBtn = document.getElementById('setupCancelBtn')
-  const saveBtn = document.getElementById('setupSaveBtn')
-  if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !saveBtn) return
-  // Update displayed tempo when slider moves
-  tempoSlider.addEventListener('input', e => {
-    const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
-    tempoValue.textContent = String(val)
-  })
-  // If a cancel button exists (legacy HTML), wire it to simply hide the modal.
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => {
-      modal.style.opacity = '0'
-      setTimeout(() => { modal.classList.add('hidden') }, 300)
-      document.body.style.overflow = ''
-    })
-  }
-  // Save button applies settings and locks them
-  saveBtn.addEventListener('click', () => {
-    const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
-    const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
-    const rootText = String(rootSelector.value || 'A')
-    // Determine base letter and accidental from the root selection
-    let rootBase = rootText.replace(/[♯♭]/g, '').toUpperCase()
-    const selectedAccidental = accidentalSelector.value
-    const modeVal = String(modeSelector.value || 'Minor')
-    // Set master values
-    stemControlValues.master.tempo = tempoVal
-    stemControlValues.master.bars = barsVal
-    stemControlValues.master.rootBase = rootBase
-    stemControlValues.master.accidental = selectedAccidental
-    stemControlValues.master.mode = modeVal
-    sessionSetupDone = true
-    applySessionSettingsToUI()
-    // Hide modal
-    modal.style.opacity = '0'
-    setTimeout(() => { modal.classList.add('hidden') }, 300)
-    // Restore page scrolling when the session setup modal is closed
-    document.body.style.overflow = ''
-  })
-  // Show the modal
-  modal.classList.remove('hidden')
-  requestAnimationFrame(() => {
-    modal.style.opacity = '1'
-  })
-  // Disable page scrolling while the session setup modal is visible
-  document.body.style.overflow = 'hidden'
+  showSessionSetupModalImpl(
+    sessionSetupDone,
+    stemControlValues,
+    (value) => { sessionSetupDone = value },
+    applySessionSettingsToUI,
+    updateTempoIndicator
+  )
 }
 
-// Apply the session settings to the UI: update the bottom controls
-// with the locked values and disable them so the user cannot modify
-// them mid-session.  Also refresh the tempo indicators on the
-// waveform cards and update the history drawer where needed.
+// Wrapper function that calls the imported apply session settings function
 function applySessionSettingsToUI() {
-  const master = stemControlValues.master
-  // If any of the old master controls exist (tempo, bars, key selectors), disable them and set their values.
-  // This keeps compatibility in case those elements are still present in the DOM for other generators.
-  const tempoSlider = document.getElementById('tempoSlider')
-  const tempoValueEl = document.getElementById('tempoValue')
-  if (tempoSlider) {
-    tempoSlider.value = String(master.tempo)
-    tempoSlider.disabled = true
-  }
-  if (tempoValueEl) {
-    tempoValueEl.textContent = String(master.tempo)
-  }
-  const barsSelector = document.getElementById('barsSelector')
-  if (barsSelector) {
-    barsSelector.value = String(master.bars)
-    barsSelector.disabled = true
-  }
-  const rootSelector = document.getElementById('rootSelector')
-  const accidentalSelector = document.getElementById('accidentalSelector')
-  const modeSelector = document.getElementById('modeSelector')
-  if (rootSelector) {
-    let rootDisplay = master.rootBase
-    if (master.accidental === 'sharp') rootDisplay += '#'
-    else if (master.accidental === 'flat') rootDisplay += 'b'
-    rootSelector.value = rootDisplay
-    rootSelector.disabled = true
-  }
-  if (accidentalSelector) {
-    accidentalSelector.value = master.accidental
-    accidentalSelector.disabled = true
-  }
-  if (modeSelector) {
-    modeSelector.value = master.mode
-    modeSelector.disabled = true
-  }
-  // Update the session info card in the player bar.
-  const infoEl = document.getElementById('sessionInfoText')
-  const infoElMob = document.getElementById('sessionInfoTextMobile')
-  const infoString = (() => {
-    const rootName = getRootText()
-    return `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
-  })()
-  if (infoEl) infoEl.textContent = infoString
-  if (infoElMob) infoElMob.textContent = infoString
-  // Refresh tempo indicators on all cards
-  STEM_ORDER.forEach(st => {
-    updateTempoIndicator(st)
-  })
+  applySessionSettingsToUIImpl(stemControlValues, updateTempoIndicator)
 }
 
 /* =========================================================

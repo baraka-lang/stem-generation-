@@ -27,9 +27,12 @@ if (supabaseUrl && supabaseKey) {
  * @param {ArrayBuffer|AudioBuffer} stemData.audioData - Audio data as ArrayBuffer or AudioBuffer
  * @param {number} stemData.fileSize - File size in bytes (optional)
  * @param {number} stemData.durationSeconds - Duration in seconds (optional if audioData is AudioBuffer)
+ * @param {string} stemData.stemSetId - ID of the stem set (optional)
+ * @param {string} stemData.audioUrl - Path/URL to saved audio file (optional)
  * @returns {Promise<{success: boolean, stemId?: string, error?: string}>}
  */
 export async function saveStem(stemData) {
+  // console.log(stemData)
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }
   }
@@ -68,20 +71,35 @@ export async function saveStem(stemData) {
       audioBase64 = btoa(String.fromCharCode(...audioBytes))
     }
 
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    const insertData = {
+      user_id: user.id,
+      stem_type: stemData.stemType,
+      prompt: stemData.prompt,
+      tempo: stemData.tempo,
+      bars: stemData.bars,
+      key_signature: stemData.keySignature,
+      generation_tier: stemData.generationTier || 0,
+      validated: stemData.validated || false,
+      audio_data: audioBase64,
+      audio_url: stemData.audioUrl || null,
+      file_size: fileSize,
+      duration_seconds: durationSeconds
+    }
+
+    // Add stem_set_id if provided
+    if (stemData.stemSetId) {
+      insertData.stem_set_id = stemData.stemSetId
+    }
+
     const { data, error } = await supabase
       .from('stems')
-      .insert({
-        stem_type: stemData.stemType,
-        prompt: stemData.prompt,
-        tempo: stemData.tempo,
-        bars: stemData.bars,
-        key_signature: stemData.keySignature,
-        generation_tier: stemData.generationTier || 0,
-        validated: stemData.validated || false,
-        audio_data: audioBase64,
-        file_size: fileSize,
-        duration_seconds: durationSeconds
-      })
+      .insert(insertData)
       .select('id')
       .single()
 
@@ -125,14 +143,83 @@ export async function getUserStems() {
 }
 
 /**
+ * Save or update session settings
+ * @param {Object} sessionData - Session settings data
+ * @param {string} sessionData.genre - Genre (e.g., 'techno')
+ * @param {string} sessionData.sessionName - Name of the session
+ * @param {string} sessionData.temp - Tempo as string
+ * @param {string} sessionData.bars - Bars as string
+ * @param {string} sessionData.rootBase - Root base note (A-G)
+ * @param {string} sessionData.selectedAccidental - Accidental (natural, sharp, flat)
+ * @param {string} sessionData.mode - Mode (Major, Minor, etc.)
+ * @returns {Promise<{success: boolean, sessionSettingId?: number, error?: string}>}
+ */
+export async function saveSessionSetting(sessionData) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    // Check if session setting already exists for this user with same settings
+    const { data: existing, error: checkError } = await supabase
+      .from('session_settings')
+      .select('id')
+      .eq('user_uuid', user.id)
+      .eq('genre', sessionData.genre)
+      .eq('temp', sessionData.temp)
+      .eq('bars', sessionData.bars)
+      .eq('root_base', sessionData.rootBase)
+      .eq('selected_accidental', sessionData.selectedAccidental)
+      .eq('mode', sessionData.mode)
+      .order('date_created', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (existing && !checkError) {
+      // Return existing session setting
+      return { success: true, sessionSettingId: existing.id }
+    }
+
+    // Create new session setting
+    const { data, error } = await supabase
+      .from('session_settings')
+      .insert({
+        user_uuid: user.id,
+        genre: sessionData.genre || 'techno',
+        session_name: sessionData.sessionName || `Session ${new Date().toLocaleDateString()}`,
+        temp: String(sessionData.temp),
+        bars: String(sessionData.bars),
+        root_base: sessionData.rootBase,
+        selected_accidental: sessionData.selectedAccidental,
+        mode: sessionData.mode,
+        date_created: new Date().toISOString()
+      })
+      .select('id')
+      .single()
+
+    if (error) {
+      console.error('Error saving session setting:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, sessionSettingId: data.id }
+  } catch (error) {
+    console.error('Exception saving session setting:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
  * Create a new stem set
  * @param {Object} setData - Set data
  * @param {string} setData.name - Name of the set
- * @param {string} setData.description - Optional description
- * @param {number} setData.tempo - Tempo in BPM
- * @param {number} setData.bars - Number of bars
- * @param {string} setData.keySignature - Key signature
- * @param {boolean} setData.isPublic - Whether set is public
+ * @param {number} setData.sessionSettingId - ID of the session setting
  * @returns {Promise<{success: boolean, setId?: string, error?: string}>}
  */
 export async function createStemSet(setData) {
@@ -145,11 +232,7 @@ export async function createStemSet(setData) {
       .from('stem_sets')
       .insert({
         name: setData.name,
-        description: setData.description,
-        tempo: setData.tempo,
-        bars: setData.bars,
-        key_signature: setData.keySignature,
-        is_public: setData.isPublic || false
+        session_setting_id: setData.sessionSettingId
       })
       .select('id')
       .single()
@@ -176,24 +259,19 @@ export async function getUserStemSets() {
   }
 
   try {
+    // Get stem sets with their stems (linked via stems.stem_set_id)
     const { data, error } = await supabase
       .from('stem_sets')
       .select(`
         *,
-        stem_set_items(
+        stems(
           id,
-          position,
-          volume,
-          muted,
-          stems(
-            id,
-            stem_type,
-            prompt,
-            tempo,
-            bars,
-            key_signature,
-            created_at
-          )
+          stem_type,
+          prompt,
+          tempo,
+          bars,
+          key_signature,
+          created_at
         )
       `)
       .order('created_at', { ascending: false })
@@ -444,5 +522,270 @@ export async function deleteStemSet(setId) {
   } catch (error) {
     console.error('Exception deleting stem set:', error)
     return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Get a session setting by ID
+ * @param {number} sessionSettingId - ID of the session setting
+ * @returns {Promise<{success: boolean, sessionSetting?: Object, stem_set_id?: string, error?: string}>}
+ */
+export async function getSessionSettingById(sessionSettingId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try { 
+    const { data, error } = await supabase
+      .from('session_settings')
+      .select('*')
+      .eq('id', sessionSettingId)
+      .single()
+
+    if (error) {
+      console.error('Error fetching session setting:', error)
+      return { success: false, error: error.message }
+    }
+
+    // Also get the associated stem_set if it exists
+    const { data: stemSetData, error: stemSetError } = await supabase
+      .from('stem_sets')
+      .select('id')
+      .eq('session_setting_id', sessionSettingId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const result = { success: true, sessionSetting: data }
+    if (stemSetData && !stemSetError) {
+      result.stem_set_id = stemSetData.id
+    }
+
+    return result
+  } catch (error) {
+    console.error('Exception fetching session setting:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Get a stem set by session setting ID
+ * @param {number} sessionSettingId - ID of the session setting
+ * @returns {Promise<{success: boolean, set_id?: string, set?: Object, error?: string}>}
+ */
+export async function getSetById(sessionSettingId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('stem_sets')
+      .select('*')
+      .eq('session_setting_id', sessionSettingId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) {
+      console.error('Error fetching stem set:', error)
+      return { success: false, error: error.message }
+    }
+
+    if (!data) {
+      return { success: false, error: 'No set found for this session setting' }
+    }
+
+    return { success: true, set_id: data.id, set: data }
+  } catch (error) {
+    console.error('Exception fetching stem set:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Update an existing stem set
+ * @param {string} setId - ID of the set to update
+ * @param {Object} setData - Updated set data
+ * @param {string} setData.name - Name of the set
+ * @param {string} setData.description - Description of the set
+ * @param {Array} setData.stems_states - Array of stem states
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function updateSet(setId, setData) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    const updatePayload = {
+      updated_at: new Date().toISOString()
+    }
+
+    if (setData.name !== undefined) {
+      updatePayload.name = setData.name
+    }
+
+    if (setData.description !== undefined) {
+      updatePayload.state_description = setData.description
+    }
+
+    if (setData.stems_states !== undefined) {
+      // stems_states is now JSONB, so we can store the object directly
+      updatePayload.stems_states = setData.stems_states
+    }
+
+    const { error } = await supabase
+      .from('stem_sets')
+      .update(updatePayload)
+      .eq('id', setId)
+
+    if (error) {
+      console.error('Error updating stem set:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true }
+  } catch (error) {
+    console.error('Exception updating stem set:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Save a new stem set to the database
+ * @param {Object} setData - Set data
+ * @param {string} setData.name - Name of the set
+ * @param {string} setData.description - Description of the set
+ * @param {Array} setData.stems_states - Array of stem states
+ * @param {number} sessionSettingId - ID of the session setting
+ * @returns {Promise<{success: boolean, set_id?: string, error?: string}>}
+ */
+export async function saveSetToDb(setData, sessionSettingId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    // stems_states is now JSONB, so we can store the object directly
+    // Supabase will automatically serialize JavaScript objects to JSONB
+    const { data, error } = await supabase
+      .from('stem_sets')
+      .insert({
+        name: setData.name || 'Untitled Set',
+        session_setting_id: sessionSettingId,
+        state_description: setData.description || null,
+        stems_states: setData.stems_states || null
+      })
+      .select('id')
+      .single()
+
+    if (error) {
+      console.error('Error saving stem set:', error)
+      console.error('stems_states value:', setData.stems_states)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, set_id: data.id }
+  } catch (error) {
+    console.error('Exception saving stem set:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+/**
+ * Save session setting to database (alias for saveSessionSetting with different return format)
+ * @param {Object} sessionData - Session settings data
+ * @param {string} sessionData.genre - Genre (e.g., 'techno')
+ * @param {string} sessionData.sessionName - Name of the session
+ * @param {string} sessionData.temp - Tempo as string
+ * @param {string} sessionData.bars - Bars as string
+ * @param {string} sessionData.rootBase - Root base note (A-G)
+ * @param {string} sessionData.selectedAccidental - Accidental (natural, sharp, flat)
+ * @param {string} sessionData.mode - Mode (Major, Minor, etc.)
+ * @returns {Promise<{success: boolean, session_setting_id?: number, stem_set_id?: string, error?: string}>}
+ */
+export async function saveSessionSettingToDb(sessionData) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    // Get current user
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+
+    // Check if session setting already exists for this user with same settings
+    const { data: existing, error: checkError } = await supabase
+      .from('session_settings')
+      .select('id')
+      .eq('user_uuid', user.id)
+      .eq('genre', sessionData.genre || 'techno')
+      .eq('temp', String(sessionData.temp || ''))
+      .eq('bars', String(sessionData.bars || ''))
+      .eq('root_base', sessionData.rootBase || '')
+      .eq('selected_accidental', sessionData.selectedAccidental || 'natural')
+      .eq('mode', sessionData.mode || 'Major')
+      .order('date_created', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (existing && !checkError) {
+      // Return existing session setting ID
+      return { success: true, session_setting_id: Number(existing.id) }
+    }
+
+    // Create new session setting only if it doesn't exist
+    const { data, error } = await supabase
+      .from('session_settings')
+      .insert({
+        user_uuid: user.id,
+        genre: sessionData.genre || 'techno',
+        session_name: sessionData.sessionName || `Session ${new Date().toLocaleDateString()}`,
+        temp: String(sessionData.temp || ''),
+        bars: String(sessionData.bars || ''),
+        root_base: sessionData.rootBase || '',
+        selected_accidental: sessionData.selectedAccidental || 'natural',
+        mode: sessionData.mode || 'Major',
+        date_created: new Date().toISOString()
+      })
+      .select('id')
+      .single()
+
+    if (error) {
+      console.error('Error saving session setting:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, session_setting_id: Number(data.id) }
+  } catch (error) {
+    console.error('Exception saving session setting:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+// Fetch stem set ids and names by session_setting_id
+export async function getSetsById(sessionSettingId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { data, error } = await supabase
+      .from('stem_sets')
+      .select('id, name')
+      .eq('session_setting_id', sessionSettingId)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Error fetching stem sets by session_setting_id:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, sets: data || [] }
+  } catch (err) {
+    console.error('Exception fetching stem sets by session_setting_id:', err)
+    return { success: false, error: err.message }
   }
 }
