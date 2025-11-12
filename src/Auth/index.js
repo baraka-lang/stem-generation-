@@ -60,61 +60,40 @@ export async function signUp(email, password, fullName) {
         captchaToken: null
       }
     })
-
+    
     if (error) {
       console.error('Sign up error:', error.message)
       return { user: null, error }
     }
-
+    
     // Check if this is a new user by examining the response
     // Supabase returns different behavior for existing vs new users
     let isNewUser = false
-
+    
     // If we get a user object, check if it was actually created
     if (data.user) {
       // Check if the user was just created by looking at the session
       // New users typically don't have a session immediately
       isNewUser = !data.session || data.session === null
-
+      
       // Also check if email_confirmed_at is null (indicating new user)
       if (data.user.email_confirmed_at === null) {
         isNewUser = true
       }
     }
-
-    console.log('Sign up result:', {
-      email: data.user?.email,
+    
+    console.log('Sign up result:', { 
+      email: data.user?.email, 
       isNewUser,
       hasSession: !!data.session,
       emailConfirmedAt: data.user?.email_confirmed_at
     })
-
+    
     // Store email in localStorage for confirm-email page only for new users
     if (data.user?.email && isNewUser) {
       localStorage.setItem('pendingEmail', data.user.email)
-
-      // CRITICAL FIX: Send confirmation email for new users
-      console.log('Sending confirmation email for new user:', data.user.email)
-      try {
-        // Generate confirmation URL with token
-        const confirmationUrl = `${window.location.origin}/#confirm-email?email=${encodeURIComponent(data.user.email)}`
-
-        // Call the Edge Function to send the confirmation email
-        const emailResult = await sendConfirmationEmail(data.user.email, confirmationUrl)
-
-        if (!emailResult.success) {
-          console.error('Failed to send confirmation email:', emailResult.error)
-          // Don't fail the signup, but log the error
-          // User can resend from the confirmation page
-        } else {
-          console.log('Confirmation email sent successfully to:', data.user.email)
-        }
-      } catch (emailError) {
-        console.error('Error sending confirmation email:', emailError)
-        // Don't fail the signup, user can resend from confirmation page
-      }
     }
-
+    
     return { user: data.user, error: null, isNewUser }
   } catch (error) {
     console.error('Sign up exception:', error)
