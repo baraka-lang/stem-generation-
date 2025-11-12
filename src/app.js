@@ -1721,12 +1721,55 @@ function startTransport() {
 
   updateAllMixerGlows()
 }
-function stopTransport() {
-  if (!isPlaying) {
-    console.log('Transport not playing, ignoring stop request')
-    return
+// Pause transport without destroying nodes (maintains playback position)
+function pauseTransport() {
+  if (!isPlaying || !audioContext) return
+  console.log('Pausing transport...')
+  isPlaying = false
+  updatePlayButtonIcon()
+
+  // Suspend the audio context to pause all playback
+  audioContext.suspend().catch(err => {
+    console.warn('Failed to suspend audio context:', err)
+  })
+
+  // Stop the visual indicator updates
+  if (transportTicker) {
+    clearInterval(transportTicker)
+    transportTicker = null
   }
-  console.log('Stopping transport...')
+
+  updateAllMixerGlows()
+}
+
+// Resume transport from paused state
+function resumeTransport() {
+  if (isPlaying || !audioContext) return
+  console.log('Resuming transport...')
+  isPlaying = true
+  updatePlayButtonIcon()
+
+  // Resume the audio context to continue playback
+  audioContext.resume().catch(err => {
+    console.warn('Failed to resume audio context:', err)
+  })
+
+  // Restart visual indicator updates
+  if (transportTicker) clearInterval(transportTicker)
+  transportTicker = setInterval(() => {
+    if (!isPlaying) return
+    updatePlaybackIndicators()
+  }, 25)
+
+  updateAllMixerGlows()
+}
+
+// Stop and reset transport (destroys nodes, used when changing takes)
+function stopTransport() {
+  if (!audioContext) return
+  console.log('Stopping and resetting transport...')
+
+  const wasPlaying = isPlaying
   isPlaying = false
   updatePlayButtonIcon()
 
@@ -3000,13 +3043,17 @@ function setupEventListeners() {
     console.log('Play/Pause button clicked, isPlaying:', isPlaying)
     await ensureAudioContext()
     if (isPlaying) {
-      console.log('Stopping transport...')
-      stopTransport()
+      // Pause playback using audioContext.suspend() to maintain position
+      pauseTransport()
     } else {
-      console.log('Starting transport...')
-      // Do not rebuild loops when starting transport.  Each stem retains its own
-      // loop duration and tempo.
-      startTransport()
+      // Resume or start playback
+      // If nodes exist, we're resuming; otherwise starting fresh
+      const hasNodes = Object.keys(stemNodes).length > 0
+      if (hasNodes) {
+        resumeTransport()
+      } else {
+        startTransport()
+      }
     }
   })
 
@@ -3194,14 +3241,20 @@ function setupEventListeners() {
     const editing = (ae && (ae.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)))
     if (editing) return
 
-    // Space: toggle transport
+    // Space: toggle transport (pause/resume)
     if (e.code === 'Space' || e.key === ' ') {
       e.preventDefault()
       await ensureAudioContext()
-      if (isPlaying) stopTransport()
-      else {
-        // Do not rebuild loops on playback toggle.  Use existing per‑stem loops.
-        startTransport()
+      if (isPlaying) {
+        pauseTransport()
+      } else {
+        // Resume if nodes exist, otherwise start fresh
+        const hasNodes = Object.keys(stemNodes).length > 0
+        if (hasNodes) {
+          resumeTransport()
+        } else {
+          startTransport()
+        }
       }
       return
     }
@@ -3561,16 +3614,24 @@ function setupEventListeners() {
     {
       const cardEl = e.target.closest('[data-stem]')
       if (cardEl) {
-        // Do not toggle if the click is on a button, an element with a data-action,
-        // a form element, or an infinite dial.  This prevents the volume and
-        // endpoint dials from muting/unmuting the stem when clicked.
-        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
-        const isWaveform = e.target.closest('.waveform-canvas')
-        if (!isInteractive && !isWaveform) {
-          const st = cardEl.getAttribute('data-stem')
-          if (st) {
-            toggleMute(st)
-            return
+        // Allow mute/solo buttons to work by checking if this is specifically a mute/solo button
+        const isMuteSoloButton = e.target.closest('[data-action="mute-stem"], [data-action="solo-stem"]')
+
+        // If it's a mute/solo button, let it pass through to the action handler below
+        if (isMuteSoloButton) {
+          // Don't handle it here, let the action handler below process it
+        } else {
+          // For other clicks, only toggle mute if not on interactive elements
+          const isFormElement = e.target.closest('input, label, select, textarea, .infinite-dial')
+          const isWaveform = e.target.closest('.waveform-canvas')
+          const isOtherButton = e.target.closest('button, [data-action]')
+
+          if (!isFormElement && !isWaveform && !isOtherButton) {
+            const st = cardEl.getAttribute('data-stem')
+            if (st) {
+              toggleMute(st)
+              return
+            }
           }
         }
       }
@@ -3580,13 +3641,22 @@ function setupEventListeners() {
     {
       const mixCardEl = e.target.closest('[data-mix-card]')
       if (mixCardEl) {
-        // Prevent toggling if the click is on a slider, button or other interactive element
-        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
-        if (!isInteractive) {
-          const st = mixCardEl.getAttribute('data-mix-card')
-          if (st) {
-            toggleMute(st)
-            return
+        // Allow mute/solo buttons to work
+        const isMuteSoloButton = e.target.closest('[data-action="mix-mute"], [data-action="mix-solo"]')
+
+        if (isMuteSoloButton) {
+          // Don't handle it here, let the action handler below process it
+        } else {
+          // For other clicks, only toggle mute if not on interactive elements
+          const isFormElement = e.target.closest('input, label, select, textarea, .infinite-dial')
+          const isOtherButton = e.target.closest('button, [data-action]')
+
+          if (!isFormElement && !isOtherButton) {
+            const st = mixCardEl.getAttribute('data-mix-card')
+            if (st) {
+              toggleMute(st)
+              return
+            }
           }
         }
       }
@@ -3636,6 +3706,9 @@ function setupEventListeners() {
       if (action === 'close-history' && st) { toggleHistoryDrawer(st, false); return }
       if (action === 'mix-mute' || action === 'mute-stem') { toggleMute(st); return }
       if (action === 'mix-solo' || action === 'solo-stem') {
+        // Ensure audio context is ready before manipulating audio nodes
+        await ensureAudioContext()
+
         // Custom solo logic: if the stem is muted, soloing will unmute it and
         // remember its previous mute state.  When unsoloing, the previous
         // mute state is restored.  Only one stem can be soloed at a time.
@@ -3664,7 +3737,7 @@ function setupEventListeners() {
             target = stemMuteStates[name] ? 0 : vol
           }
           const n = stemNodes[name]
-          if (n?.gain) {
+          if (n?.gain && audioContext && audioContext.state !== 'closed') {
             const p = n.gain.gain, t = audioContext.currentTime
             p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
           }
