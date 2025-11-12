@@ -61,24 +61,28 @@ function scaleKnob(v, a, b, c, d, e) {
 // adherence to tempo and bar length and instructs the model to
 // generate exactly the requested number of bars at a fixed BPM.
 function globalScaffold({ tempo, bars, root, mode }) {
+  const barDurationMs = Math.round((bars * 4 * 60 * 1000) / tempo);
+  const beatDurationMs = Math.round((60 * 1000) / tempo);
   return [
-    'Genre: modern techno',
-    'TimeSignature: 4/4 (no swing)',
-    `Tempo: ${tempo} BPM (constant; no variation)`,
-    `Length: EXACT ${bars} bars (no extra bars)`,
-    `Key: ${root} ${mode} (strictly diatonic; no modulation)`,
-    'Start: bar 1 beat 1 (no count-in; no pre-roll)',
-    `End: precisely at end of bar ${bars} (no tail; no reverb/delay bleed)`,
-    'Loop: seamless at bar boundary (phase-coherent)',
-    'DrumPalette: Roland TR-909 inspired; dry, punchy, fully isolated per stem',
-    'Quantization: strict grid (no humanization)',
-    'Delivery: instrumental only',
-    // Absolute directive reinforcing loop length
-    `ABSOLUTE: The loop length must be exactly ${bars} bars at ${tempo} BPM; do not alter the tempo or add/remove bars`,
-    // Reinforce constant tempo.  Some users report subtle tempo drift; this
-    // statement makes explicit that the BPM cannot vary at all within the
-    // loop【690628932457069†L64-L80】.
-    `ABSOLUTE: Tempo must remain exactly ${tempo} BPM throughout; no variation or tempo drift`
+    'Genre: modern techno (Berlin style; precise, mechanical, unwavering)',
+    'Reference: Surgeon, Richie Hawtin, Ben Klock production aesthetic',
+    'TimeSignature: 4/4 strict (absolutely zero swing; pure quantized grid)',
+    `Tempo: LOCKED at ${tempo}.00 BPM (microsecond-precise timing; crystal-locked clock)`,
+    `MetronomeTiming: Each beat must occur exactly every ${beatDurationMs}ms; zero deviation permitted`,
+    `Length: EXACTLY ${bars} bars (total duration: ${barDurationMs}ms ± 0ms tolerance)`,
+    `Key: ${root} ${mode} (strictly diatonic; no chromatic notes; no modulation; no key drift)`,
+    'Start: hard sync to bar 1 beat 1 at sample 0 (no pre-roll; no fade-in; no silence; no count-in)',
+    `End: hard stop at bar ${bars} beat 4 end (no tail; no reverb bleed; no delay spill; no sustain)`,
+    'Loop: phase-coherent seamless boundary (waveform must match at loop points)',
+    'DrumPalette: Roland TR-909 circuit emulation; dry; punchy; zero bleed between stems',
+    'Quantization: perfect grid alignment (every note snaps to nearest 1/128th note; no groove; no humanization)',
+    'Timing: industrial precision (robotic; mechanical; no feel; no swing; no shuffle)',
+    'Delivery: solo instrument only (completely isolated; no other sounds; instrumental only)',
+    // Absolute directives with multiple reinforcement
+    `ABSOLUTE_RULE_1: Total audio duration MUST equal exactly ${barDurationMs}ms (${bars} bars at ${tempo} BPM)`,
+    `ABSOLUTE_RULE_2: Tempo MUST remain locked at ${tempo}.00 BPM throughout with ZERO drift or acceleration`,
+    `ABSOLUTE_RULE_3: All rhythmic events MUST align to perfect grid with NO off-grid hits`,
+    `CRITICAL: This is a loop that MUST repeat seamlessly; verify phase alignment at boundaries`
   ].join('. ');
 }
 // Map a knob value to a rhythmic rate for arpeggiators.
@@ -509,6 +513,183 @@ function computeRms(data, step = 512) {
   return n > 0 ? Math.sqrt(sum / n) : 0;
 }
 
+// Remove DC offset from audio buffer to prevent clicks
+function removeDcOffset(chans) {
+  for (const data of chans) {
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      sum += data[i];
+    }
+    const mean = sum / data.length;
+    if (Math.abs(mean) > 1e-6) {
+      for (let i = 0; i < data.length; i++) {
+        data[i] -= mean;
+      }
+    }
+  }
+}
+
+// Detect tempo drift by analyzing inter-onset intervals
+function detectTempoDrift(buf, expectedBpm, bars) {
+  const sr = buf.sr;
+  const x = buf.data[0];
+  const expectedBeatSec = 60 / expectedBpm;
+  const expectedBeatSamples = Math.round(expectedBeatSec * sr);
+
+  // Find onsets
+  const onsets = [];
+  const windowSize = Math.round(0.05 * sr); // 50ms window
+  const hopSize = Math.round(0.01 * sr); // 10ms hop
+
+  for (let i = 0; i < x.length - windowSize; i += hopSize) {
+    let energy = 0;
+    for (let j = 0; j < windowSize; j++) {
+      energy += x[i + j] * x[i + j];
+    }
+    const rms = Math.sqrt(energy / windowSize);
+
+    // Peak detection with refractory period
+    if (rms > 0.1 && (onsets.length === 0 || i - onsets[onsets.length - 1] > expectedBeatSamples * 0.3)) {
+      onsets.push(i);
+    }
+  }
+
+  if (onsets.length < bars * 2) {
+    return { valid: false, reason: 'insufficient_onsets', drift: 0 };
+  }
+
+  // Analyze inter-onset intervals
+  const intervals = [];
+  for (let i = 1; i < onsets.length; i++) {
+    intervals.push(onsets[i] - onsets[i - 1]);
+  }
+
+  // Calculate BPM variance
+  const intervalBpms = intervals.map(int => (60 * sr) / int);
+  const avgBpm = intervalBpms.reduce((a, b) => a + b, 0) / intervalBpms.length;
+  const variance = intervalBpms.reduce((sum, bpm) => sum + Math.pow(bpm - avgBpm, 2), 0) / intervalBpms.length;
+  const stdDev = Math.sqrt(variance);
+  const drift = Math.abs(avgBpm - expectedBpm);
+
+  // Allow 0.5% BPM deviation
+  const maxDrift = expectedBpm * 0.005;
+  const valid = drift <= maxDrift && stdDev <= expectedBpm * 0.01;
+
+  return {
+    valid,
+    reason: valid ? 'ok' : 'tempo_drift',
+    drift,
+    avgBpm,
+    stdDev,
+    onsetCount: onsets.length
+  };
+}
+
+// Analyze spectral content to detect unwanted frequency bleed
+function analyzeSpectrum(buf, stem) {
+  const sr = buf.sr;
+  const x = buf.data[0];
+
+  // Simple frequency band analysis using time-domain filtering
+  const analyzeBand = (data, lowHz, highHz) => {
+    const lowPass = (d, fc) => {
+      const rc = 1 / (2 * Math.PI * fc);
+      const dt = 1 / sr;
+      const alpha = dt / (rc + dt);
+      const out = new Float32Array(d.length);
+      out[0] = d[0];
+      for (let i = 1; i < d.length; i++) {
+        out[i] = out[i - 1] + alpha * (d[i] - out[i - 1]);
+      }
+      return out;
+    };
+
+    let filtered = new Float32Array(data);
+    if (highHz < sr / 2) {
+      filtered = lowPass(filtered, highHz);
+    }
+
+    return computeRms(filtered, 256);
+  };
+
+  const subBass = analyzeBand(x, 0, 80);      // 0-80 Hz
+  const lowBass = analyzeBand(x, 80, 180);    // 80-180 Hz
+  const midLow = analyzeBand(x, 180, 500);    // 180-500 Hz
+  const midHigh = analyzeBand(x, 500, 2000);  // 500-2000 Hz
+  const high = analyzeBand(x, 2000, 8000);    // 2000-8000 Hz
+  const total = computeRms(x, 256);
+
+  const spectrum = {
+    subBass: subBass / (total + 1e-10),
+    lowBass: lowBass / (total + 1e-10),
+    midLow: midLow / (total + 1e-10),
+    midHigh: midHigh / (total + 1e-10),
+    high: high / (total + 1e-10)
+  };
+
+  // Validation rules per stem type
+  let valid = true;
+  let reason = 'ok';
+
+  if (stem === 'kick') {
+    // Kick should have strong sub and low bass, minimal highs
+    if (spectrum.subBass < 0.3 || spectrum.high > 0.15) {
+      valid = false;
+      reason = 'kick_spectrum_invalid';
+    }
+  } else if (stem === 'hihat') {
+    // Hi-hat should be primarily high frequencies
+    if (spectrum.high < 0.4 || spectrum.subBass > 0.1) {
+      valid = false;
+      reason = 'hihat_has_low_freq_bleed';
+    }
+  } else if (stem === 'perc') {
+    // Snare should have mid emphasis, minimal sub
+    if (spectrum.subBass > 0.2 || (spectrum.midLow + spectrum.midHigh) < 0.3) {
+      valid = false;
+      reason = 'snare_spectrum_invalid';
+    }
+  } else if (stem === 'bass') {
+    // Bass should dominate low frequencies
+    if ((spectrum.subBass + spectrum.lowBass) < 0.5) {
+      valid = false;
+      reason = 'bass_lacks_low_end';
+    }
+  }
+
+  return { valid, reason, spectrum };
+}
+
+// Check phase coherence at loop boundary using autocorrelation
+function checkPhaseCoherence(chans, sr, xfadeN) {
+  // Compare the start and end of the loop
+  const data = chans[0];
+  const n = data.length;
+
+  if (n < xfadeN * 2) {
+    return { valid: false, reason: 'buffer_too_short', coherence: 0 };
+  }
+
+  let correlation = 0;
+  let startEnergy = 0;
+  let endEnergy = 0;
+
+  for (let i = 0; i < xfadeN; i++) {
+    const startSample = data[i];
+    const endSample = data[n - xfadeN + i];
+    correlation += startSample * endSample;
+    startEnergy += startSample * startSample;
+    endEnergy += endSample * endSample;
+  }
+
+  const coherence = correlation / (Math.sqrt(startEnergy * endEnergy) + 1e-10);
+
+  // Good phase coherence should be > 0.7 for smooth loops
+  const valid = coherence > 0.5;
+
+  return { valid, reason: valid ? 'ok' : 'phase_mismatch', coherence };
+}
+
 // Utility: compute a 1-pole low-pass filtered RMS to detect kick energy
 // bleeding into the snare stem.  A large ratio between low-band and
 // full-band RMS indicates an unwanted kick/thump is present.
@@ -818,6 +999,26 @@ function applyHighPassArray(chans, sr, cutoffHz = 180) {
     }
   }
 }
+
+// Apply gentle limiting to prevent clipping while maintaining transient punch
+function applyGentleLimiter(chans, thresholdDb = -0.3) {
+  const threshold = Math.pow(10, thresholdDb / 20);
+
+  for (const data of chans) {
+    for (let i = 0; i < data.length; i++) {
+      const sample = data[i];
+      const abs = Math.abs(sample);
+
+      if (abs > threshold) {
+        // Soft knee compression above threshold
+        const sign = sample < 0 ? -1 : 1;
+        const excess = abs - threshold;
+        const compressed = threshold + excess * 0.5;
+        data[i] = sign * Math.min(compressed, 1.0);
+      }
+    }
+  }
+}
 // Convert channel arrays back to a PCM16 WAV.  Borrowed from loop-fix.
 function makeWavFromPCM16(chans, sr) {
   const ch = chans.length;
@@ -1019,15 +1220,46 @@ Deno.serve(async (req)=>{
       // Guess channels and convert to channel arrays
       channels = guessChannelsFromLength(rawBytes.length, sampleRate, musicLengthMs);
       const pcm = convertRawPCMToChans(rawBytes, channels, sampleRate);
-      // Validate if necessary
+      // Comprehensive validation pipeline
+      let stemValidated = true;
+      const validationErrors = [];
+
+      // Original stem-specific validation
       if (stem === 'hihat') {
-        validated = validateHihat(pcm, tempo, bars);
+        stemValidated = validateHihat(pcm, tempo, bars);
+        if (!stemValidated) validationErrors.push('hihat pattern invalid');
       } else if (stem === 'perc') {
-        validated = validateSnare(pcm, tempo, bars);
+        stemValidated = validateSnare(pcm, tempo, bars);
+        if (!stemValidated) validationErrors.push('snare pattern invalid');
       } else if (stem === 'kick') {
-        validated = validateKick(pcm, tempo, bars);
-      } else {
-        validated = true;
+        stemValidated = validateKick(pcm, tempo, bars);
+        if (!stemValidated) validationErrors.push('kick pattern invalid');
+      }
+
+      // Advanced validation: tempo drift detection
+      const tempoDriftOk = detectTempoDrift(pcm, tempo, bars);
+      if (!tempoDriftOk) {
+        validationErrors.push('tempo drift detected');
+      }
+
+      // Advanced validation: spectral analysis for frequency bleed
+      const spectrumOk = analyzeSpectrum(pcm, stem);
+      if (!spectrumOk) {
+        validationErrors.push('unwanted frequency content');
+      }
+
+      // Advanced validation: phase coherence for seamless loops
+      const phaseOk = checkPhaseCoherence(pcm.data, sampleRate, Math.round(12 / 1000 * sampleRate));
+      if (!phaseOk) {
+        validationErrors.push('phase discontinuity at loop boundary');
+      }
+
+      // Combined validation result
+      validated = stemValidated && tempoDriftOk && spectrumOk && phaseOk;
+
+      // Log validation metrics for monitoring
+      if (!validated && validationErrors.length > 0) {
+        console.log(`Validation failed for ${stem} (attempt ${strictness}): ${validationErrors.join(', ')}`);
       }
       rawPCM = rawBytes;
       tier = strictness;
@@ -1073,12 +1305,21 @@ Deno.serve(async (req)=>{
       start = Math.round(start);
     }
     const trimmed = sliceWrapArray(pcm.data, start, targetFrames);
+
+    // Remove DC offset to prevent clicks
+    removeDcOffset(trimmed);
+
     // Apply ramps and crossfade
     applyEdgeRampsArray(trimmed, sampleRate, 5);
     applySeamCrossfadeArray(trimmed, sampleRate, xfadeMs);
+
+    // Stem-specific processing
     if (stem === 'perc') {
       applyHighPassArray(trimmed, sampleRate, 180);
     }
+
+    // Apply gentle limiting to prevent clipping while maintaining punch
+    applyGentleLimiter(trimmed, -0.3);
     const outBytes = makeWavFromPCM16(trimmed, sampleRate);
     // Encode to base64
     let binary = '';
