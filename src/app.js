@@ -1979,6 +1979,10 @@ async function generateStem(st) {
         const body = USE_COMPOSITION_PLAN
           ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
           : { prompt, music_length_ms }
+        body.stem = st
+        body.master = master
+        body.tempo = tempo
+        body.bars = bars
         const ab = await composeOnce(body, signal)
         audioBuffer = await audioContext.decodeAudioData(ab)
         usedPrompt = prompt
