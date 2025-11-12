@@ -3,83 +3,71 @@
 
 import { createClient } from '@supabase/supabase-js'
 
-import {
-  USE_COMPOSITION_PLAN,
-  PRIMARY_OUTPUT_FORMAT,
-  FALLBACK_OUTPUT_FORMAT,
-  PRO_FORMAT,
-  PROMPTS_MODE,
-  TEMPO_MIN,
-  TEMPO_MAX,
-  DEFAULT_TEMPO,
-  DEFAULT_BARS,
-  START_ENV_MS,
-  EDGE_RAMP_MS,
-  LOOP_XFADE_MS,
-  ALIGN_SEARCH_MS,
-  ZERO_FALLBACK_SAMPLES,
-  BOUNDARY_LOOKAHEAD_MS,
-  GEN_TAIL_PAD_MS,
-  EQ_MIN_DB,
-  EQ_MAX_DB,
-  EQ_DEFAULT,
-  EQ_SMOOTH_TC,
-  EQ_LOW_FREQ,
-  EQ_MID_FREQ,
-  EQ_MID_Q,
-  EQ_HIGH_FREQ,
-  FILTER_MIN_HZ,
-  FILTER_MAX_HZ,
-  FILTER_Q,
-  FILTER_SMOOTH_TC,
-  FILTER_DEFAULT_HZ,
-} from './Config/constants.js'
-import { knobToDb, formatDb, knobAngle } from './Utilities/index.js'
-import { getColorRGB, drawWaveform, drawTinyWaveform } from './Utilities/waveform.js'
-import { setupUserMenu, updateUserMenu, updateUserMenuVisibility } from './UI/userMenu.js'
-import { initializeAuthGuard, addAuthListener } from './Auth/authGuard.js'
-import { setupLoginPage } from './Auth/loginPage.js'
-import { setupResetPasswordPage } from './Auth/resetPasswordPage.js'
-import { setupSelectionPage } from './Auth/selectionPage.js'
-import { setupTechnoGeneratorPage } from './Auth/tecnoGeneratorPage.js'
-import { setupProfilePage } from './Auth/profilePage.js'
-import { initializeUserProfile } from './Auth/userProfile.js'
-import { checkCredits, updateCredits } from './Auth/userProfile.js'
-import { getAuthGuard } from './Auth/authGuard.js'
-import { setupHelpModal } from './UI/helpModal.js'
-import { injectGlobalStyles } from './UI/styles.js'
-import { stemConfigs, STEM_ORDER } from './Config/stems.js'
-import { downloadStem as saveDownloadStem, downloadAllActiveStems as saveDownloadAllActiveStems } from './SaveAudio/index.js'
-import { openDownloadConfirmModal, closeDownloadConfirmModal, confirmDownloadAll, setDownloadAllHandler } from './DownloadAudio/index.js'
-import { scaleKnob, roleDirectives, negatives } from './TechnoGenerators/stemHelper.js'
-import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl, clearSessionSettingsFromStorage } from './TechnoGenerators/sessionSetup.js'
-import { showSuccessToast, showErrorToast } from './UI/toast.js'
-import { updatePlayButtonIcon as updatePlayButtonIconImpl, updateSessionInfoCard as updateSessionInfoCardImpl, setMixerOpen as setMixerOpenImpl, toggleMixerOpen as toggleMixerOpenImpl, buildFloatingMixerPanel as buildFloatingMixerPanelImpl, initializeMasterVolumeSlider as initializeMasterVolumeSliderImpl } from './playerControl/index.js'
-import { saveStem } from './Auth/stemApi.js'
+/* =========================================================
+   Feature flags / Env toggles
+   ========================================================= */
+const USE_COMPOSITION_PLAN = String(import.meta.env.VITE_ELEVEN_USE_PLAN || 'false').toLowerCase() === 'true'
+const PRIMARY_OUTPUT_FORMAT = 'pcm_44100'
+const FALLBACK_OUTPUT_FORMAT = 'mp3_44100_128'
 
-let fsModule = null
-try {
-  if (typeof window !== 'undefined' && typeof window.require === 'function') {
-    fsModule = window.require('fs')
-  } else {
-    const req = Function('return typeof require !== "undefined" ? require : null')()
-    if (req) {
-      fsModule = req('fs')
-    }
-  }
-} catch (fsError) {
-  console.warn('Filesystem module not available; audio files will not be written to disk.', fsError)
-}
+/* =========================================================
+   Generation format (server)
+   ========================================================= */
+const PRO_FORMAT = PRIMARY_OUTPUT_FORMAT
+
+/* =========================================================
+   UX flags
+   ========================================================= */
+const PROMPTS_MODE = 'builder' // 'builder' | 'freeform'
+
+/* =========================================================
+   Transport / DSP constants
+   ========================================================= */
+const TEMPO_MIN = 110
+const TEMPO_MAX = 140
+const DEFAULT_TEMPO = 130
+const DEFAULT_BARS  = 4
+
+const START_ENV_MS   = 5
+// Increase ramp and crossfade durations to minimise audible clicks at loop
+// boundaries.  A longer fade-in/out and crossfade smooths the transition
+// when the loop restarts, reducing the chance of hearing a click.
+const EDGE_RAMP_MS   = 8
+const LOOP_XFADE_MS  = 24
+const ALIGN_SEARCH_MS = 45
+const ZERO_FALLBACK_SAMPLES = 384
+
+const BOUNDARY_LOOKAHEAD_MS = 120
+const GEN_TAIL_PAD_MS = 200
+
+/* =========================================================
+   EQ‑3 + Filter defaults
+   ========================================================= */
+const EQ_MIN_DB = -80
+const EQ_MAX_DB =  +6
+const EQ_DEFAULT = 50
+const EQ_SMOOTH_TC = 0.02
+
+const EQ_LOW_FREQ  = 180
+const EQ_MID_FREQ  = 2200
+const EQ_MID_Q     = 1.20
+const EQ_HIGH_FREQ = 6500
+
+const FILTER_MIN_HZ = 40
+const FILTER_MAX_HZ = 18000
+const FILTER_Q = 0.707
+const FILTER_SMOOTH_TC = 0.02
+const FILTER_DEFAULT_HZ = 12000 // 12 kHz default
 
 /* =========================================================
    Global state
    ========================================================= */
 let audioContext = null
-let masterGain = null
-let isPlaying = false
+let masterGain   = null
+let isPlaying    = false
 
-const stemRaw = {}
-const stemLoop = {}
+const stemRaw   = {}
+const stemLoop  = {}
 // active nodes: { source, env, filter, eq:{low,mid,high}, gain }
 const stemNodes = {}
 const stemGains = {}
@@ -154,9 +142,25 @@ function getCurrentPlayerState() {
   return snapshot
 }
 
-// Wrapper function for updating session info card
+/**
+ * Refresh the session information displayed in the bottom player bar.  This
+ * helper derives the current master tempo, bar count and key from
+ * stemControlValues.master and updates the text elements.  Some stems
+ * may have been generated at different tempos/bars; however, the
+ * session master values remain fixed after setup and are shown here.
+ */
 function updateSessionInfoCard() {
-  updateSessionInfoCardImpl(stemControlValues, getRootText)
+  const infoEl = document.getElementById('sessionInfoText')
+  const infoElMob = document.getElementById('sessionInfoTextMobile')
+  const master = stemControlValues.master || {}
+  // Use helper getRootText() to derive the proper root name with accidentals
+  const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || '')
+  const tempo = master.tempo ?? DEFAULT_TEMPO
+  const bars = master.bars ?? DEFAULT_BARS
+  const mode = master.mode ?? 'Minor'
+  const infoString = `${tempo} BPM • ${bars} bars • ${rootName} ${mode}`
+  if (infoEl) infoEl.textContent = infoString
+  if (infoElMob) infoElMob.textContent = infoString
 }
 
 /**
@@ -225,6 +229,7 @@ async function applyPlayerState(snapshot) {
     updateCardNumberColor(st)
     updateMutedBorder(st)
     updateTempoIndicator(st)
+    updateDragButtonState(st)
   })
   return
 }
@@ -358,54 +363,13 @@ async function loadSavedSet(index) {
 function initSavedStateFeature() {
   const saveBtn = document.getElementById('saveStateBtn')
   if (saveBtn) {
-    saveBtn.addEventListener('click', async () => {
-      // Check if user is authenticated before allowing save
-      const { canUserSave } = await import('./Auth/selectionPage.js')
-      const canSave = await canUserSave()
-
-      if (canSave) {
-        // User is authenticated, proceed with save
-        openSaveSetModal()
-      } else {
-        // User not authenticated, show login modal
-        const { showSaveLoginModal } = await import('./Auth/selectionPage.js')
-        showSaveLoginModal()
-      }
+    saveBtn.addEventListener('click', () => {
+      // When save is pressed, open confirmation modal instead of saving directly
+      openSaveSetModal()
     })
   }
   const dropdown = document.getElementById('savedSetsDropdown')
-
   if (dropdown) {
-    ;(async () => {
-      try {
-        // Populate dropdown from cloud sets (ascending by name)
-        const { loadSavedStemsStatesFromCloudStorage } = await import('./playerControl/index.js')
-        const sets = await loadSavedStemsStatesFromCloudStorage()
-        if (Array.isArray(sets)) {
-          // Reset options, keep placeholder
-          dropdown.innerHTML = ''
-          const placeholder = document.createElement('option')
-          placeholder.value = ''
-          placeholder.textContent = '------'
-          dropdown.appendChild(placeholder)
-          const sorted = [...sets].sort((a, b) => {
-            const an = (a?.name || '').toLowerCase()
-            const bn = (b?.name || '').toLowerCase()
-            if (an < bn) return -1
-            if (an > bn) return 1
-            return 0
-          })
-          sorted.forEach(s => {
-            const opt = document.createElement('option')
-            opt.value = String(s.id)
-            opt.textContent = s.name || s.id
-            dropdown.appendChild(opt)
-          })
-        }
-      } catch (e) {
-        console.warn('Could not populate saved sets dropdown from cloud:', e)
-      }
-    })()
     dropdown.addEventListener('change', (e) => {
       const val = e.target.value
       // If no set selected, do nothing
@@ -448,10 +412,9 @@ function initSavedStateFeature() {
   }
   const saveModalConfirm = document.getElementById('saveSetConfirmBtn')
   if (saveModalConfirm) {
-    saveModalConfirm.onclick = () => {
-      console.log("saveNewSetBtn Clicked")
+    saveModalConfirm.addEventListener('click', () => {
       saveNewSet()
-    }
+    })
   }
   // Hook up download confirmation modal buttons
   const dlCancel = document.getElementById('downloadConfirmCancelBtn')
@@ -476,8 +439,31 @@ function initSavedStateFeature() {
  * button is clicked, a dropdown menu appears with credits, library,
  * account and logout options.  Clicking outside the menu closes it.
  */
-// moved to ./UI/userMenu.js
-// setupUserMenu moved to ./UI/userMenu.js
+function setupUserMenu() {
+  const btn = document.getElementById('userMenuBtn')
+  const menu = document.getElementById('userMenu')
+  if (!btn || !menu) return
+  // Toggle menu visibility on button click
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const isHidden = menu.classList.contains('hidden')
+    if (isHidden) {
+      menu.classList.remove('hidden')
+      btn.setAttribute('aria-expanded', 'true')
+    } else {
+      menu.classList.add('hidden')
+      btn.setAttribute('aria-expanded', 'false')
+    }
+  })
+  // Hide the menu when clicking outside
+  document.addEventListener('click', (e) => {
+    if (menu.classList.contains('hidden')) return
+    const target = e.target
+    if (menu.contains(target) || btn.contains(target)) return
+    menu.classList.add('hidden')
+    btn.setAttribute('aria-expanded', 'false')
+  })
+}
 
 /**
  * Open the save set confirmation modal.  This prompts the user to
@@ -525,91 +511,7 @@ function closeSaveSetModal() {
  * saving, updates the dropdown, selects the new set and closes the
  * modal when complete.
  */
-
-function encodeWAV(audioBuffer) {
-  try {
-    if (!audioBuffer || typeof audioBuffer.numberOfChannels !== 'number') {
-      throw new Error('Invalid AudioBuffer: missing numberOfChannels')
-    }
-    const srcCh = audioBuffer.numberOfChannels
-    const len = audioBuffer.length
-    const sr = audioBuffer.sampleRate
-    if (srcCh <= 0 || len <= 0 || !sr) {
-      throw new Error(`Invalid AudioBuffer dimensions: channels=${srcCh}, length=${len}, sampleRate=${sr}`)
-    }
-    const bps = 2
-    const chans = Array.from({ length: srcCh }, (_, c) => audioBuffer.getChannelData(c))
-    const interleaved = new Float32Array(len * srcCh)
-    let o = 0; for (let i = 0; i < len; i++) for (let c = 0; c < srcCh; c++) interleaved[o++] = chans[c][i]
-    const blockAlign = srcCh * bps, byteRate = sr * blockAlign, dataSize = interleaved.length * bps
-    const buffer = new ArrayBuffer(44 + dataSize); const view = new DataView(buffer)
-    writeAscii(view, 0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); writeAscii(view, 8, 'WAVE')
-    writeAscii(view, 12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true)
-    writeAscii(view, 22, String.fromCharCode(srcCh)); view.setUint16(22, srcCh, true)
-    view.setUint32(24, sr, true); view.setUint32(28, byteRate, true)
-    view.setUint16(32, blockAlign, true); view.setUint16(34, 16, true)
-    writeAscii(view, 36, 'data'); view.setUint32(40, dataSize, true)
-    let off = 44
-    for (let i = 0; i < interleaved.length; i++, off += 2) { let s = Math.max(-1, Math.min(1, interleaved[i])); s = s < 0 ? s * 0x8000 : s * 0x7FFF; view.setInt16(off, s, true) }
-    return new Blob([view], { type: 'audio/wav' })
-    function writeAscii(v, o, s) { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)) }
-  } catch (error) {
-    console.error('encodeWAV failed', error)
-    throw error
-  }
-}
-const SUPABASE_AUDIO_BUCKET = import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files'
-
-async function bufferToWavAndSave(buffer, filename) {
-  try {
-    const wav = encodeWAV(buffer)
-    const timestampedFilename = `${Date.now()}_${filename}`
-
-    if (fsModule) {
-      // save the audio to a directory in the public folder
-      const audio_dir = 'public/audio'
-      if (!fsModule.existsSync(audio_dir)) {
-        fsModule.mkdirSync(audio_dir, { recursive: true })
-      }
-      const audio_path = `${audio_dir}/${timestampedFilename}`
-      fsModule.writeFileSync(audio_path, wav)
-      console.log('wav saved to', audio_path)
-      return audio_path
-    }
-
-    if (!supabase) {
-      throw new Error('Supabase client not initialized for storage upload')
-    }
-
-    const storagePath = `audio/${timestampedFilename}`
-    const { error: uploadError } = await supabase.storage
-      .from(SUPABASE_AUDIO_BUCKET)
-      .upload(storagePath, wav, {
-        contentType: 'audio/wav',
-        cacheControl: '3600',
-        upsert: false
-      })
-
-    if (uploadError) {
-      throw uploadError
-    }
-
-    const { data: { publicUrl } } = supabase.storage
-      .from(SUPABASE_AUDIO_BUCKET)
-      .getPublicUrl(storagePath)
-
-    if (!publicUrl) {
-      throw new Error('Failed to obtain public URL for uploaded audio')
-    }
-
-    console.log('wav uploaded to Supabase storage', publicUrl)
-    return publicUrl
-  } catch (error) {
-    console.error('Failed to save WAV file', error)
-    throw error
-  }
-}
-async function saveNewSet() {
+function saveNewSet() {
   const spinner = document.getElementById('saveSetSpinner')
   const label = document.getElementById('saveSetConfirmLabel')
   if (spinner && label) {
@@ -618,146 +520,9 @@ async function saveNewSet() {
   }
   // Save the state
   const snapshot = getCurrentPlayerState()
-  console.log("snapshot", snapshot)
   savedSets.push(snapshot)
   // Determine new index
   const newIndex = savedSets.length - 1
-  const set_name = `Set ${newIndex + 1}`
-  const set_description = `Saved on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`
-  const set_data = {
-    id: null,
-    name: set_name,
-    description: set_description,
-    stems_states: snapshot
-  }
-  console.log("set_data", set_data)
-  console.log("savedSets", savedSets)
-
-  // fetching the current session setting from localStorage
-  const currentSessionSetting = localStorage.getItem('currentSessionSetting')
-  console.log("currentSessionSetting", currentSessionSetting)
-  if (currentSessionSetting) {
-    const currentSessionSettingObj = JSON.parse(currentSessionSetting)
-    const existingSessionSettingIdRaw = currentSessionSettingObj.session_setting_id ?? currentSessionSettingObj.id ?? null
-    const existingSessionSettingId =
-      typeof existingSessionSettingIdRaw === 'number'
-        ? existingSessionSettingIdRaw
-        : (typeof existingSessionSettingIdRaw === 'string' && /^\d+$/.test(existingSessionSettingIdRaw)
-            ? Number(existingSessionSettingIdRaw)
-            : null)
-
-    // check if the current session setting is saved in the database
-    if (existingSessionSettingId) {
-      if (currentSessionSettingObj.session_setting_id !== existingSessionSettingId) {
-        currentSessionSettingObj.session_setting_id = existingSessionSettingId
-        currentSessionSettingObj.id = existingSessionSettingId
-        localStorage.setItem('currentSessionSetting', JSON.stringify(currentSessionSettingObj))
-      }
-      // Save the set data to the database in relation to the session setting
-      const { saveSetToDb } = await import('./Auth/stemApi.js')
-      const saveResult = await saveSetToDb(set_data, existingSessionSettingId)
-      console.log("saveResult", saveResult)
-      if (saveResult.success) {
-        set_data.id = saveResult.set_id
-
-        // save stems to the database
-        const stemsToSave = collectStemsToSave();
-        const stemSetId = saveResult.set_id
-        let successCount = 0
-        let failCount = 0
-        const savedStemIds = []
-
-        for (let i = 0; i < stemsToSave.length; i++) {
-          const stemData = stemsToSave[i]
-          try {
-
-            // creating the audio from the audio buffer
-           const audio_path = await bufferToWavAndSave(stemData.audioBuffer, `techno_${stemData.stemType}_${Date.now()}.wav`)
-            const saveStemResult = await saveStemToDatabase(
-              stemSetId,
-              stemData.stemType,
-              stemData.prompt,
-              stemData.tempo,
-              stemData.bars,
-              stemData.audioBuffer,
-              stemData.tier,
-              stemData.validated,
-              audio_path
-            )
-
-            if (saveStemResult && saveStemResult.success && saveStemResult.stemId) {
-              savedStemIds.push({
-                stemId: saveStemResult.stemId,
-                stemType: stemData.stemType,
-                position: i
-              })
-              successCount++
-            } else {
-              failCount++
-            }
-          } catch (error) {
-            console.error(`Error saving stem ${stemData.stemType}:`, error)
-            failCount++
-          }
-        }
-      }
-    } else {
-      // Save the session setting to the database and get the id
-      const { saveSessionSettingToDb } = await import('./Auth/stemApi.js')
-      const result = await saveSessionSettingToDb(currentSessionSettingObj)
-      console.log("result", result)
-      if (result.success) {
-        currentSessionSettingObj.session_setting_id = Number(result.session_setting_id)
-        currentSessionSettingObj.id = Number(result.session_setting_id)
-        localStorage.setItem('currentSessionSetting', JSON.stringify(currentSessionSettingObj))
-
-        // Save the set data to the database in relation to the session setting
-        const { saveSetToDb } = await import('./Auth/stemApi.js')
-        const saveResult = await saveSetToDb(set_data, result.session_setting_id)
-        console.log("saveResult", saveResult)
-        if (saveResult.success) {
-          set_data.id = saveResult.set_id
-          const stemsToSave = collectStemsToSave();
-          const stemSetId = saveResult.set_id
-          let successCount = 0
-          let failCount = 0
-          const savedStemIds = []
-
-          for (let i = 0; i < stemsToSave.length; i++) {
-            const stemData = stemsToSave[i]
-            try {
-              const audio_path = await bufferToWavAndSave(stemData.audioBuffer, `techno_${stemData.stemType}_${Date.now()}.wav`)
-              const saveStemResult = await saveStemToDatabase(
-                stemSetId,
-                stemData.stemType,
-                stemData.prompt,
-                stemData.tempo,
-                stemData.bars,
-                stemData.audioBuffer,
-                stemData.tier,
-                stemData.validated,
-                audio_path,
-              )
-
-              if (saveStemResult && saveStemResult.success && saveStemResult.stemId) {
-                savedStemIds.push({
-                  stemId: saveStemResult.stemId,
-                  stemType: stemData.stemType,
-                  position: i
-                })
-                successCount++
-              } else {
-                failCount++
-              }
-            } catch (error) {
-              console.error(`Error saving stem ${stemData.stemType}:`, error)
-              failCount++
-            }
-          }
-        }
-      }
-    }
-  }
   // Update dropdown and select new set
   updateSavedSetsDropdown()
   const dropdown = document.getElementById('savedSetsDropdown')
@@ -823,7 +588,58 @@ async function confirmLoadSet(idx) {
   // Note: loadSavedSet() closes the modal
 }
 
-// moved: openDownloadConfirmModal, closeDownloadConfirmModal, confirmDownloadAll
+/**
+ * Open the download all confirmation modal.
+ */
+function openDownloadConfirmModal() {
+  const modal = document.getElementById('downloadConfirmModal')
+  if (!modal) return
+  // Reset spinner and label
+  const spinner = document.getElementById('downloadConfirmSpinner')
+  const label = document.getElementById('downloadConfirmLabel')
+  if (spinner) spinner.classList.add('hidden')
+  if (label) label.textContent = 'Download'
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    modal.firstElementChild?.classList.remove('scale-95')
+    modal.firstElementChild?.classList.add('scale-100')
+  })
+}
+
+/**
+ * Close the download confirmation modal.
+ */
+function closeDownloadConfirmModal() {
+  const modal = document.getElementById('downloadConfirmModal')
+  if (!modal) return
+  modal.style.opacity = '0'
+  modal.firstElementChild?.classList.remove('scale-100')
+  modal.firstElementChild?.classList.add('scale-95')
+  setTimeout(() => { modal.classList.add('hidden') }, 200)
+}
+
+/**
+ * Execute the download of all active stems after user confirmation.  A
+ * spinner is shown on the confirm button while the download is in
+ * progress.  The modal is closed after the download starts.
+ */
+function confirmDownloadAll() {
+  const spinner = document.getElementById('downloadConfirmSpinner')
+  const label = document.getElementById('downloadConfirmLabel')
+  if (spinner && label) {
+    spinner.classList.remove('hidden')
+    label.textContent = 'Downloading'
+  }
+  // Initiate download of all active stems
+  downloadAllActiveStems()
+  // After initiating, hide modal and reset
+  if (spinner && label) {
+    spinner.classList.add('hidden')
+    label.textContent = 'Download'
+  }
+  closeDownloadConfirmModal()
+}
 
 // Per‑stem UI state for waveform editing.  When true for a given stem, the
 // take navigation arrows on that waveform are hidden and the horizontal
@@ -849,9 +665,18 @@ const waveformEditState = {
   prevEndpointFactor: 1
 }
 
-let loopStartTime = 0
-let loopDuration = 0
+let loopStartTime  = 0
+let loopDuration   = 0
 let transportTicker = null
+
+function transportTick() {
+  if (!isPlaying) {
+    transportTicker = null
+    return
+  }
+  updatePlaybackIndicators()
+  transportTicker = requestAnimationFrame(transportTick)
+}
 
 let referenceStemType = null
 let referenceHeadIndex = 0 // samples at decoded SR
@@ -869,6 +694,27 @@ let sessionSetupDone = false
 // Takes
 const stemHistory = {}
 const stemActiveIndex = {}
+// Store WAV blobs for reuse in drag operations to avoid regeneration
+const stemWavCache = {}
+// Store blob URLs with lifecycle management for drag-to-DAW
+const stemBlobUrls = {}
+
+/**
+ * Invalidate the cached WAV blob for a stem.
+ * Call this whenever the stem's audio buffer is updated.
+ * @param {string} st - Stem identifier
+ */
+function invalidateStemCache(st) {
+  if (stemWavCache[st]) {
+    delete stemWavCache[st]
+    console.log(`Invalidated WAV cache for ${st}`)
+  }
+  if (stemBlobUrls[st]) {
+    URL.revokeObjectURL(stemBlobUrls[st])
+    delete stemBlobUrls[st]
+    console.log(`Cleaned up blob URL for ${st}`)
+  }
+}
 const HISTORY_LIMIT = 50
 function ensureStemHistory(st) {
   if (!stemHistory[st]) stemHistory[st] = []
@@ -882,6 +728,7 @@ function pushStemVersion(st, entry) {
   updateHistoryBadge(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
+  updateDragButtonState(st)
   updateTempoIndicator(st)
 }
 function getActiveVersion(st) {
@@ -894,19 +741,230 @@ function getActiveVersion(st) {
 /* =========================================================
    Supabase client
    ========================================================= */
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+)
 
-let supabase = null
-if (supabaseUrl && supabaseKey && supabaseUrl !== 'your_supabase_url_here') {
-  supabase = createClient(supabaseUrl, supabaseKey)
-  console.log('✅ Supabase client initialized')
-} else {
-  console.warn('⚠️ Supabase not configured - using fallback generation only')
+/* =========================================================
+   Visual helpers
+   ========================================================= */
+function getColorRGB(colorName) {
+  const m = {
+    red: '239, 68, 68',
+    orange: '249, 115, 22',
+    yellow: '234, 179, 8',
+    green: '34, 197, 94',
+    cyan: '6, 182, 212',
+    purple: '147, 51, 234',
+    blue: '59, 130, 246',
+    pink: '236, 72, 153'
+  }
+  return m[colorName] || '156, 163, 175'
+}
+function drawWaveform(canvas, audioBuffer, color) {
+  if (!canvas || !audioBuffer) return
+  const ctx = canvas.getContext('2d')
+  const { width, height } = canvas
+  ctx.clearRect(0, 0, width, height)
+  ctx.strokeStyle = color
+  ctx.lineWidth = 1
+  const data = audioBuffer.getChannelData(0)
+  const step = Math.ceil(data.length / width)
+  const amp = height / 2
+  ctx.beginPath()
+  for (let x = 0; x < width; x++) {
+    let min = 1, max = -1
+    for (let j = 0; j < step && (x*step + j) < data.length; j++) {
+      const v = data[x*step + j]
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    const y1 = (1 + min) * amp
+    const y2 = (1 + max) * amp
+    ctx.moveTo(x, y1)
+    ctx.lineTo(x, y2)
+  }
+  ctx.stroke()
+}
+function drawTinyWaveform(canvas, audioBuffer) {
+  if (!canvas || !audioBuffer) return
+  const ctx = canvas.getContext('2d')
+  const { width, height } = canvas
+  ctx.clearRect(0, 0, width, height)
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'
+  ctx.fillRect(0, 0, width, height)
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+  ctx.lineWidth = 1
+  const data = audioBuffer.getChannelData(0)
+  const step = Math.max(1, Math.floor(data.length / (width * 2)))
+  const amp = height / 2
+  ctx.beginPath()
+  for (let x = 0, i = 0; x < width; x++, i += step) {
+    let min = 1, max = -1
+    for (let k = 0; k < step && (i + k) < data.length; k++) {
+      const v = data[i + k]
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    const y1 = (1 + min) * amp
+    const y2 = (1 + max) * amp
+    ctx.moveTo(x, y1)
+    ctx.lineTo(x, y2)
+  }
+  ctx.stroke()
 }
 
-
-
+/* =========================================================
+   Stem configs (9 cards) — order defines 1–9 hotkeys
+   ========================================================= */
+// Expanded stem configuration.  Each instrument now exposes five
+// parametric sliders (knobs) that map to musical descriptors such as
+// attack, body, tone and pattern, plus two toggles for auxiliary
+// processing (e.g. distortion, reverb).  Volume remains a
+// non‑generative control and is therefore excluded from the count of
+// five sliders.  These descriptors draw upon common envelope and
+// timbre terminology suggested in ElevenLabs prompting guidelines and
+// the sound‑effect prompt cheatsheet【250912434198074†L742-L756】.
+const stemConfigs = {
+  kick: {
+    name: 'Kick',
+    color: 'red',
+    basePrompt: 'deep techno kick drum',
+    controls: {
+      punch:   { type: 'knob', min: 0, max: 100, default: 70, unit: '%', label: 'Punch' },
+      attack:  { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Attack' },
+      decay:   { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
+      body:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Body' },
+      tone:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      distortion: { type: 'toggle', default: false, label: 'Distortion' },
+      rumble:     { type: 'toggle', default: false, label: 'Rumble' },
+      volume:  { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  perc: {
+    name: 'Snare',
+    color: 'cyan',
+    basePrompt: 'industrial techno snare',
+    controls: {
+      intensity: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Intensity' },
+      variation: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Variation' },
+      snap:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Snap' },
+      decay:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Decay' },
+      tone:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      metallic: { type: 'toggle', default: false, label: 'Metallic' },
+      reverb:   { type: 'toggle', default: false, label: 'Reverb' },
+      volume:   { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  bass: {
+    name: 'Bass',
+    color: 'yellow',
+    basePrompt: 'dark techno bassline',
+    controls: {
+      depth:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Depth' },
+      movement:  { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Movement' },
+      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
+      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      sub:       { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Sub' },
+      filter:    { type: 'toggle', default: true, label: 'Filter Sweep' },
+      distortion:{ type: 'toggle', default: false, label: 'Distortion' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  lead: {
+    name: 'Lead',
+    color: 'green',
+    basePrompt: 'hypnotic techno lead synth',
+    controls: {
+      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
+      complexity:{ type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Complexity' },
+      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
+      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
+      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
+      delay:     { type: 'toggle', default: false, label: 'Delay' },
+      chorus:    { type: 'toggle', default: false, label: 'Chorus' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  hihat: {
+    name: 'Hihat',
+    color: 'orange',
+    basePrompt: 'crisp techno closed hi-hat',
+    controls: {
+      brightness: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Brightness' },
+      pattern:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Pattern' },
+      decay:      { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
+      texture:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      shuffle:    { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Shuffle' },
+      reverb:     { type: 'toggle', default: false, label: 'Reverb' },
+      chorus:     { type: 'toggle', default: false, label: 'Chorus' },
+      volume:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  pad: {
+    name: 'Pad',
+    color: 'purple',
+    basePrompt: 'ambient techno pad',
+    controls: {
+      warmth:    { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Warmth' },
+      evolution: { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Evolution' },
+      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
+      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
+      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      chorus:    { type: 'toggle', default: true, label: 'Chorus' },
+      reverb:    { type: 'toggle', default: false, label: 'Reverb' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  arp: {
+    name: 'Arp',
+    color: 'blue',
+    basePrompt: 'techno synthesizer arpeggio',
+    controls: {
+      rate:      { type: 'knob', min: 0, max: 100, default: 55, unit: '%', label: 'Rate' },
+      complexity:{ type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Complexity' },
+      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
+      swing:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Swing' },
+      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      gate:      { type: 'toggle', default: false, label: 'Long Gate' },
+      delay:     { type: 'toggle', default: false, label: 'Delay' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  fx: {
+    name: 'FX',
+    color: 'pink',
+    basePrompt: 'techno transition effects and atmos',
+    controls: {
+      intensity: { type: 'knob', min: 0, max: 100, default: 65, unit: '%', label: 'Intensity' },
+      movement:  { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Movement' },
+      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      sweep:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Sweep' },
+      filter:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Filter' },
+      reverb:    { type: 'toggle', default: true, label: 'Reverb' },
+      delay:     { type: 'toggle', default: false, label: 'Delay' },
+      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+  perc2: {
+    name: 'Perc',
+    color: 'orange',
+    basePrompt: 'techno top percussion loop',
+    controls: {
+      density:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Density' },
+      groove:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Groove' },
+      variation:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Variation' },
+      tone:        { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      syncopation:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Syncopation' },
+      metallic:    { type: 'toggle', default: false, label: 'Metallic' },
+      reverb:      { type: 'toggle', default: false, label: 'Reverb' },
+      volume:      { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+    },
+  },
+}
+// Fixed hotkey order (1–9)
+const STEM_ORDER = ['kick','perc','bass','lead','hihat','pad','arp','fx','perc2']
 
 /* =========================================================
    Prompt scaffold (unchanged)
@@ -944,9 +1002,245 @@ function globalScaffold({ tempo, bars, root, mode }) {
     `ABSOLUTE: The loop length must be exactly ${bars} bars at ${tempo} BPM; do not alter the tempo or add/remove bars`
   ].join('. ')
 }
+function scaleKnob(v, a, b, c, d, e) {
+  const x = Number(v ?? 50)
+  if (x <= 20) return a
+  if (x <= 40) return b
+  if (x <= 60) return c
+  if (x <= 80) return d
+  return e
+}
 
-/* ---------- Builders (legacy stubs removed; using TechnoGenerators exports) ---------- */
-
+/* ---------- Builders (hihat/snare strict + others) ---------- */
+// (Builders unchanged; omitted for brevity in comments — logic preserved)
+function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const brightness = scaleKnob(controls.brightness, 'dark', 'balanced', 'crisp', 'bright', 'very bright')
+  const patternDesc = scaleKnob(controls.pattern, 'straight 1/16 notes', 'slight 1/16 shuffle', 'moderate syncopation', 'complex syncopation', 'polyrhythmic accents')
+  const lengthDesc = scaleKnob(controls.decay, '30–80ms', '60–120ms', '100–180ms', '150–250ms', '250–400ms')
+  const textureDesc = scaleKnob(controls.texture, 'soft', 'dry', 'balanced', 'crisp', 'metallic')
+  const swingDesc = scaleKnob(controls.shuffle, 'straight', 'light shuffle', 'moderate shuffle', 'noticeable shuffle', 'heavy shuffle')
+  const space = controls.reverb ? 'Space: tiny room; decay < 120 ms; gate tails before seam.' : 'Space: dry/minimal.'
+  const chorus = controls.chorus ? 'Chorus: subtle shimmer; avoid smear across seam.' : 'Chorus: off.'
+  const common = [
+    'STEM: HIHAT — solo closed hi‑hat only.',
+    'Identity: crisp techno closed hi‑hat.',
+    g,
+    'ROLE: isolated closed hat (no open‑hat).',
+    `Pattern: ${patternDesc}; first hit exactly at bar 1 beat 1; consistent every bar.`,
+    `Length: ${lengthDesc}.`,
+    `Tone: ${brightness}; Texture: ${textureDesc}.`,
+    `Swing: ${swingDesc}.`,
+    space,
+    chorus,
+    'Exclude: ride, shaker, clap, snare, kick, toms, crashes; no melodic content, sweeps, or FX.',
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
+  ]
+  if (strictness === 1) common.push('ABSOLUTE: Only closed‑hat hits on a straight 1/16 grid; zero swing.')
+  else if (strictness >= 2) common.push(
+    'MUST: closed‑hat hits on each 1/16 step (16 hits/bar).',
+    'MUST: zero reverb tail at seam; gate hits before bar end.',
+    'MUST: exclude open hat, ride, shaker, snare, clap, toms, crashes.'
+  )
+  return common.join(' ')
+}
+function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const varTxt     = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
+  const intensity  = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
+  const snap       = scaleKnob(controls.snap, 'soft', 'medium‑soft', 'balanced', 'sharp', 'cracking')
+  const tail       = scaleKnob(controls.decay, 'very short', 'short', 'medium', 'long', 'very long')
+  const toneDesc   = scaleKnob(controls.tone, 'thin', 'dry', 'balanced', 'full', 'deep')
+  const timbreTxt  = controls.metallic ? 'Timbre: slightly metallic; tight transient.' : 'Timbre: organic and dry.'
+  const space      = controls.reverb ? 'Space: tiny room; decay < 150 ms; gate tails before seam.' : 'Space: dry; short decay; no tail.'
+  const common = [
+    'STEM: SNARE — solo snare only.',
+    'Identity: industrial techno snare; drum‑machine style; no clap.',
+    g,
+    'ROLE: isolated electronic snare.',
+    'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
+    `Dynamics: ${intensity}; Snap: ${snap}; Tail: ${tail}.`,
+    `Tone: ${toneDesc}. ${timbreTxt}`,
+    `Variation: ${varTxt} but positions remain 2 & 4.`,
+    space,
+    'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam.',
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
+  ]
+  if (strictness === 1) common.push('ABSOLUTE: only beat 2 and beat 4 per bar; no extra hits.', 'ABSOLUTE: no off‑grid timing.')
+  else if (strictness >= 2) common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.')
+  return common.join(' ')
+}
+function mapArpRate(v){ const x=Number(v??55); return x<=33?'1/8 notes': x<=66?'1/16 notes':'1/32 notes' }
+function buildArpPrompt(controls, master){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const rate       = mapArpRate(controls.rate)
+  const complexity = scaleKnob(controls.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')
+  const rangeDesc  = scaleKnob(controls.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')
+  const swingDesc  = scaleKnob(controls.swing, 'straight', 'slight swing', 'moderate swing', 'pronounced swing', 'syncopated')
+  const toneDesc   = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'sparkling')
+  const gate       = controls.gate ? 'long‑ish gate (80–160 ms)' : 'short gate (30–80 ms)'
+  const delay      = controls.delay ? 'Delay: subtle tempo‑synced echoes; cut at bar end.' : 'Delay: off.'
+  return [
+    'STEM: ARPEGGIATOR — solo synth arpeggio only.',
+    `Identity: ${stemConfigs.arp.basePrompt}.`,
+    g,
+    `ROLE: isolated arp; strictly diatonic in ${root} ${mode}; no chords.`,
+    `Pattern: ${rate}; ${swingDesc}; fully quantized; phrase length must evenly divide ${bars} bars.`,
+    `Complexity: ${complexity}; consistent motif and octave moves.`,
+    `Range: ${rangeDesc}; Tone: ${toneDesc}.`,
+    `Envelope: ${gate}.`,
+    delay,
+    'Exclude: drums/percussion/bass/pads/leads/vocals.',
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
+  ].join(' ')
+}
+function buildFXPrompt(controls, master){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const intensity   = scaleKnob(controls.intensity, 'subtle', 'moderate', 'medium', 'strong', 'intense')
+  const movement    = scaleKnob(controls.movement, 'static', 'gentle motion', 'evolving', 'animated', 'dynamic')
+  const textureDesc = scaleKnob(controls.texture, 'smooth', 'grainy', 'noisy', 'metallic', 'chaotic')
+  const sweepDesc   = scaleKnob(controls.sweep, 'short sweep', 'moderate sweep', 'long sweep', 'full‑bar sweep', 'multi‑bar sweep')
+  const filterDesc  = scaleKnob(controls.filter, 'low emphasis', 'mid emphasis', 'balanced', 'high emphasis', 'resonant high‑pass')
+  const space       = controls.reverb ? 'Space: tiny room; decay ≤ 150 ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
+  const delayTxt    = controls.delay ? 'Delay: subtle echo; decay under bar.' : 'Delay: off.'
+  return [
+    'STEM: FX — solo techno transition effects & atmos only.',
+    `Identity: ${stemConfigs.fx.basePrompt}.`,
+    g,
+    'ROLE: bar‑internal whooshes/sweeps/noise beds that RESET each bar.',
+    `Intensity: ${intensity}. Movement: ${movement}. Texture: ${textureDesc}. Sweep: ${sweepDesc}. Filter: ${filterDesc}.`,
+    space,
+    delayTxt,
+    'Exclude: pitched melodies/drums/percussion; avoid risers/falls that exceed a single bar.',
+    'Deliver a bar‑perfect seamless loop; zero tail beyond the bar.'
+  ].join(' ')
+}
+function buildPercLoopPrompt(controls, master){ /* ... same as before ... */ 
+  const { tempo, bars, root, mode } = master
+  const g = globalScaffold({ tempo, bars, root, mode })
+  const density     = scaleKnob(controls.density, 'sparse', 'light', 'medium', 'busy', 'dense')
+  const groove      = scaleKnob(controls.groove, 'straight', 'straight with mild syncopation', 'syncopated but quantized', 'complex yet quantized', 'complex yet quantized')
+  const variation   = scaleKnob(controls.variation, 'repetitive', 'subtle', 'moderate', 'intricate', 'wild')
+  const toneDesc    = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'metallic')
+  const syncDesc    = scaleKnob(controls.syncopation, 'straight', 'mild', 'groovy', 'complex', 'polyrhythmic')
+  const metallic    = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
+  const space       = controls.reverb ? 'Space: tiny room; gate before seam.' : 'Space: dry; no reverb.'
+  return [
+    'STEM: PERCUSSION — solo top percussion only (shakers/blocks/taps); not snare/hat/kick.',
+    `Identity: ${stemConfigs.perc2.basePrompt}.`,
+    g,
+    `ROLE: quantized on‑grid accents; ${groove}; zero swing.`,
+    `Density: ${density}; keep consistent across bars.`,
+    `Variation: ${variation}.`,
+    `Tone: ${toneDesc}.`,
+    `Syncopation: ${syncDesc}.`,
+    `Timbre: ${metallic}; short releases; zero tails at seam.`,
+    space,
+    'Exclude: tonal hits/kick/snare/clap/hat/ride/toms/crashes.',
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
+  ].join(' ')
+}
+function roleDirectives(st, c){ /* ... same as before ... */ 
+  switch (st) {
+    case 'kick': return [
+      'ROLE: single isolated kick only',
+      'Pattern: four-on-the-floor; hits on beats 1–4 every bar',
+      'Pitch: unpitched; no tonal sub note; no toms',
+      // Envelope and tone descriptors
+      `Attack: ${scaleKnob(c.attack, 'slow','soft','balanced','sharp','instant')}`,
+      `Decay: ${scaleKnob(c.decay, 'very short','short','medium','long','very long')}`,
+      `Punch: ${scaleKnob(c.punch, 'soft','firm','punchy','very punchy','aggressive')}`,
+      `Body: ${scaleKnob(c.body, 'thin','firm','full','thick','boomy')}`,
+      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','very bright')}`,
+      // Toggle descriptors
+      c.distortion ? 'Distortion: moderate saturation; no excessive clipping' : 'Distortion: none; clean transient',
+      c.rumble ? 'Rumble: deep sub tail under 50 Hz; subtle' : 'Rumble: none',
+      'Exclude: fills/intro flam/crashes'
+    ].join('. ')
+    case 'bass': return [
+      'ROLE: single isolated bass only',
+      'Harmony: strictly diatonic in project key (no chromatic notes)',
+      'Pitch: root + fifth primarily; occasional octave',
+      `Movement: ${scaleKnob(c.movement, 'static','simple','groovy','animated','busy')} repeating per bar`,
+      `Depth: ${scaleKnob(c.depth, 'light','medium','deep','deeper','subby')} low‑end; controlled release`,
+      `Attack: ${scaleKnob(c.attack, 'soft','moderate','distinct','sharp','percussive')}`,
+      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','acidic')}`,
+      `Sub: ${scaleKnob(c.sub, 'minimal','moderate','full','deep','subsonic')} content`,
+      c.filter ? 'Filter: subtle motion within bar; reset each bar' : 'Filter: stable',
+      c.distortion ? 'Distortion: mild analog saturation; no heavy clipping' : 'Distortion: none',
+      'Start note on beat 1; no slides across seam'
+    ].join('. ')
+    case 'lead': return [
+      'ROLE: single isolated lead synth only',
+      'Melody: strictly diatonic; avoid chromatic passing tones',
+      `Phrase length evenly divides ${Math.max(1, stemControlValues?.master?.bars || DEFAULT_BARS)} bar(s)`,
+      `Complexity: ${scaleKnob(c.complexity, 'simple','moderate','interesting','intricate','ornate')} (quantized)`,
+      `Brightness: ${scaleKnob(c.brightness, 'dark','mellow','balanced','bright','very bright')}`,
+      `Motion: ${scaleKnob(c.motion, 'static','gentle','flowing','evolving','chaotic')}`,
+      `Attack: ${scaleKnob(c.attack, 'soft','moderate','plucky','sharp','percussive')}`,
+      `Range: ${scaleKnob(c.range, 'narrow','one octave','two octaves','three octaves','wide')}`,
+      c.delay ? 'Delay: minimal tempo‑synced; cut at bar end' : 'Delay: off',
+      c.chorus ? 'Chorus: subtle stereo spread; no detune at seam' : 'Chorus: off',
+      'No bends/slides across loop seam'
+    ].join('. ')
+    case 'pad': return [
+      'ROLE: single isolated pad only',
+      'Chord: sustained diatonic chord(s); no modulation',
+      `Evolution: ${scaleKnob(c.evolution, 'static','gentle','subtle motion','evolving','animated')} but reset every bar`,
+      `Warmth: ${scaleKnob(c.warmth, 'cool','neutral','warm','lush','very lush')}`,
+      `Brightness: ${scaleKnob(c.brightness, 'dark','warm','balanced','bright','shimmering')}`,
+      `Motion: ${scaleKnob(c.motion, 'static','gentle','animated','evolving','shifting')}`,
+      `Texture: ${scaleKnob(c.texture, 'smooth','airy','lush','grainy','noisy')}`,
+      c.chorus ? 'Chorus: subtle; no stereo smear at seam' : 'Chorus: off',
+      c.reverb ? 'Reverb: soft ambient; decay under bar; gate at seam' : 'Reverb: off',
+      'No long reverb tail; envelope ends before bar boundary'
+    ].join('. ')
+    default: return 'ROLE: single isolated instrument only'
+  }
+}
+function negatives(st){ /* ... same as before ... */ 
+  const common = [
+    'no vocals or speech','no cymbal crash on the last beat','no count-in','no pre-roll',
+    'no silence at start','no tempo changes','no swing','no off-grid timing','no modulation or key change'
+  ]
+  const per = {
+    kick:['no toms','no pitch glides','no tonal sub drops','no reverb tail'],
+    hihat:['no open hats','no ride','no shaker','no clap','no snare','no pitch sweeps','no reverb tail'],
+    perc:['no clap','no rimshot','no hi-hat','no kick','no toms','no melodic percussion','no reverb tail'],
+    bass:['no chords','no distortion tail','no slides across seam'],
+    lead:['no atonal notes','no portamento across seam','no long delay tail'],
+    pad:['no huge reverb','no side instruments','no arpeggios','no tail at seam'],
+    arp:['no drums','no percussion','no bass','no pads','no leads','no vocals','no FX'],
+    fx:['no drums or percussion','no pitched melodies','no vocals','no tails across seam'],
+    perc2:['no kick','no snare','no clap','no hi-hat','no ride','no toms','no tonal hits','no tail across seam']
+  }
+  return [...common, ...(per[st] || [])].join('; ')
+}
+function buildStemPrompt(st, strictness=0){
+  const controls = stemControlValues[st] || {}
+  const master = getMasterForPrompt()
+  if (st === 'hihat') return buildHihatPrompt(controls, master, strictness)
+  if (st === 'perc')  return buildSnarePrompt(controls, master, strictness)
+  if (st === 'arp')   return buildArpPrompt(controls, master)
+  if (st === 'fx')    return buildFXPrompt(controls, master)
+  if (st === 'perc2') return buildPercLoopPrompt(controls, master)
+  const cfg = stemConfigs[st]
+  const stemBase = cfg?.basePrompt || 'single instrument'
+  const global   = globalScaffold(master)
+  const role     = roleDirectives(st, controls)
+  const negs     = negatives(st)
+  return [
+    `STEM: ${st.toUpperCase()} — solo ${stemBase}.`,
+    global,
+    role,
+    `Avoid: ${negs}.`,
+    'Deliver a bar-perfect loop that aligns exactly with bar boundaries and starts at bar 1 beat 1.'
+  ].join(' ')
+}
 
 /* =========================================================
    Audio graph (Filter + EQ)
@@ -958,40 +1252,40 @@ async function ensureAudioContext() {
     masterGain.gain.setValueAtTime(0.9, audioContext.currentTime)
     masterGain.connect(audioContext.destination)
 
-    // On iOS 17+ devices, the Audio Session API allows web apps to specify
-    // the intended audio behaviour.  When the phone's ringer switch is set
-    // to silent, web audio is muted unless the session type is set to
-    // "playback"【76389239852111†L94-L98】.  Attempting to set
-    // navigator.audioSession.type informs the browser that audio is
-    // essential and should ignore the silent switch.  Wrap in try/catch
-    // because this API is only available in some Safari versions.
-    try {
-      if (navigator?.audioSession && navigator.audioSession.type !== 'playback') {
-        navigator.audioSession.type = 'playback'
+      // On iOS 17+ devices, the Audio Session API allows web apps to specify
+      // the intended audio behaviour.  When the phone's ringer switch is set
+      // to silent, web audio is muted unless the session type is set to
+      // "playback"【76389239852111†L94-L98】.  Attempting to set
+      // navigator.audioSession.type informs the browser that audio is
+      // essential and should ignore the silent switch.  Wrap in try/catch
+      // because this API is only available in some Safari versions.
+      try {
+        if (navigator?.audioSession && navigator.audioSession.type !== 'playback') {
+          navigator.audioSession.type = 'playback'
+        }
+      } catch (err) {
+        console.warn('Failed to set navigator.audioSession.type:', err)
       }
-    } catch (err) {
-      console.warn('Failed to set navigator.audioSession.type:', err)
-    }
 
-    // ----------------------------------------------------------------------
-    // Fallback for devices/browsers where navigator.audioSession is
-    // unavailable (pre‑iOS 17 and some Android browsers).  On these
-    // platforms, web audio will be muted if the hardware ringer switch is
-    // set to silent.  To unmute web audio, we play a very short silent
-    // MP3 via a temporary <audio> element and also trigger a one‑sample
-    // buffer through a secondary AudioContext.  This pattern is based on
-    // community recommendations and WaveSurfer's ignoreSilenceMode
-    // implementation and ensures that the browser promotes the audio
-    // session to media playback【76389239852111†L94-L98】.  Because the
-    // silent track is inaudible and removed immediately after playback
-    // begins, it does not disturb the user.  We only execute this once
-    // and only when navigator.audioSession is not present.
-    try {
-      if (!navigator?.audioSession) {
-        // Define a no‑op flag to prevent multiple invocations.
-        if (!window.__sg_ignore_silent_mode_ran__) {
-          window.__sg_ignore_silent_mode_ran__ = true
-            ; (function playSilent() {
+      // ----------------------------------------------------------------------
+      // Fallback for devices/browsers where navigator.audioSession is
+      // unavailable (pre‑iOS 17 and some Android browsers).  On these
+      // platforms, web audio will be muted if the hardware ringer switch is
+      // set to silent.  To unmute web audio, we play a very short silent
+      // MP3 via a temporary <audio> element and also trigger a one‑sample
+      // buffer through a secondary AudioContext.  This pattern is based on
+      // community recommendations and WaveSurfer’s ignoreSilenceMode
+      // implementation and ensures that the browser promotes the audio
+      // session to media playback【76389239852111†L94-L98】.  Because the
+      // silent track is inaudible and removed immediately after playback
+      // begins, it does not disturb the user.  We only execute this once
+      // and only when navigator.audioSession is not present.
+      try {
+        if (!navigator?.audioSession) {
+          // Define a no‑op flag to prevent multiple invocations.
+          if (!window.__sg_ignore_silent_mode_ran__) {
+            window.__sg_ignore_silent_mode_ran__ = true
+            ;(function playSilent() {
               try {
                 // 1. Create a throwaway AudioContext and play a single sample
                 const ac2 = new (window.AudioContext || window.webkitAudioContext)()
@@ -1000,7 +1294,7 @@ async function ensureAudioContext() {
                 src.buffer = buf
                 src.connect(ac2.destination)
                 src.start(0)
-                // 2. Create an <audio> element with a short silent MP3 (3 ms)
+                // 2. Create an <audio> element with a short silent MP3 (3 ms)
                 const audio = document.createElement('audio')
                 // iOS requires playsinline and denies AirPlay for such sounds
                 audio.setAttribute('playsinline', '')
@@ -1012,7 +1306,7 @@ async function ensureAudioContext() {
                 // Load and play the silent audio; catch errors silently
                 const playPromise = audio.play()
                 if (playPromise && playPromise.catch) {
-                  playPromise.catch(() => { })
+                  playPromise.catch(() => {})
                 }
                 // Remove the element after a brief delay
                 setTimeout(() => {
@@ -1022,9 +1316,9 @@ async function ensureAudioContext() {
                 console.warn('silent mode fallback failed', inner)
               }
             })()
+          }
         }
-      }
-    } catch (ignored) { }
+      } catch (ignored) {}
 
     // Handle platform interruptions such as phone calls.  On some
     // mobile browsers (e.g. iOS Safari) receiving a call causes the
@@ -1071,12 +1365,12 @@ async function ensureAudioContext() {
   if (audioContext.state !== 'running') await audioContext.resume()
 }
 function createEqNodes() {
-  const low = audioContext.createBiquadFilter()
+  const low  = audioContext.createBiquadFilter()
   low.type = 'lowshelf'
   low.frequency.setValueAtTime(EQ_LOW_FREQ, audioContext.currentTime)
   low.gain.setValueAtTime(0, audioContext.currentTime)
 
-  const mid = audioContext.createBiquadFilter()
+  const mid  = audioContext.createBiquadFilter()
   mid.type = 'peaking'
   mid.frequency.setValueAtTime(EQ_MID_FREQ, audioContext.currentTime)
   mid.Q.setValueAtTime(EQ_MID_Q, audioContext.currentTime)
@@ -1090,13 +1384,13 @@ function createEqNodes() {
   return { low, mid, high }
 }
 function knobToFreq(val) {
-  const v = Math.max(0, Math.min(100, Number(val) || 0))
+  const v = Math.max(0, Math.min(100, Number(val)||0))
   const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
-  const lnF = lnMin + (v / 100) * (lnMax - lnMin)
+  const lnF = lnMin + (v/100) * (lnMax - lnMin)
   return Math.exp(lnF)
 }
 function freqToKnob(freq) {
-  const f = Math.max(FILTER_MIN_HZ, Math.min(FILTER_MAX_HZ, Number(freq) || FILTER_DEFAULT_HZ))
+  const f = Math.max(FILTER_MIN_HZ, Math.min(FILTER_MAX_HZ, Number(freq)||FILTER_DEFAULT_HZ))
   const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
   const lnF = Math.log(f)
   return Math.round(((lnF - lnMin) / (lnMax - lnMin)) * 100)
@@ -1147,163 +1441,112 @@ function createStemNodes(st, loopBuffer) {
    Loop math + seam tools
    ========================================================= */
 // (unchanged helpers)
-function clampTempo(t) {
-  const x = Math.round(Number(t) || DEFAULT_TEMPO);
-  return Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, x))
-}
-
-function computeTargetFrames(sr, bpm, bars) {
-  const beats = bars * 4;
-  const seconds = beats * (60 / bpm);
-  return Math.round(seconds * sr)
-}
-
-function removeDcOffset(buffer) {
-  const ch = buffer.numberOfChannels;
-  for (let c = 0; c < ch; c++) {
-    const d = buffer.getChannelData(c);
-    let sum = 0;
-    for (let i = 0; i < d.length; i++)
-      sum += d[i];
-    const mean = sum / d.length;
-    if (Math.abs(mean) > 1e-6) {
-      for (let i = 0; i < d.length; i++)
-        d[i] -= mean
-    }
-  }
-}
-function nearestZeroCrossing(data, around, radius) {
-  const n = data.length;
-  let best = around, bestVal = Math.abs(data[around] || 0);
-  const a = Math.max(0, around - radius), b = Math.min(n - 1, around + radius);
-  for (let i = a; i <= b; i++) {
-    const v = Math.abs(data[i]);
-    if (v < bestVal) {
-      bestVal = v; best = i
-    }
-  }
-  return best
-}
-
-function detectHeadIndex(buffer) {
-  const sr = buffer.sampleRate;
-  const maxMs = 1000;
-  const maxN = Math.min(buffer.length, Math.round((maxMs / 1000) * sr));
-  if (maxN <= 0)
-    return 0;
-  const x = buffer.getChannelData(0);
-  const env = new Float32Array(maxN);
-  for (let i = 0; i < maxN; i++) env[i] = Math.abs(x[i]);
-  const win = Math.max(2, Math.round((8 / 1000) * sr));
-  let acc = 0;
-  for (let i = 0; i < win && i < env.length; i++) acc += env[i];
-  const sm = new Float32Array(maxN);
-  for (let i = 0; i < maxN; i++) {
-    if (i >= win)
-      acc += env[i] - env[i - win];
-    sm[i] = acc / Math.min(win, i + 1)
-  }
-  let peak = 0;
-  for (let i = 0; i < maxN; i++)
-    if (sm[i] > peak) peak = sm[i];
-  const th = Math.max(Math.pow(10, -45 / 20), peak * 0.12);
-  const backOff = Math.round(0.0035 * sr);
-  for (let i = 0; i < maxN; i++) if (sm[i] >= th) {
-    const z = nearestZeroCrossing(x, Math.max(0, i - backOff), ZERO_FALLBACK_SAMPLES);
-    return Math.max(0, z)
-  }
-  return 0
-}
-
-function sampleAt(data, idx) {
-  const n = data.length;
-  while (idx < 0) idx += n;
-  while (idx >= n) idx -= n;
-  return data[idx]
-}
-
-function findBestSeamOffset(raw, startIdx, targetLen, xfadeN) {
+function clampTempo(t){ const x=Math.round(Number(t)||DEFAULT_TEMPO); return Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, x)) }
+function computeTargetFrames(sr, bpm, bars){ const beats=bars*4; const seconds=beats*(60/bpm); return Math.round(seconds*sr) }
+function removeDcOffset(buffer){ const ch=buffer.numberOfChannels; for(let c=0;c<ch;c++){ const d=buffer.getChannelData(c); let sum=0; for(let i=0;i<d.length;i++) sum+=d[i]; const mean=sum/d.length; if(Math.abs(mean)>1e-6){ for(let i=0;i<d.length;i++) d[i]-=mean } } }
+function nearestZeroCrossing(data, around, radius){ const n=data.length; let best=around,bestVal=Math.abs(data[around]||0); const a=Math.max(0,around-radius), b=Math.min(n-1,around+radius); for(let i=a;i<=b;i++){ const v=Math.abs(data[i]); if(v<bestVal){ bestVal=v; best=i } } return best }
+function detectHeadIndex(buffer){ const sr=buffer.sampleRate; const maxMs=1000; const maxN=Math.min(buffer.length, Math.round((maxMs/1000)*sr)); if(maxN<=0) return 0; const x=buffer.getChannelData(0); const env=new Float32Array(maxN); for(let i=0;i<maxN;i++) env[i]=Math.abs(x[i]); const win=Math.max(2, Math.round((8/1000)*sr)); let acc=0; for(let i=0;i<win && i<env.length;i++) acc+=env[i]; const sm=new Float32Array(maxN); for(let i=0;i<maxN;i++){ if(i>=win) acc+=env[i]-env[i-win]; sm[i]=acc/Math.min(win,i+1) } let peak=0; for(let i=0;i<maxN;i++) if(sm[i]>peak) peak=sm[i]; const th=Math.max(Math.pow(10,-45/20), peak*0.12); const backOff=Math.round(0.0035*sr); for(let i=0;i<maxN;i++) if(sm[i]>=th){ const z=nearestZeroCrossing(x, Math.max(0,i-backOff), ZERO_FALLBACK_SAMPLES); return Math.max(0,z) } return 0 }
+function sampleAt(data, idx){ const n=data.length; while(idx<0) idx+=n; while(idx>=n) idx-=n; return data[idx] }
+function findBestSeamOffset(raw, startIdx, targetLen, xfadeN){
   const sr = raw.sampleRate
   const d0 = raw.getChannelData(0)
-  const search = Math.max(0, Math.round((ALIGN_SEARCH_MS / 1000) * sr))
+  const search = Math.max(0, Math.round((ALIGN_SEARCH_MS/1000)*sr))
   const step = Math.max(1, Math.round(sr / 12000))
   let bestOffset = 0, bestScore = Number.POSITIVE_INFINITY
   for (let off = -search; off <= search; off += step) {
     let score = 0
-    for (let i = 0; i < xfadeN; i += step) {
+    for (let i=0;i<xfadeN;i+=step) {
       const a = sampleAt(d0, startIdx + i + off)
       const b = sampleAt(d0, startIdx + targetLen - xfadeN + i + off)
       const diff = a - b
-      score += diff * diff
+      score += diff*diff
     }
     if (score < bestScore) { bestScore = score; bestOffset = off }
   }
   return bestOffset
 }
-function applySeamCrossfade(buffer, xfadeMs = LOOP_XFADE_MS) {
-  const sr = buffer.sampleRate, n = buffer.length
-  const xfadeN = Math.max(2, Math.round((xfadeMs / 1000) * sr))
-  for (let c = 0; c < buffer.numberOfChannels; c++) {
-    const d = buffer.getChannelData(c)
-    for (let i = 0; i < xfadeN; i++) {
-      const t = i / (xfadeN - 1)
-      const wa = Math.cos(0.5 * Math.PI * t), wb = Math.sin(0.5 * Math.PI * t)
-      const endIdx = n - xfadeN + i
-      d[endIdx] = (d[endIdx] * wa + d[i] * wb)
+function applySeamCrossfade(buffer, xfadeMs=LOOP_XFADE_MS){
+  const sr=buffer.sampleRate, n=buffer.length
+  const xfadeN=Math.max(2, Math.round((xfadeMs/1000)*sr))
+  for(let c=0;c<buffer.numberOfChannels;c++){
+    const d=buffer.getChannelData(c)
+    for(let i=0;i<xfadeN;i++){
+      const t=i/(xfadeN-1)
+      const wa=Math.cos(0.5*Math.PI*t), wb=Math.sin(0.5*Math.PI*t)
+      const endIdx=n-xfadeN+i
+      d[endIdx]= (d[endIdx]*wa + d[i]*wb)
     }
-    d[n - 1] = d[0]
+    d[n-1]=d[0]
   }
 }
-function applyEdgeRamps(buffer, rampMs = EDGE_RAMP_MS) {
-  const sr = buffer.sampleRate, n = buffer.length
-  const ramp = Math.max(2, Math.round((rampMs / 1000) * sr))
-  for (let c = 0; c < buffer.numberOfChannels; c++) {
-    const d = buffer.getChannelData(c)
-    for (let i = 0; i < ramp && i < n; i++) d[i] *= Math.sin(0.5 * Math.PI * (i / (ramp - 1)))
-    for (let i = 0; i < ramp && i < n; i++) d[n - 1 - i] *= Math.sin(0.5 * Math.PI * (1 - (i / (ramp - 1))))
+function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
+  const sr=buffer.sampleRate, n=buffer.length
+  const ramp=Math.max(2, Math.round((rampMs/1000)*sr))
+  for(let c=0;c<buffer.numberOfChannels;c++){
+    const d=buffer.getChannelData(c)
+    for(let i=0;i<ramp && i<n;i++) d[i]*=Math.sin(0.5*Math.PI*(i/(ramp-1)))
+    for(let i=0;i<ramp && i<n;i++) d[n-1-i]*=Math.sin(0.5*Math.PI*(1-(i/(ramp-1))))
   }
 }
-
+function buildLoopBufferFromRawStrict(raw, bpm, bars, headIndex){
+  removeDcOffset(raw)
+  const sr=raw.sampleRate
+  const target=computeTargetFrames(sr,bpm,bars)
+  const ch=raw.numberOfChannels
+  const out=new AudioBuffer({ length: target, numberOfChannels: ch, sampleRate: sr })
+  const xfadeN=Math.max(2, Math.round((LOOP_XFADE_MS/1000)*sr))
+  const bestOff=findBestSeamOffset(raw, headIndex, target, xfadeN)
+  const start=((headIndex+bestOff)%raw.length + raw.length)%raw.length
+  const end=start+target
+  for(let c=0;c<ch;c++){
+    const src=raw.getChannelData(c), dst=out.getChannelData(c)
+    if(end<=raw.length) dst.set(src.subarray(start,end),0)
+    else { const first=raw.length-start; dst.set(src.subarray(start),0); dst.set(src.subarray(0, target-first), first) }
+  }
+  applyEdgeRamps(out, EDGE_RAMP_MS)
+  applySeamCrossfade(out, LOOP_XFADE_MS)
+  return out
+}
 
 /* =========================================================
    Validators (unchanged)
    ========================================================= */
-function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
-  const sr = buf.sampleRate
-  const x = buf.getChannelData(0)
-  let sum = 0; for (let i = 0; i < x.length; i += 512) { const v = x[i]; sum += v * v }
-  const rms = Math.sqrt(sum / Math.max(1, Math.floor(x.length / 512)))
-  const thr = Math.max(0.02, rms * relThresh)
-  const refr = Math.max(1, Math.round(refractorySec * sr))
-  let peaks = 0, i = 0
-  while (i < x.length) { if (Math.abs(x[i]) >= thr) { peaks++; i += refr } else i++ }
+function countOnsets(buf, refractorySec=0.08, relThresh=0.35){
+  const sr=buf.sampleRate
+  const x=buf.getChannelData(0)
+  let sum=0; for(let i=0;i<x.length;i+=512){ const v=x[i]; sum+=v*v }
+  const rms=Math.sqrt(sum/Math.max(1, Math.floor(x.length/512)))
+  const thr=Math.max(0.02, rms*relThresh)
+  const refr=Math.max(1, Math.round(refractorySec*sr))
+  let peaks=0,i=0
+  while(i<x.length){ if(Math.abs(x[i])>=thr){ peaks++; i+=refr } else i++ }
   return peaks
 }
-function validateSnare(buf, bpm, bars, tolMs = 40) {
-  const sr = buf.sampleRate
-  const barSec = 4 * (60 / bpm)
-  const beatSec = 60 / bpm
-  const tol = Math.round((tolMs / 1000) * sr)
-  const x = buf.getChannelData(0)
-  function hasPeakNear(sampleIdx, win = tol, mult = 3.0) {
-    const a = Math.max(0, sampleIdx - win), b = Math.min(x.length - 1, sampleIdx + win)
-    let s = 0, n = 0; for (let i = a; i <= b; i += 4) { const v = x[i]; s += v * v; n++ }
-    const rms = Math.sqrt(s / Math.max(1, n))
-    const thr = Math.max(0.02, rms * mult)
-    for (let i = a; i <= b; i += 2) if (Math.abs(x[i]) >= thr) return true
+function validateSnare(buf, bpm, bars, tolMs=40){
+  const sr=buf.sampleRate
+  const barSec=4*(60/bpm)
+  const beatSec=60/bpm
+  const tol=Math.round((tolMs/1000)*sr)
+  const x=buf.getChannelData(0)
+  function hasPeakNear(sampleIdx, win=tol, mult=3.0){
+    const a=Math.max(0, sampleIdx-win), b=Math.min(x.length-1, sampleIdx+win)
+    let s=0,n=0; for(let i=a;i<=b;i+=4){ const v=x[i]; s+=v*v; n++ }
+    const rms=Math.sqrt(s/Math.max(1,n))
+    const thr=Math.max(0.02, rms*mult)
+    for(let i=a;i<=b;i+=2) if(Math.abs(x[i])>=thr) return true
     return false
   }
-  for (let bar = 0; bar < bars; bar++) {
-    const barStart = Math.round(bar * barSec * sr)
-    const beat2 = barStart + Math.round(1 * beatSec * sr)
-    const beat4 = barStart + Math.round(3 * beatSec * sr)
-    if (!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false
+  for(let bar=0; bar<bars; bar++){
+    const barStart=Math.round(bar*barSec*sr)
+    const beat2=barStart+Math.round(1*beatSec*sr)
+    const beat4=barStart+Math.round(3*beatSec*sr)
+    if(!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false
   }
   return true
 }
-function validateHihat(buf, bpm, bars) {
-  const expected = bars * 16
-  const found = countOnsets(buf, 0.07, 0.35)
+function validateHihat(buf, bpm, bars){
+  const expected=bars*16
+  const found=countOnsets(buf, 0.07, 0.35)
   return found >= Math.max(10, Math.round(expected * 0.6))
 }
 
@@ -1324,13 +1567,16 @@ function updatePlaybackIndicators() {
     const dur = stemLoopDuration[st] || buf.duration
     if (dur <= 0 || !isFinite(dur)) return
     const phase = ((t - loopStartTime) % dur) / dur
-    indicator.style.left = `${phase * 100}%`
+    indicator.style.setProperty('--indicator-phase', String(phase))
     indicator.style.opacity = '1'
   })
 }
-// Wrapper function for updating play button icon
 function updatePlayButtonIcon() {
-  updatePlayButtonIconImpl(isPlaying)
+  const btn = document.getElementById('playBtn')
+  if (!btn) return
+  const icon = btn.querySelector('[data-lucide]')
+  if (icon) { icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play'); window.lucide?.createIcons() }
+  else { btn.textContent = isPlaying ? 'Pause' : 'Play' }
 }
 
 // ----- Waveform dial controls -----
@@ -1511,6 +1757,8 @@ function adjustEndpoint(st, factor) {
   // Update loop buffer and duration
   stemLoop[st] = out
   stemLoopDuration[st] = out.duration
+  // Invalidate cached WAV since loop has been adjusted
+  invalidateStemCache(st)
   // Redraw waveform
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
@@ -1594,11 +1842,18 @@ function openWaveformEditModal(st) {
   const saveBtn = document.getElementById('editSaveBtn')
   const discardBtn = document.getElementById('editDiscardBtn')
   const defaultBtn = document.getElementById('editDefaultBtn')
+  const separateBtn = document.getElementById('editSeparateBtn')
+
   if (saveBtn) {
     saveBtn.onclick = () => closeWaveformEditModal(true)
   }
   if (discardBtn) {
     discardBtn.onclick = () => closeWaveformEditModal(false)
+  }
+  if (separateBtn) {
+    separateBtn.onclick = async () => {
+      await separateCurrentStem(st)
+    }
   }
   if (defaultBtn) {
     defaultBtn.onclick = () => {
@@ -1676,27 +1931,332 @@ function closeWaveformEditModal(save) {
   document.body.style.overflow = ''
 }
 
+/**
+ * Separate the current stem's audio into individual components using
+ * ElevenLabs stem separation API. The separated stem that matches the
+ * instrument type will automatically be selected and loaded.
+ *
+ * @param {string} st The stem identifier (kick, bass, pad, etc.)
+ */
+async function separateCurrentStem(st) {
+  if (!st) return
+
+  // Get the current active take
+  const activeIdx = stemActiveIndex[st]
+  if (activeIdx == null || activeIdx < 0 || !stemHistory[st] || !stemHistory[st][activeIdx]) {
+    console.warn('No active take to separate for stem:', st)
+    return
+  }
+
+  const currentTake = stemHistory[st][activeIdx]
+  if (!currentTake || !currentTake.raw) {
+    console.warn('Current take has no audio data:', st)
+    return
+  }
+
+  // Update UI to show processing state
+  const separateBtn = document.getElementById('editSeparateBtn')
+  const separateLabel = document.getElementById('editSeparateLabel')
+  const separateSpinner = document.getElementById('editSeparateSpinner')
+  const separateHint = document.getElementById('editSeparateHint')
+
+  if (separateBtn) separateBtn.disabled = true
+  if (separateLabel) separateLabel.textContent = 'Separating...'
+  if (separateSpinner) separateSpinner.classList.remove('hidden')
+  if (separateHint) separateHint.textContent = 'Processing audio (this may take 10-30 seconds)...'
+
+  try {
+    console.log('[stem-separation] Starting separation for:', st);
+
+    // Convert the raw audio buffer to WAV format for the API
+    const rawBuffer = currentTake.raw
+    const sampleRate = audioContext.sampleRate
+
+    console.log('[stem-separation] Converting audio to WAV - channels:', rawBuffer.numberOfChannels, 'length:', rawBuffer.length, 'sampleRate:', sampleRate);
+
+    // Create a WAV file from the audio buffer
+    const wavBuffer = audioBufferToWav(rawBuffer, sampleRate)
+    console.log('[stem-separation] WAV buffer size:', wavBuffer.byteLength, 'bytes');
+
+    // Convert to base64 for transmission
+    const base64Audio = arrayBufferToBase64(wavBuffer)
+    console.log('[stem-separation] Base64 audio length:', base64Audio.length, 'characters');
+
+    // Call the separation edge function
+    console.log('[stem-separation] Calling edge function with stemType:', st);
+    const { data, error } = await supabase.functions.invoke('separate-stems', {
+      body: {
+        audioData: base64Audio,
+        stemType: st,
+        outputFormat: 'mp3_44100_128'
+      }
+    })
+
+    console.log('[stem-separation] Edge function response - data:', !!data, 'error:', !!error);
+
+    if (error) {
+      console.error('[stem-separation] Edge function error:', error);
+
+      // Try to extract more detailed error information
+      let errorMessage = error.message || 'Stem separation failed';
+
+      // Check if the error contains helpful details
+      if (error.context) {
+        console.error('[stem-separation] Error context:', error.context);
+        if (error.context.error) {
+          errorMessage = error.context.error;
+        }
+        if (error.context.hint) {
+          errorMessage += ' - ' + error.context.hint;
+        }
+      }
+
+      throw new Error(errorMessage);
+    }
+
+    if (!data || !data.success || !data.audioData) {
+      console.error('[stem-separation] Invalid response:', { hasData: !!data, success: data?.success, hasAudioData: !!data?.audioData });
+
+      // Provide more specific error message based on what's missing
+      if (!data) {
+        throw new Error('No response data received from separation API');
+      } else if (data.error) {
+        // The API returned an error object
+        throw new Error(data.error + (data.hint ? ' - ' + data.hint : ''));
+      } else if (!data.success) {
+        throw new Error('Separation API returned unsuccessful status');
+      } else if (!data.audioData) {
+        throw new Error('No audio data in separation API response');
+      } else {
+        throw new Error('Invalid response from separation API');
+      }
+    }
+
+    console.log('[stem-separation] Received separated audio - stemType:', data.stemType, 'audioData length:', data.audioData.length);
+
+    // Decode the separated audio data
+    console.log('[stem-separation] Decoding base64 audio data...');
+    const separatedAudioData = base64ToArrayBuffer(data.audioData)
+    console.log('[stem-separation] Decoded array buffer size:', separatedAudioData.byteLength, 'bytes');
+
+    // Decode the audio file using Web Audio API
+    console.log('[stem-separation] Decoding audio with Web Audio API...');
+    const decodedBuffer = await audioContext.decodeAudioData(separatedAudioData)
+    console.log('[stem-separation] Audio decoded successfully - duration:', decodedBuffer.duration, 'seconds');
+
+    // Add the separated stem as a new take in the history
+    const master = stemControlValues.master || {}
+    const tempo = master.tempo ?? DEFAULT_TEMPO
+    const bars = master.bars ?? DEFAULT_BARS
+
+    // Build a loop buffer from the separated audio
+    // We pass headIndex=0 since we want to use the full separated stem
+    console.log('[stem-separation] Building loop buffer with tempo:', tempo, 'bars:', bars);
+    const loopBuffer = buildLoopBufferFromRawStrict(decodedBuffer, tempo, bars, 0)
+
+    if (!loopBuffer) {
+      console.error('[stem-separation] Failed to build loop buffer');
+      throw new Error('Failed to build loop from separated audio - audio may be too short or incompatible');
+    }
+
+    console.log('[stem-separation] Loop buffer created - duration:', loopBuffer.duration, 'seconds');
+
+    // Create a new history entry
+    const newEntry = {
+      raw: decodedBuffer,
+      loop: loopBuffer,
+      prompt: `Separated ${data.stemType} stem from ${st}`,
+      validationTier: 'separated',
+      timestamp: Date.now(),
+      isSeparated: true,
+      separatedFrom: data.requestedInstrument,
+      originalStemType: data.stemType
+    }
+
+    // Add to history and select it
+    if (!stemHistory[st]) stemHistory[st] = []
+    stemHistory[st].push(newEntry)
+    if (stemHistory[st].length > HISTORY_LIMIT) stemHistory[st].shift()
+
+    const newIndex = stemHistory[st].length - 1
+    stemActiveIndex[st] = newIndex
+
+    // Load the new separated stem
+    stemRaw[st] = decodedBuffer
+    stemLoop[st] = loopBuffer
+
+    // Store loop duration
+    if (loopBuffer) {
+      stemLoopDuration[st] = loopBuffer.duration
+    }
+
+    // Invalidate cached WAV since we have new separated audio
+    invalidateStemCache(st)
+
+    // Update waveform visualization
+    drawWaveform(st)
+
+    // Update history indicators
+    updateHistoryIndicator(st)
+    updateCardNumberColor(st)
+
+    // Update the edit modal canvas with the new waveform
+    drawEditWaveform(st, loopBuffer)
+
+    // Show success message
+    if (separateHint) {
+      separateHint.textContent = `Successfully extracted ${data.stemType} stem!`
+      separateHint.classList.remove('text-white/50')
+      separateHint.classList.add('text-green-400')
+
+      // Reset hint after 3 seconds
+      setTimeout(() => {
+        if (separateHint) {
+          separateHint.textContent = 'Automatically extract and select this instrument from the mix'
+          separateHint.classList.remove('text-green-400')
+          separateHint.classList.add('text-white/50')
+        }
+      }, 3000)
+    }
+
+  } catch (err) {
+    console.error('[stem-separation] Error during separation:', err);
+    console.error('[stem-separation] Error stack:', err.stack);
+
+    // Determine user-friendly error message
+    let userMessage = err.message;
+
+    // Provide helpful hints based on common errors
+    if (err.message.includes('API key')) {
+      userMessage = 'API key not configured. Please check your settings.';
+    } else if (err.message.includes('401')) {
+      userMessage = 'Authentication failed. Please verify your API credentials.';
+    } else if (err.message.includes('422')) {
+      userMessage = 'Invalid audio format. Please try a different audio file.';
+    } else if (err.message.includes('429')) {
+      userMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+    } else if (err.message.includes('timeout') || err.message.includes('network')) {
+      userMessage = 'Network error. Please check your connection and try again.';
+    } else if (err.message.includes('non-2xx')) {
+      userMessage = 'Service temporarily unavailable. Please try again in a moment.';
+    }
+
+    // Show error message
+    if (separateHint) {
+      separateHint.textContent = `Error: ${userMessage}`
+      separateHint.classList.remove('text-white/50')
+      separateHint.classList.add('text-red-400')
+
+      // Reset hint after 8 seconds for better readability
+      setTimeout(() => {
+        if (separateHint) {
+          separateHint.textContent = 'Automatically extract and select this instrument from the mix'
+          separateHint.classList.remove('text-red-400')
+          separateHint.classList.add('text-white/50')
+        }
+      }, 8000)
+    }
+  } finally {
+    // Reset button state
+    if (separateBtn) separateBtn.disabled = false
+    if (separateLabel) separateLabel.textContent = 'Separate Stems'
+    if (separateSpinner) separateSpinner.classList.add('hidden')
+  }
+}
+
+/**
+ * Convert an AudioBuffer to a WAV file ArrayBuffer
+ */
+function audioBufferToWav(buffer, sampleRate) {
+  const numChannels = buffer.numberOfChannels
+  const length = buffer.length * numChannels * 2
+  const arrayBuffer = new ArrayBuffer(44 + length)
+  const view = new DataView(arrayBuffer)
+
+  // WAV header
+  writeString(view, 0, 'RIFF')
+  view.setUint32(4, 36 + length, true)
+  writeString(view, 8, 'WAVE')
+  writeString(view, 12, 'fmt ')
+  view.setUint32(16, 16, true) // PCM format
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, numChannels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * numChannels * 2, true)
+  view.setUint16(32, numChannels * 2, true)
+  view.setUint16(34, 16, true)
+  writeString(view, 36, 'data')
+  view.setUint32(40, length, true)
+
+  // Write audio data
+  const offset = 44
+  const channels = []
+  for (let i = 0; i < numChannels; i++) {
+    channels.push(buffer.getChannelData(i))
+  }
+
+  let pos = 0
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const sample = Math.max(-1, Math.min(1, channels[ch][i]))
+      view.setInt16(offset + pos, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true)
+      pos += 2
+    }
+  }
+
+  return arrayBuffer
+}
+
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i))
+  }
+}
+
+/**
+ * Convert ArrayBuffer to base64 string
+ */
+function arrayBufferToBase64(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+/**
+ * Convert base64 string to ArrayBuffer
+ */
+function base64ToArrayBuffer(base64) {
+  const binaryString = atob(base64)
+  const bytes = new Uint8Array(binaryString.length)
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
 /* =========================================================
    Transport
    ========================================================= */
 function startTransport() {
-  if (isPlaying) {
-    console.log('Transport already playing, ignoring start request')
-    return
-  }
-  console.log('Starting transport...')
+  if (isPlaying) return
   isPlaying = true
   updatePlayButtonIcon()
 
   // We no longer compute a global loop duration.  Each stem uses its own
   // buffer length for looping.  Record the start time of this transport so
   // that per‑stem phases can be computed relative to a common origin.
-  const t0 = audioContext.currentTime + START_ENV_MS / 1000
+  const t0 = audioContext.currentTime + START_ENV_MS/1000
   loopStartTime = t0
 
   Object.keys(stemConfigs).forEach(st => {
     const indicator = document.querySelector(`[data-stem-indicator="${st}"]`)
-    if (indicator) { indicator.style.left = '0%'; indicator.style.opacity = '1' }
+    if (indicator) {
+      indicator.style.setProperty('--indicator-phase', '0')
+      indicator.style.opacity = '1'
+    }
   })
 
   Object.keys(stemLoop).forEach(st => {
@@ -1705,119 +2265,43 @@ function startTransport() {
     const nodes = createStemNodes(st, buf)
     stemNodes[st] = nodes
     nodes.env.gain.setValueAtTime(0, t0)
-    nodes.env.gain.linearRampToValueAtTime(1, t0 + START_ENV_MS / 1000)
-    const vol = (stemControlValues[st]?.volume ?? 80) / 100
+    nodes.env.gain.linearRampToValueAtTime(1, t0 + START_ENV_MS/1000)
+    const vol = (stemControlValues[st]?.volume ?? 80)/100
     const muted = stemMuteStates[st]
     const soloedOther = (soloedStem && soloedStem !== st)
     nodes.gain.gain.setValueAtTime((muted || soloedOther) ? 0 : vol, t0)
     nodes.source.start(t0)
   })
 
-  if (transportTicker) clearInterval(transportTicker)
-  transportTicker = setInterval(() => {
-    if (!isPlaying) return
-    updatePlaybackIndicators()
-  }, 25)
+  if (transportTicker) cancelAnimationFrame(transportTicker)
+  transportTicker = requestAnimationFrame(transportTick)
 
   updateAllMixerGlows()
 }
-// Pause transport without destroying nodes (maintains playback position)
-function pauseTransport() {
-  if (!isPlaying || !audioContext) return
-  console.log('Pausing transport...')
-  isPlaying = false
-  updatePlayButtonIcon()
-
-  // Suspend the audio context to pause all playback
-  audioContext.suspend().catch(err => {
-    console.warn('Failed to suspend audio context:', err)
-  })
-
-  // Stop the visual indicator updates
-  if (transportTicker) {
-    clearInterval(transportTicker)
-    transportTicker = null
-  }
-
-  updateAllMixerGlows()
-}
-
-// Resume transport from paused state
-function resumeTransport() {
-  if (isPlaying || !audioContext) return
-  console.log('Resuming transport...')
-  isPlaying = true
-  updatePlayButtonIcon()
-
-  // Resume the audio context to continue playback
-  audioContext.resume().catch(err => {
-    console.warn('Failed to resume audio context:', err)
-  })
-
-  // Restart visual indicator updates
-  if (transportTicker) clearInterval(transportTicker)
-  transportTicker = setInterval(() => {
-    if (!isPlaying) return
-    updatePlaybackIndicators()
-  }, 25)
-
-  updateAllMixerGlows()
-}
-
-// Stop and reset transport (destroys nodes, used when changing takes)
 function stopTransport() {
-  if (!audioContext) return
-  console.log('Stopping and resetting transport...')
-
-  const wasPlaying = isPlaying
+  if (!isPlaying) return
   isPlaying = false
   updatePlayButtonIcon()
 
-  const now = audioContext.currentTime
-  const stopAt = now + 0.01 // Slightly longer fade to ensure smooth stop
-
+  const stopAt = audioContext.currentTime + 0.005
   Object.keys(stemConfigs).forEach(st => {
     const indicator = document.querySelector(`[data-stem-indicator="${st}"]`)
-    if (indicator) { indicator.style.left = '0%'; indicator.style.opacity = '0' }
+    if (indicator) {
+      indicator.style.setProperty('--indicator-phase', '0')
+      indicator.style.opacity = '0'
+    }
   })
 
   Object.values(stemNodes).forEach(n => {
     if (!n?.source) return
-
-    // Cancel any scheduled gain changes
-    n.env.gain.cancelScheduledValues(now)
-
-    // Get current gain value and set it immediately
-    const currentGain = n.env.gain.value
-    n.env.gain.setValueAtTime(currentGain, now)
-
-    // Fade out smoothly
+    n.env.gain.cancelScheduledValues(audioContext.currentTime)
+    n.env.gain.setValueAtTime(n.env.gain.value, audioContext.currentTime)
     n.env.gain.linearRampToValueAtTime(0, stopAt)
-
-    // Stop the source with proper error handling
-    try {
-      // Check if source is still playing before stopping
-      if (n.source.playbackState !== undefined) {
-        // Web Audio API source
-        n.source.stop(stopAt)
-      } else {
-        // Fallback: try to stop immediately
-        n.source.stop(now)
-      }
-    } catch (error) {
-      // Source might already be stopped or invalid
-      console.warn('Could not stop audio source:', error)
-    }
+    try { n.source.stop(stopAt) } catch {}
   })
-
-  // Clear all stem nodes
   Object.keys(stemNodes).forEach(k => delete stemNodes[k])
-
-  // Clear transport ticker
-  if (transportTicker) {
-    clearInterval(transportTicker)
-    transportTicker = null
-  }
+  if (transportTicker) cancelAnimationFrame(transportTicker)
+  transportTicker = null
 
   updateAllMixerGlows()
 }
@@ -1842,9 +2326,9 @@ function restartStemNextBoundary(st) {
   next.env.gain.setValueAtTime(1, startAt)
   try {
     next.source.start(startAt, elapsed)
-  } catch { }
+  } catch {}
   if (prev?.source) {
-    try { prev.source.stop(startAt) } catch { }
+    try { prev.source.stop(startAt) } catch {}
   }
   updateMixerGlow(st)
 }
@@ -1853,45 +2337,58 @@ function restartStemNextBoundary(st) {
    Eleven Music compose (unchanged core)
    ========================================================= */
 const genControllers = new Map()
-function getNewStemController(st) {
-  const prev = genControllers.get(st);
-  if (prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded', 'AbortError'));
-  const ctrl = new AbortController();
-  genControllers.set(st, ctrl);
-  return ctrl
+function getNewStemController(st){ const prev=genControllers.get(st); if(prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded','AbortError')); const ctrl=new AbortController(); genControllers.set(st, ctrl); return ctrl }
+function buildCompositionPlan({ tempo, bars }, descriptor){ const ms=Math.round(bars*4*(60/tempo)*1000); return { positive_global_styles:["techno","instrumental","loop"], negative_global_styles:["vocals","fade-in","fade-out","free-time"], sections:[{ section_name:"Loop", positive_local_styles:[descriptor||"modern techno"], negative_local_styles:["rubato","modulation","improv cadenza"], duration_ms: ms, lines: [] }] } }
+async function composeOnce(payload, signal){
+  const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/eleven-music-compose`
+  const tryPayload = (fmt) => ({ ...payload, output_format: fmt, model_id: 'music_v1', respect_sections_durations: true })
+  let lastErr = null
+  for (const fmt of [PRIMARY_OUTPUT_FORMAT, FALLBACK_OUTPUT_FORMAT]) {
+    try {
+      const res = await fetch(functionUrl, {
+        method: 'POST', signal,
+        headers: { 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(tryPayload(fmt))
+      })
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`
+        try {
+          const e = await res.json()
+          if (e.error) msg = e.error
+          if (e.upstream) msg += ` • upstream: ${e.upstream}`
+        } catch { msg += ` • Raw: ${await res.text()}` }
+        if (fmt === PRIMARY_OUTPUT_FORMAT && /only allowed for Pro|PCM/i.test(msg)) { lastErr = new Error(msg); continue }
+        throw new Error(msg)
+      }
+      return res.arrayBuffer()
+    } catch (e) { lastErr = e }
+  }
+  throw lastErr || new Error('composeOnce failed')
 }
-import { buildCompositionPlan, composeOnce, composeWithRetries as composeWithRetriesGen, buildLoopBufferFromRawStrict as buildLoopBufferFromRawStrictGen, buildHihatPrompt as buildHihatPromptGen, buildSnarePrompt as buildSnarePromptGen, buildStemPrompt as buildStemPromptGen } from './TechnoGenerators/index.js'
+async function composeWithRetries(st, tempo, bars, signal, statusEl){
+  const beats=bars*4
+  const seconds=beats*(60/tempo)
+  let music_length_ms=Math.round(seconds*1000)+GEN_TAIL_PAD_MS
+  music_length_ms=Math.max(10000, Math.min(300000, music_length_ms))
+  const master=getMasterForPrompt()
+  const controls=stemControlValues[st]||{}
+  for(let tier=0;tier<3;tier++){
+    const prompt=(st==='hihat')?buildHihatPrompt(controls, master, tier):buildSnarePrompt(controls, master, tier)
+    if (statusEl) statusEl.textContent=`Creating… (${st}, tier ${tier+1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
+    const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt, music_length_ms }
+    const ab=await composeOnce(body, signal)
+    const buf=await audioContext.decodeAudioData(ab)
+    const ok=(st==='hihat')?validateHihat(buf, tempo, bars):validateSnare(buf, tempo, bars)
+    if(ok) return { buffer: buf, usedPrompt: prompt, tier }
+  }
+  const finalPrompt=(st==='hihat')?buildHihatPrompt(controls, master, 2):buildSnarePrompt(controls, master, 2)
+  const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt: finalPrompt, music_length_ms }
+  const ab=await composeOnce(body, signal)
+  const buf=await audioContext.decodeAudioData(ab)
+  return { buffer: buf, usedPrompt: finalPrompt, tier: 2, failedValidation: true }
+}
 async function generateStem(st) {
   await ensureAudioContext()
-
-  // Check if user is authenticated for credits system
-  const user = getAuthGuard().getCurrentUser()
-  let hasCredits = true
-  let currentCredits = 0
-
-  if (user) {
-    // User is authenticated, check credits
-    const CREDITS_PER_GENERATION = 5 // Cost per stem generation
-    const creditsResult = await checkCredits(user.id, CREDITS_PER_GENERATION)
-
-    if (creditsResult.error) {
-      console.error('Error checking credits:', creditsResult.error)
-      alert('Unable to check credits. Please try again.')
-      return
-    }
-
-    hasCredits = creditsResult.hasCredits
-    currentCredits = creditsResult.currentCredits
-
-    if (!hasCredits) {
-      alert(`Insufficient credits. You need ${CREDITS_PER_GENERATION} credits to generate a stem. You currently have ${currentCredits} credits.`)
-      return
-    }
-  } else {
-    // User is in guest mode, allow generation without credits
-    console.log('🎵 Generating stem in guest mode (no credits required)')
-  }
-
   const ctrl = getNewStemController(st)
   const { signal } = ctrl
 
@@ -1905,116 +2402,72 @@ async function generateStem(st) {
     if (button) {
       button.disabled = true
       const icon = button.querySelector('[data-lucide]')
-      if (icon) {
-        icon.setAttribute('data-lucide', 'loader-2');
-        icon.classList.add('loading-spin');
-        if (window.safeCreateIcons) {
-          window.safeCreateIcons()
-        }
-      }
+      if (icon) { icon.setAttribute('data-lucide', 'loader-2'); icon.classList.add('loading-spin'); window.lucide?.createIcons() }
     }
     if (card) card.classList.add('is-generating')
+    if (statusEl) statusEl.textContent = `Creating… (Eleven Music v1)`
+
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
-    const bars = stemControlValues.master?.bars ?? DEFAULT_BARS
+    const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
 
-    // For guest mode or when Supabase functions are not available, use demo mode
+    // Attempt to generate the stem via the Supabase edge function
+    // `generate-techno-stem`.  This function builds the prompt, calls
+    // the ElevenLabs API and trims the loop server-side.  On success
+    // it returns a base64 encoded WAV along with prompt metadata.
     let audioBuffer, usedPrompt, tier = 0, validated = true, failedValidation = false
-
-    // Check if we should use Supabase functions (only for authenticated users)
-    let useSupabaseFunctions = user && supabase
-
-    if (statusEl) {
-      if (useSupabaseFunctions) {
-        statusEl.textContent = `Creating… (Eleven Music v1)`
-      } else {
-        statusEl.textContent = `Creating… (Fallback Mode)`
+    try {
+      const payload = {
+        stem: st,
+        controls: stemControlValues[st] || {},
+        master: {
+          tempo,
+          bars,
+          rootBase: stemControlValues.master?.rootBase || 'A',
+          accidental: stemControlValues.master?.accidental || 'natural',
+          mode: stemControlValues.master?.mode || 'Minor'
+        },
+        use_grok: false
       }
-    }
-
-    if (useSupabaseFunctions) {
-      try {
-        const payload = {
-          stem: st,
-          controls: stemControlValues[st] || {},
-          master: {
-            tempo,
-            bars,
-            rootBase: stemControlValues.master?.rootBase || 'A',
-            accidental: stemControlValues.master?.accidental || 'natural',
-            mode: stemControlValues.master?.mode || 'Minor'
-          },
-          use_grok: false
-        }
-        const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
-        if (error || !data) {
-          throw new Error(error?.message || 'Supabase invocation failed')
-        }
-        // data should contain audio_b64, usedPrompt, tier, validated
-        const { audio_b64, usedPrompt: up, tier: tt, validated: val } = data
-        usedPrompt = up || ''
-        tier = typeof tt === 'number' ? tt : 0
-        validated = val !== false
-        // Decode the base64 audio string
-        const commaIdx = (audio_b64 || '').indexOf(',')
-        const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
-        const binaryStr = atob(b64 || '')
-        const len = binaryStr.length
-        const bytes = new Uint8Array(len)
-        for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i)
-        audioBuffer = await audioContext.decodeAudioData(bytes.buffer)
-        // Determine head index for record keeping
-        referenceHeadIndex = detectHeadIndex(audioBuffer)
-        referenceStemType = st
-        // Use the returned audio as the strict loop
-        stemRaw[st] = audioBuffer
-        stemLoop[st] = audioBuffer
-        stemLoopDuration[st] = audioBuffer.duration
-        failedValidation = !validated
-
-        // Deduct credits after successful generation (only if user is authenticated)
-        if (validated && user) {
-          const CREDITS_PER_GENERATION = 5
-          const { error: deductError } = await updateCredits(user.id, -CREDITS_PER_GENERATION)
-          if (deductError) {
-            console.error('Error deducting credits:', deductError)
-          } else {
-            console.log(`Credits deducted: ${CREDITS_PER_GENERATION}`)
-            // Update user menu to show new credits
-            await updateUserMenu()
-          }
-        }
-      } catch (supErr) {
-        // Supabase call failed or returned error; fallback to local generation
-        console.error('Supabase request failed, falling back to local generation:', supErr)
-        useSupabaseFunctions = false
+      const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
+      if (error || !data) {
+        throw new Error(error?.message || 'Supabase invocation failed')
       }
-    }
-
-    if (!useSupabaseFunctions) {
-      // Fallback to local generation using the original logic
-      console.log('🎵 Using fallback generation for stem:', st)
-
+      // data should contain audio_b64, usedPrompt, tier, validated
+      const { audio_b64, usedPrompt: up, tier: tt, validated: val } = data
+      usedPrompt = up || ''
+      tier = typeof tt === 'number' ? tt : 0
+      validated = val !== false
+      // Decode the base64 audio string
+      const commaIdx = (audio_b64 || '').indexOf(',')
+      const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
+      const binaryStr = atob(b64 || '')
+      const len = binaryStr.length
+      const bytes = new Uint8Array(len)
+      for (let i = 0; i < len; i++) bytes[i] = binaryStr.charCodeAt(i)
+      audioBuffer = await audioContext.decodeAudioData(bytes.buffer)
+      // Determine head index for record keeping
+      referenceHeadIndex = detectHeadIndex(audioBuffer)
+      referenceStemType = st
+      // Use the returned audio as the strict loop
+      stemRaw[st]  = audioBuffer
+      stemLoop[st] = audioBuffer
+      stemLoopDuration[st] = audioBuffer.duration
+      failedValidation = !validated
+      // Invalidate cached WAV since we have new audio
+      invalidateStemCache(st)
+    } catch (supErr) {
+      // Supabase call failed or returned error; fallback to local generation
+      console.error('Supabase request failed', supErr)
+      // Use the old generate logic: call Eleven Labs via the proxy function
+      // (`composeOnce` and `composeWithRetries`) and build a strict loop locally.
       if (st === 'hihat' || st === 'perc') {
-        const res = await composeWithRetriesGen(st, tempo, bars, signal, {
-          genTailPadMs: GEN_TAIL_PAD_MS,
-          primaryFormat: PRIMARY_OUTPUT_FORMAT,
-          usePlan: USE_COMPOSITION_PLAN,
-          stemConfigs,
-          getMasterForPrompt,
-          getControls: (id) => stemControlValues[id],
-          buildTierPrompt: (id, controls, master, tier) => id === 'hihat' ? buildHihatPromptGen(controls, master, tier) : buildSnarePromptGen(controls, master, tier),
-          decodeAudio: (ab) => audioContext.decodeAudioData(ab),
-          validateBuffer: (id, buf, t, b) => id === 'hihat' ? validateHihat(buf, t, b) : validateSnare(buf, t, b),
-          statusUpdate: (txt) => { if (statusEl) statusEl.textContent = txt }
-        })
+        const res = await composeWithRetries(st, tempo, bars, signal, statusEl)
         audioBuffer = res.buffer
         usedPrompt = res.usedPrompt
         tier = res.tier
         failedValidation = !!res.failedValidation
       } else {
-        const controls = stemControlValues[st] || {}
-        const master = getMasterForPrompt()
-        const prompt = buildStemPromptGen(st, controls, master).trim()
+        const prompt = buildStemPrompt(st).trim()
         const beats = bars * 4
         const seconds = beats * (60 / tempo)
         let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
@@ -2022,31 +2475,29 @@ async function generateStem(st) {
         const body = USE_COMPOSITION_PLAN
           ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
           : { prompt, music_length_ms }
-        body.stem = st
-        body.master = master
-        body.tempo = tempo
-        body.bars = bars
         const ab = await composeOnce(body, signal)
         audioBuffer = await audioContext.decodeAudioData(ab)
         usedPrompt = prompt
         tier = 0
         failedValidation = false
       }
-
       // Determine head index and build a strict loop from the raw buffer
       referenceHeadIndex = detectHeadIndex(audioBuffer)
       referenceStemType = st
-      const strictLoop = buildLoopBufferFromRawStrictGen(audioBuffer, tempo, bars, referenceHeadIndex, { loopXfadeMs: LOOP_XFADE_MS, edgeRampMs: EDGE_RAMP_MS, alignSearchMs: ALIGN_SEARCH_MS })
-
-      // Store the newly generated raw buffer and strict loop
-      stemRaw[st] = audioBuffer
+      const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
+      // Store the newly generated raw buffer and strict loop.  We explicitly
+      // assign the raw to stemRaw so that endpoint adjustments can be
+      // constructed from the unmodified audio later.  The strict loop is
+      // stored in stemLoop to be used for playback.  Reset the
+      // endpoint stretch factor to its default (1.0) for a fresh take so
+      // that subsequent adjustments start from an unmodified loop.
+      stemRaw[st]  = audioBuffer
       stemLoop[st] = strictLoop
       stemLoopDuration[st] = strictLoop.duration
       endpointFactors[st] = 1
+      // Invalidate cached WAV since we have new audio
+      invalidateStemCache(st)
     }
-
-    // If not using Supabase functions, we already generated demo audio above
-    // No additional fallback logic needed
 
     // Push the new version into history
     pushStemVersion(st, {
@@ -2069,8 +2520,6 @@ async function generateStem(st) {
       }
     }
     renderHistoryDrawer(st)
-
-    // Note: saveStemToDatabase is now only called when user explicitly clicks the save button
     // Draw waveform for the new loop
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
@@ -2125,107 +2574,383 @@ async function generateStem(st) {
     updateMixerGlow(st)
     updateCardNumberColor(st)
     updateHistoryIndicator(st)
+    updateDragButtonState(st)
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.error(`❌ Generation error (${st}):`, err)
-      if (statusEl) statusEl.textContent = `Error: ${err.message}`
+
+      // Provide user-friendly error messages based on error type
+      let userMessage = err.message
+      if (err.message.includes('429') || err.message.includes('rate limit')) {
+        userMessage = 'Rate limit exceeded. Wait 30 seconds and try again.'
+      } else if (err.message.includes('CORS') || err.message.includes('preflight')) {
+        userMessage = 'Service configuration error. Please contact support.'
+      } else if (err.message.includes('500') || err.message.includes('502') || err.message.includes('503')) {
+        userMessage = 'Service temporarily unavailable. Try again in a moment.'
+      } else if (err.message.includes('timeout') || err.message.includes('network')) {
+        userMessage = 'Network error. Check your connection.'
+      } else if (err.message.includes('Failed to fetch')) {
+        userMessage = 'Connection failed. Check your internet connection.'
+      } else if (err.message.includes('decode') || err.message.includes('audio')) {
+        userMessage = 'Audio processing error. Try regenerating.'
+      }
+
+      if (statusEl) {
+        statusEl.textContent = `Error: ${userMessage}`
+        statusEl.style.color = '#ef4444' // red color for errors
+      }
+
+      // Show alert for critical errors that prevent generation
+      if (err.message.includes('429') || err.message.includes('CORS')) {
+        alert(`Generation failed: ${userMessage}`)
+      }
     } else {
-      if (statusEl) statusEl.textContent = 'Generation cancelled'
+      if (statusEl) {
+        statusEl.textContent = 'Generation cancelled'
+        statusEl.style.color = '' // reset color
+      }
     }
   } finally {
     if (genControllers.get(st) === ctrl) genControllers.delete(st)
     if (button) {
       button.disabled = false
       const icon = button.querySelector('[data-lucide]')
-      if (icon) {
-        icon.setAttribute('data-lucide', 'wand-2');
-        icon.classList.remove('loading-spin');
-        if (window.lucide && typeof window.lucide.createIcons === 'function') {
-          try {
-            if (window.safeCreateIcons) {
-              window.safeCreateIcons()
-            }
-          } catch (error) {
-            console.error('Error updating wand icon:', error)
-          }
-        }
-      }
+      if (icon) { icon.setAttribute('data-lucide', 'wand-2'); icon.classList.remove('loading-spin'); window.lucide?.createIcons() }
     }
     if (card) card.classList.remove('is-generating')
   }
 }
 
 /* =========================================================
-   Downloads (modularized)
+   Browser detection and drag-and-drop helpers
    ========================================================= */
-function downloadStem(st) { return saveDownloadStem(st, stemLoop, stemConfigs) }
 
-function downloadAllActiveStems() { return saveDownloadAllActiveStems(stemConfigs, stemActiveIndex, stemLoop) }
+/**
+ * Detect if the browser supports the DownloadURL drag data type.
+ * This feature is only available in Chromium-based browsers (Chrome, Edge).
+ * @returns {boolean} true if DownloadURL is supported
+ */
+function isChromiumBrowser() {
+  const ua = navigator.userAgent.toLowerCase()
+  return ua.includes('chrome') || ua.includes('edg') || ua.includes('chromium')
+}
+
+/**
+ * Generate a properly formatted WAV filename for drag-and-drop.
+ * Format: ProjectName_InstrumentName_BPM_Key_Bars.wav
+ * Example: Nexus_Kick_130_Am_4bars.wav
+ * @param {string} st Stem identifier
+ * @returns {string} formatted filename
+ */
+function generateWavFilename(st) {
+  const cfg = stemConfigs[st]
+  const master = stemControlValues.master || {}
+  const tempo = master.tempo ?? DEFAULT_TEMPO
+  const bars = master.bars ?? DEFAULT_BARS
+
+  // Get root note with accidentals
+  const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || 'A')
+  const mode = master.mode ?? 'Minor'
+  const keyStr = rootName.replace('♯', '#').replace('♭', 'b') + (mode === 'Minor' ? 'm' : '')
+
+  const instrumentName = cfg?.name || st
+  const safeName = instrumentName.replace(/\s+/g, '')
+
+  return `Techno_${safeName}_${tempo}_${keyStr}_${bars}bars.wav`
+}
+
+/* =========================================================
+   Downloads with validation and error handling
+   ========================================================= */
+/**
+ * Encode an AudioBuffer to WAV format with comprehensive validation.
+ * @param {AudioBuffer} audioBuffer - The audio buffer to encode
+ * @returns {Blob} WAV file blob
+ * @throws {Error} If buffer is invalid or encoding fails
+ */
+function encodeWAV(audioBuffer){
+  // Comprehensive validation
+  if (!audioBuffer) {
+    throw new Error('Audio buffer is null or undefined')
+  }
+
+  if (!(audioBuffer instanceof AudioBuffer)) {
+    throw new Error('Invalid audio buffer type')
+  }
+
+  const srcCh = audioBuffer.numberOfChannels
+  const len = audioBuffer.length
+  const sr = audioBuffer.sampleRate
+
+  // Validate audio buffer properties
+  if (!srcCh || srcCh < 1 || srcCh > 2) {
+    throw new Error(`Invalid number of channels: ${srcCh}`)
+  }
+
+  if (!len || len <= 0) {
+    throw new Error(`Invalid buffer length: ${len}`)
+  }
+
+  if (!sr || sr <= 0) {
+    throw new Error(`Invalid sample rate: ${sr}`)
+  }
+
+  // Get channel data and validate
+  const chans = []
+  for (let c = 0; c < srcCh; c++) {
+    const channelData = audioBuffer.getChannelData(c)
+    if (!channelData || channelData.length === 0) {
+      throw new Error(`Channel ${c} data is empty or invalid`)
+    }
+    chans.push(channelData)
+  }
+
+  // Check if audio buffer contains actual audio data (not all zeros/silence)
+  let hasAudio = false
+  for (let c = 0; c < srcCh; c++) {
+    for (let i = 0; i < Math.min(len, 1000); i++) {
+      if (Math.abs(chans[c][i]) > 0.0001) {
+        hasAudio = true
+        break
+      }
+    }
+    if (hasAudio) break
+  }
+
+  if (!hasAudio) {
+    console.warn('Audio buffer appears to contain only silence')
+  }
+
+  const bps = 2 // 16-bit
+  const interleaved = new Float32Array(len * srcCh)
+  let o = 0
+  for (let i = 0; i < len; i++) {
+    for (let c = 0; c < srcCh; c++) {
+      interleaved[o++] = chans[c][i]
+    }
+  }
+
+  const blockAlign = srcCh * bps
+  const byteRate = sr * blockAlign
+  const dataSize = interleaved.length * bps
+
+  // Validate calculated sizes
+  if (dataSize <= 0 || dataSize > 500 * 1024 * 1024) { // Max 500MB
+    throw new Error(`Invalid data size: ${dataSize} bytes`)
+  }
+
+  const buffer = new ArrayBuffer(44 + dataSize)
+  const view = new DataView(buffer)
+
+  // Helper function to write ASCII strings
+  function writeAscii(v, o, s) {
+    for (let i = 0; i < s.length; i++) {
+      v.setUint8(o + i, s.charCodeAt(i))
+    }
+  }
+
+  // Write WAV header
+  writeAscii(view, 0, 'RIFF')
+  view.setUint32(4, 36 + dataSize, true)
+  writeAscii(view, 8, 'WAVE')
+  writeAscii(view, 12, 'fmt ')
+  view.setUint32(16, 16, true) // fmt chunk size
+  view.setUint16(20, 1, true)  // PCM format
+  view.setUint16(22, srcCh, true) // number of channels
+  view.setUint32(24, sr, true) // sample rate
+  view.setUint32(28, byteRate, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, 16, true) // bits per sample
+  writeAscii(view, 36, 'data')
+  view.setUint32(40, dataSize, true)
+
+  // Write audio data
+  let off = 44
+  for (let i = 0; i < interleaved.length; i++, off += 2) {
+    let s = Math.max(-1, Math.min(1, interleaved[i]))
+    s = s < 0 ? s * 0x8000 : s * 0x7FFF
+    view.setInt16(off, s, true)
+  }
+
+  const blob = new Blob([view], { type: 'audio/wav' })
+
+  // Verify blob was created successfully
+  if (!blob || blob.size === 0) {
+    throw new Error('Failed to create WAV blob')
+  }
+
+  console.log(`✓ Encoded WAV: ${(blob.size / 1024).toFixed(1)}KB, ${sr}Hz, ${srcCh}ch, ${len} samples`)
+
+  return blob
+}
+/**
+ * Download a stem as a WAV file with comprehensive validation and error handling.
+ * @param {string} st - Stem identifier
+ */
+function downloadStem(st){
+  try {
+    const buf = stemLoop[st]
+
+    // Validate buffer exists
+    if (!buf) {
+      console.error(`No audio buffer for stem: ${st}`)
+      alert(`No audio for ${stemConfigs[st]?.name || st}. Generate audio first.`)
+      return
+    }
+
+    // Validate buffer has data
+    if (buf.length === 0) {
+      console.error(`Empty audio buffer for stem: ${st}`)
+      alert(`Audio buffer is empty. Please regenerate the audio.`)
+      return
+    }
+
+    console.log(`Downloading stem ${st}: ${buf.length} samples, ${buf.duration.toFixed(2)}s`)
+
+    // Encode to WAV with error handling
+    let wav
+    try {
+      wav = encodeWAV(buf)
+    } catch (encodeErr) {
+      console.error('WAV encoding failed:', encodeErr)
+      alert(`Failed to encode audio: ${encodeErr.message}. Please try regenerating.`)
+      return
+    }
+
+    // Verify blob size
+    if (!wav || wav.size === 0) {
+      console.error('Generated WAV blob is empty')
+      alert('Generated audio file is empty. Please try again.')
+      return
+    }
+
+    console.log(`WAV blob created: ${(wav.size / 1024).toFixed(1)}KB`)
+
+    // Use proper filename with session info
+    const filename = generateWavFilename(st)
+
+    // Create download link
+    const url = URL.createObjectURL(wav)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.style.display = 'none'
+    document.body.appendChild(a)
+
+    // Trigger download
+    a.click()
+
+    // Cleanup with delay to ensure download starts
+    setTimeout(() => {
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    }, 100)
+
+    console.log(`✓ Download initiated: ${filename}`)
+  } catch (err) {
+    console.error('Download failed:', err)
+    alert(`Download failed: ${err.message}`)
+  }
+}
+
+/**
+ * Download all active takes for every stem.  When the user clicks the
+ * "download all" button, iterate over all configured stems and, if a
+ * take has been generated and is currently selected (active), create a
+ * WAV file and trigger a download.  This does nothing for stems
+ * without a generated take.  The file names mirror the single
+ * download button naming scheme and include a timestamp.
+ */
+function downloadAllActiveStems(){
+  // Iterate over the keys of stemConfigs to include all stems defined in
+  // the current session.  For each stem, check whether there is an
+  // active history entry (active index >= 0) and that a loop buffer
+  // exists.  If so, download that buffer.
+  Object.keys(stemConfigs).forEach(st => {
+    const hasActive = (stemActiveIndex[st] ?? -1) >= 0
+    const buf = stemLoop[st]
+    if (hasActive && buf) {
+      downloadStem(st)
+    }
+  })
+}
 
 /* =========================================================
    UI rendering (per card) — with black generate btn, wider sliders, click‑overlay for toggles
    ========================================================= */
-// knobToDb, formatDb, knobAngle now imported from Utilities/index.js
-function applyEqValuesToNodes(eqNodes, vals) {
+function knobToDb(val){
+  const v=Math.max(0, Math.min(100, Number(val)||0))
+  // Shift the 0 dB point to 75% of the slider to mirror professional DAW faders.
+  const pivot = 75
+  if (v <= pivot) return EQ_MIN_DB + (v / pivot) * (0 - EQ_MIN_DB)
+  return ((v - pivot) / (100 - pivot)) * EQ_MAX_DB
+}
+function formatDb(db){
+  if (db <= EQ_MIN_DB + 0.5) return 'CUT'
+  if (Math.abs(db) < 0.05) return '0 dB'
+  return `${db.toFixed(1)} dB`
+}
+function knobAngle(val){ return -135 + (val/100)*270 }
+function applyEqValuesToNodes(eqNodes, vals){
   if (!eqNodes || !audioContext) return
-  const now = audioContext.currentTime
+  const now=audioContext.currentTime
   eqNodes.low.gain.setTargetAtTime(knobToDb(vals.low), now, EQ_SMOOTH_TC)
   eqNodes.mid.gain.setTargetAtTime(knobToDb(vals.mid), now, EQ_SMOOTH_TC)
   eqNodes.high.gain.setTargetAtTime(knobToDb(vals.high), now, EQ_SMOOTH_TC)
 }
-function applyFilterValuesToNode(filterNode, vals) {
+function applyFilterValuesToNode(filterNode, vals){
   if (!filterNode || !audioContext) return
-  const now = audioContext.currentTime
-  filterNode.type = vals.mode
+  const now=audioContext.currentTime
+  filterNode.type=vals.mode
   filterNode.Q.setTargetAtTime(FILTER_Q, now, FILTER_SMOOTH_TC)
   filterNode.frequency.setTargetAtTime(knobToFreq(vals.cutoff), now, FILTER_SMOOTH_TC)
 }
-function updateEqKnobVisual(knobEl, val) {
-  if (!knobEl) return
-  knobEl.dataset.value = String(val)
-  const ptr = knobEl.querySelector('[data-eq-pointer]')
-  if (ptr) ptr.style.transform = `translateX(-50%) rotate(${knobAngle(val)}deg)`
+function updateEqKnobVisual(knobEl, val){
+  if(!knobEl) return
+  knobEl.dataset.value=String(val)
+  const ptr=knobEl.querySelector('[data-eq-pointer]')
+  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
 }
-function updateEqReadout(st, band) {
-  const v = (stemEqValues[st] || {})[band] ?? EQ_DEFAULT
-  const db = knobToDb(v)
-  const ro = document.querySelector(`[data-eq-readout="${st}:${band}"]`)
-  if (ro) ro.textContent = formatDb(db)
+function updateEqReadout(st, band){
+  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
+  const db=knobToDb(v)
+  const ro=document.querySelector(`[data-eq-readout="${st}:${band}"]`)
+  if (ro) ro.textContent=formatDb(db)
 }
 
 /* ---------- Filter UI ---------- */
-function updateFilterKnobVisual(knobEl, val) {
-  if (!knobEl) return
-  knobEl.dataset.value = String(val)
-  const ptr = knobEl.querySelector('[data-filter-pointer]')
-  if (ptr) ptr.style.transform = `translateX(-50%) rotate(${knobAngle(val)}deg)`
+function updateFilterKnobVisual(knobEl, val){
+  if(!knobEl) return
+  knobEl.dataset.value=String(val)
+  const ptr=knobEl.querySelector('[data-filter-pointer]')
+  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
 }
-function updateFilterReadout(st) {
-  const v = (stemFilterValues[st] || {}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
-  const hz = knobToFreq(v)
-  const ro = document.querySelector(`[data-filter-readout="${st}"]`)
-  if (ro) ro.textContent = hz >= 1000 ? `${(hz / 1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
+function updateFilterReadout(st){
+  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const hz=knobToFreq(v)
+  const ro=document.querySelector(`[data-filter-readout="${st}"]`)
+  if (ro) ro.textContent = hz >= 1000 ? `${(hz/1000).toFixed(hz>=10000?0:1)} kHz` : `${Math.round(hz)} Hz`
 }
-function updateFilterModeButton(st) {
-  const btn = document.querySelector(`[data-filter-mode="${st}"]`)
-  if (!btn) return
-  const mode = (stemFilterValues[st] || {}).mode || 'lowpass'
+function updateFilterModeButton(st){
+  const btn=document.querySelector(`[data-filter-mode="${st}"]`)
+  if(!btn) return
+  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
   btn.textContent = mode === 'lowpass' ? 'LP' : 'HP'
 }
 
 /* ---------- Per-card HTML ---------- */
-function eqKnobHTML(st, band, label) {
-  const v = (stemEqValues[st] || {})[band] ?? EQ_DEFAULT
-  const ang = knobAngle(v)
+function eqKnobHTML(st, band, label){
+  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
+  const ang=knobAngle(v)
   return `\n        <div class="flex flex-col items-center select-none">\n          <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n               data-eq-knob data-stem="${st}" data-band="${band}" data-value="${v}" title="${label}: drag to adjust">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                 data-eq-pointer\n                 style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] tracking-wider text-white/80">${label.toUpperCase()}</div>\n          <div class="text-[10px] text-white/60" data-eq-readout="${st}:${band}">${formatDb(knobToDb(v))}</div>\n        </div>\n      `
 }
-function filterKnobHTML(st) {
-  const v = (stemFilterValues[st] || {}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
-  const ang = knobAngle(v)
-  const mode = (stemFilterValues[st] || {}).mode || 'lowpass'
+function filterKnobHTML(st){
+  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const ang=knobAngle(v)
+  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
   return `\n        <div class="flex items-center gap-2">\n          <div class="flex flex-col items-center select-none">\n            <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n                 data-filter-knob data-stem="${st}" data-value="${v}" title="Filter Cutoff: drag to adjust">\n              <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n              <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                   data-filter-pointer\n                   style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n            </div>\n            <div class="mt-1 text-[10px] tracking-wider text-white/80">CUTOFF</div>\n            <div class="text-[10px] text-white/60" data-filter-readout="${st}"></div>\n          </div>\n          <button class="h-6 px-2 rounded-md border border-white/15 bg-white/80 text-black text-[10px] font-semibold tracking-wider hover:bg-white active:translate-y-[1px] transition"\n                  data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}" title="Toggle LP/HP">\n            ${mode === 'lowpass' ? 'LP' : 'HP'}\n          </button>\n        </div>\n      `
 }
-function headerActionButtonsHTML(st) {
+function headerActionButtonsHTML(st){
   return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `
 }
 
@@ -2236,7 +2961,7 @@ function headerActionButtonsHTML(st) {
 function headerActionButtonsMobileHTML(st) {
   return `\n        <div class="flex items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `
 }
-function createBuilderStemCard(st, cfg) {
+function createBuilderStemCard(st, cfg){
   const card = document.createElement('div')
   // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
   card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
@@ -2283,11 +3008,16 @@ function createBuilderStemCard(st, cfg) {
   // Define a generate button fragment.  The sliders and toggles are shown in a popup instead of on the card.
   const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
 
+  // Define a drag button for desktop browsers (Chromium only).  This button appears above
+  // the Create button and allows users to drag the active sample directly to their DAW or desktop.
+  // Hidden on mobile and non-Chromium browsers.
+  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag to DAW\n            </span>\n          </button>\n        </div>\n      `;
+
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
   const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
-  // Use our custom create button HTML instead of the default generate button.  Update status line text accordingly.
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + volumeDialHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  // Use our custom create button HTML with drag button above it.  Update status line text accordingly.
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + volumeDialHTML + dragButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
   // The span within the create button becomes the label, and the icon gets a special class so
   // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
@@ -2308,40 +3038,42 @@ function createBuilderStemCard(st, cfg) {
       historySpan.remove()
     }
 
-
+    // Do not scale the waveform vertically based on volume.  The card's
+    // waveform remains at full height so that the user can always click
+    // the take even when its volume is set to zero.  Visual feedback
     // for volume changes is provided exclusively in the edit modal.
 
-    // On small screens, show the number indicator within the header row; hide it on
-    // desktop so that it can be shown in the top-right corner of the card.
-    const numEl = card.querySelector(`[data-card-number="${st}"]`)
-    if (numEl) numEl.classList.add('sm:hidden')
+      // On small screens, show the number indicator within the header row; hide it on
+      // desktop so that it can be shown in the top-right corner of the card.
+      const numEl = card.querySelector(`[data-card-number="${st}"]`)
+      if (numEl) numEl.classList.add('sm:hidden')
 
-    // Make the card relative so absolute positioning inside works for desktop indicators
-    card.classList.add('relative')
+      // Make the card relative so absolute positioning inside works for desktop indicators
+      card.classList.add('relative')
 
-    // Create a desktop-only number indicator positioned at the top right of the card.
-    const desktopNum = document.createElement('span')
-    desktopNum.setAttribute('data-card-number-desktop', st)
-    desktopNum.textContent = String(idx)
-    // Position with extra padding on desktop (sm:top-5 sm:right-5) so the number indicator isn't flush
-    // against the edges. Hidden on mobile (sm:hidden applied on the header indicator instead).
-    desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2 sm:top-5 sm:right-5'
-    card.appendChild(desktopNum)
+      // Create a desktop-only number indicator positioned at the top right of the card.
+      const desktopNum = document.createElement('span')
+      desktopNum.setAttribute('data-card-number-desktop', st)
+      desktopNum.textContent = String(idx)
+      // Position with extra padding on desktop (sm:top-5 sm:right-5) so the number indicator isn't flush
+      // against the edges. Hidden on mobile (sm:hidden applied on the header indicator instead).
+      desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2 sm:top-5 sm:right-5'
+      card.appendChild(desktopNum)
 
-    // Adjust the edit label overlay within the waveform container.  Always show it (remove hover-based
-    // opacity) and scale its size responsively.  On mobile the text is smaller; on desktop it is
-    // larger and bold white.  Remove the default fade classes to avoid relying on hover state.
-    {
-      const overlayEl = card.querySelector('.relative .pointer-events-none')
-      if (overlayEl) {
-        // Remove fade and original size classes
-        overlayEl.classList.remove('opacity-0', 'group-hover:opacity-100', 'text-white/70', 'text-[10px]')
-        // Always fully visible
-        overlayEl.classList.add('opacity-100')
-        // Use smaller text on mobile (approx 25% smaller) and larger bold text on desktop
-        overlayEl.classList.add('text-white/70', 'text-[8px]', 'sm:text-[20px]', 'sm:font-bold', 'sm:text-white')
+      // Adjust the edit label overlay within the waveform container.  Always show it (remove hover-based
+      // opacity) and scale its size responsively.  On mobile the text is smaller; on desktop it is
+      // larger and bold white.  Remove the default fade classes to avoid relying on hover state.
+      {
+        const overlayEl = card.querySelector('.relative .pointer-events-none')
+        if (overlayEl) {
+          // Remove fade and original size classes
+          overlayEl.classList.remove('opacity-0', 'group-hover:opacity-100', 'text-white/70', 'text-[10px]')
+          // Always fully visible
+          overlayEl.classList.add('opacity-100')
+          // Use smaller text on mobile (approx 25% smaller) and larger bold text on desktop
+          overlayEl.classList.add('text-white/70', 'text-[8px]', 'sm:text-[20px]', 'sm:font-bold', 'sm:text-white')
+        }
       }
-    }
   }
 
   updateHistoryBadge(st)
@@ -2361,8 +3093,8 @@ function initializeStemControlValues() {
   Object.entries(stemConfigs).forEach(([st, cfg]) => {
     stemControlValues[st] = {}
     stemMuteStates[st] = false
-    // Initialise endpoint stretch factor for each stem (1.0 = no stretch)
-    endpointFactors[st] = 1
+      // Initialise endpoint stretch factor for each stem (1.0 = no stretch)
+      endpointFactors[st] = 1
     if (!stemEqValues[st]) stemEqValues[st] = { low: 75, mid: 75, high: 75 }
     if (!stemFilterValues[st]) stemFilterValues[st] = { mode: 'lowpass', cutoff: defCutKnob }
     if (cfg.controls) {
@@ -2379,14 +3111,14 @@ function initializeStemControlValues() {
 }
 
 /* ---------- Mixer glow ---------- */
-function isStemActuallyPlaying(st) { return isPlaying && !!stemNodes[st]?.source && !stemMuteStates[st] && (!soloedStem || soloedStem === st) }
-function updateMixerGlow(st) { const card = document.querySelector(`[data-mix-card="${st}"]`); if (!card) return; card.classList.toggle('sg-glow', isStemActuallyPlaying(st)) }
-function updateAllMixerGlows() { Object.keys(stemConfigs).forEach(updateMixerGlow) }
+function isStemActuallyPlaying(st){ return isPlaying && !!stemNodes[st]?.source && !stemMuteStates[st] && (!soloedStem || soloedStem === st) }
+function updateMixerGlow(st){ const card=document.querySelector(`[data-mix-card="${st}"]`); if(!card) return; card.classList.toggle('sg-glow', isStemActuallyPlaying(st)) }
+function updateAllMixerGlows(){ Object.keys(stemConfigs).forEach(updateMixerGlow) }
 
 /* ---------- Toggle visuals (Mute/Solo) ---------- */
-function setToggleVisual(el, active) { if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
-function reflectMuteSoloButtons(st) {
-  const muted = !!stemMuteStates[st]
+function setToggleVisual(el, active){ if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
+function reflectMuteSoloButtons(st){
+  const muted  = !!stemMuteStates[st]
   const soloed = (soloedStem === st)
   // Update all mute buttons on the instrument card (desktop and mobile)
   document.querySelectorAll(`[data-stem="${st}"] [data-action="mute-stem"]`).forEach(btn => setToggleVisual(btn, muted))
@@ -2398,481 +3130,55 @@ function reflectMuteSoloButtons(st) {
 }
 
 /* ---------- Volume link ---------- */
-function setVolumeUnified(st, newVal) {
-  const v = Math.max(0, Math.min(100, Math.round(Number(newVal) || 0)))
-  stemControlValues[st].volume = v
+function setVolumeUnified(st, newVal){
+  const v=Math.max(0, Math.min(100, Math.round(Number(newVal)||0)))
+  stemControlValues[st].volume=v
 
   // Update legacy card volume slider if present
-  const cardSlider = document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
+  const cardSlider=document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
   if (cardSlider) {
-    cardSlider.value = v
-    const display = cardSlider.parentElement?.querySelector('span:last-child')
-    const cfg = stemConfigs[st]?.controls?.volume
-    if (display && cfg) display.textContent = `${v}${cfg.unit}`
+    cardSlider.value=v
+    const display=cardSlider.parentElement?.querySelector('span:last-child')
+    const cfg=stemConfigs[st]?.controls?.volume
+    if (display && cfg) display.textContent=`${v}${cfg.unit}`
   }
   // Update new mixer volume slider if present; value display is handled via tooltip
-  const mixSlider = document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
+  const mixSlider=document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
   if (mixSlider) {
-    mixSlider.value = String(v)
+    mixSlider.value=String(v)
   }
 
   if (isPlaying && stemNodes[st]?.gain) {
-    const vol = v / 100
-    const muted = stemMuteStates[st]
-    const blocked = (soloedStem && soloedStem !== st)
+    const vol=v/100
+    const muted=stemMuteStates[st]
+    const blocked=(soloedStem && soloedStem !== st)
     if (!muted && !blocked) {
-      const p = stemNodes[st].gain.gain, t = audioContext.currentTime
+      const p=stemNodes[st].gain.gain, t=audioContext.currentTime
       p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(vol, t + 0.01)
     }
   }
 }
 
 /* ---------- Master state helpers ---------- */
-function getRootText() {
-  const base = stemControlValues.master?.rootBase || 'A'
-  const acc = stemControlValues.master?.accidental || 'natural'
-  return acc === 'sharp' ? `${base}#` : acc === 'flat' ? `${base}b` : base
+function getRootText(){
+  const base=stemControlValues.master?.rootBase || 'A'
+  const acc =stemControlValues.master?.accidental || 'natural'
+  return acc==='sharp'?`${base}#` : acc==='flat'?`${base}b` : base
 }
-/**
- * Save a generated stem to the database
- * Runs in background without blocking UI
- * @param {string} st - Stem type
- * @param {string} prompt - Generation prompt
- * @param {number} tempo - Tempo in BPM
- * @param {number} bars - Number of bars
- * @param {AudioBuffer} audioBuffer - Audio buffer
- * @param {number} tier - Generation tier
- * @param {boolean} validated - Whether validation passed
- */
-async function saveStemToDatabase(stemSetId, st, prompt, tempo, bars, audioBuffer, tier, validated, audioUrl) {
-  try {
-    // Only save if user is authenticated
-    const user = getAuthGuard().getCurrentUser()
-    if (!user) {
-      console.log('Skipping database save for guest user')
-      return { success: false, error: 'User not authenticated' }
-    }
-
-    // Get master settings for key signature
-    const master = getMasterForPrompt()
-    const keySignature = `${master.root} ${master.mode}`
-
-    // Prepare stem data for persistence
-    const stemData = {
-      stemSetId: stemSetId,
-      stemType: st,
-      prompt: prompt,
-      tempo: tempo,
-      bars: bars,
-      keySignature: keySignature,
-      generationTier: tier || 0,
-      validated: validated || false,
-      audioData: audioBuffer, // AudioBuffer will be converted to ArrayBuffer in saveStem
-      audioUrl: audioUrl || null,
-      durationSeconds: audioBuffer.duration
-    }
-
-    // Save the stem (this links it to the set via stem_set_id)
-    const result = await saveStem(stemData)
-
-    if (result.success) {
-      console.log(`✅ Stem saved to database: ${st} (ID: ${result.stemId})`)
-      return result
-    } else {
-      console.warn(`Failed to save stem to database: ${st}`, result.error)
-      return result
-    }
-  } catch (error) {
-    console.error(`Error saving stem ${st} to database:`, error)
-    return { success: false, error: error.message }
-  }
-}
-
-/**
- * Collect all stems that have been generated and can be saved
- * @returns {Array} Array of stem data objects ready for saving
- */
-function collectStemsToSave() {
-  const stemsToSave = []
-
-  STEM_ORDER.forEach(st => {
-    const activeIndex = stemActiveIndex[st] ?? -1
-    if (activeIndex >= 0 && stemHistory[st] && stemHistory[st][activeIndex]) {
-      const version = stemHistory[st][activeIndex]
-      if (version.raw) {
-        const master = getMasterForPrompt()
-        stemsToSave.push({
-          stemType: st,
-          prompt: version.prompt || '',
-          tempo: version.tempo || clampTempo(master.tempo),
-          bars: version.bars || master.bars,
-          audioBuffer: version.raw,
-          tier: version.meta?.tier || 0,
-          validated: version.meta?.validated !== false
-        })
-      }
-    }
-  })
-
-  return stemsToSave
-}
-
-/**
- * Show the save to database confirmation modal for authenticated users
- * @param {Array} stemsToSave - Array of stems to save
- */
-function showSaveToDbConfirmModal(stemsToSave) {
-  const modal = document.getElementById('saveToDbConfirmModal')
-  if (!modal) return
-
-  // Update stem list
-  const stemListEl = document.getElementById('saveToDbStemList')
-  if (stemListEl) {
-    if (stemsToSave.length === 0) {
-      stemListEl.innerHTML = '<p class="text-white/60">No stems available to save.</p>'
-    } else {
-      stemListEl.innerHTML = stemsToSave.map(s => {
-        const cfg = stemConfigs[s.stemType]
-        return `<div class="flex items-center gap-2">
-          <div class="w-2 h-2 rounded-full" style="background-color: rgb(${getColorRGB(cfg.color)})"></div>
-          <span>${cfg.name}</span>
-        </div>`
-      }).join('')
-    }
-  }
-
-  // Update description
-  const descEl = document.getElementById('saveToDbConfirmDescription')
-  if (descEl) {
-    descEl.textContent = stemsToSave.length === 0
-      ? 'No stems available to save.'
-      : `Save ${stemsToSave.length} stem${stemsToSave.length > 1 ? 's' : ''} to your cloud storage?`
-  }
-
-  // Show modal
-  modal.classList.remove('hidden')
-  requestAnimationFrame(() => {
-    modal.style.opacity = '1'
-    const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
-    if (content) {
-      content.classList.remove('scale-95')
-      content.classList.add('scale-100')
-    }
-    // Initialize icons
-    if (window.safeCreateIcons) {
-      window.safeCreateIcons()
-    }
-  })
-}
-
-/**
- * Close the save to database confirmation modal
- */
-function closeSaveToDbConfirmModal() {
-  const modal = document.getElementById('saveToDbConfirmModal')
-  if (!modal) return
-
-  modal.style.opacity = '0'
-  const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
-  if (content) {
-    content.classList.remove('scale-100')
-    content.classList.add('scale-95')
-  }
-
-  setTimeout(() => {
-    modal.classList.add('hidden')
-  }, 300)
-}
-
-/**
- * Show the email input modal for non-authenticated users
- */
-function showSaveToDbEmailModal() {
-  const modal = document.getElementById('saveToDbEmailModal')
-  if (!modal) return
-
-  // Reset to email input state
-  const emailInputState = document.getElementById('saveToDbEmailInputState')
-  const checkEmailState = document.getElementById('saveToDbCheckEmailState')
-  if (emailInputState) emailInputState.classList.remove('hidden')
-  if (checkEmailState) checkEmailState.classList.add('hidden')
-
-  const emailInput = document.getElementById('saveToDbEmailInput')
-  if (emailInput) {
-    emailInput.value = ''
-    emailInput.disabled = false
-  }
-
-  const errorEl = document.getElementById('saveToDbEmailError')
-  if (errorEl) {
-    errorEl.classList.add('hidden')
-    errorEl.textContent = ''
-  }
-
-  // Show modal
-  modal.classList.remove('hidden')
-  requestAnimationFrame(() => {
-    modal.style.opacity = '1'
-    const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
-    if (content) {
-      content.classList.remove('scale-95')
-      content.classList.add('scale-100')
-    }
-    // Initialize icons
-    if (window.safeCreateIcons) {
-      window.safeCreateIcons()
-    }
-  })
-}
-
-/**
- * Close the email input modal
- */
-function closeSaveToDbEmailModal() {
-  const modal = document.getElementById('saveToDbEmailModal')
-  if (!modal) return
-
-  modal.style.opacity = '0'
-  const content = modal.querySelector('.transform') || modal.querySelector('.player-surface')
-  if (content) {
-    content.classList.remove('scale-100')
-    content.classList.add('scale-95')
-  }
-
-  setTimeout(() => {
-    modal.classList.add('hidden')
-  }, 300)
-}
-
-/**
- * Show check email state in the email modal
- * @param {string} email - User's email address
- */
-function showSaveToDbCheckEmailState(email) {
-  const emailInputState = document.getElementById('saveToDbEmailInputState')
-  const checkEmailState = document.getElementById('saveToDbCheckEmailState')
-  const userEmailEl = document.getElementById('saveToDbUserEmail')
-
-  if (emailInputState) emailInputState.classList.add('hidden')
-  if (checkEmailState) checkEmailState.classList.remove('hidden')
-  if (userEmailEl) userEmailEl.textContent = email
-}
-
-/**
- * Handle save to database button click - check auth and show appropriate modal
- */
-async function handleSaveToDbClick() {
-  const stemsToSave = collectStemsToSave()
-
-  if (stemsToSave.length === 0) {
-    showErrorToast('No stems available to save. Please generate some stems first.', 3000)
-    return
-  }
-
-  // Check if a saved set exists - user must save set first
-  if (currentSavedSetIndex === null || !savedSets[currentSavedSetIndex]) {
-    // No saved set exists, prompt user to save set first
-    showErrorToast('Please save your set first before saving to cloud. Use the "Save Set" button.', 4000)
-    // Optionally open the save set modal
-    const saveStateBtn = document.getElementById('saveStateBtn')
-    if (saveStateBtn) {
-      // Highlight the save set button or show a helper message
-      setTimeout(() => {
-        openSaveSetModal()
-      }, 500)
-    }
-    return
-  }
-
-  // Check authentication status
-  const user = getAuthGuard().getCurrentUser()
-
-  if (user) {
-    // User is authenticated, show confirmation modal
-    showSaveToDbConfirmModal(stemsToSave)
-  } else {
-    // User is not authenticated, show email input modal
-    showSaveToDbEmailModal()
-  }
-}
-
-/**
- * Save all collected stems to database after user confirmation
- * Links stems -> stem_set -> session_setting according to database structure
- * @param {Array} stemsToSave - Array of stems to save
- */
-async function saveAllStemsToDatabase(stemsToSave) {
-  const spinner = document.getElementById('saveToDbConfirmSpinner')
-  const label = document.getElementById('saveToDbConfirmLabel')
-  const confirmBtn = document.getElementById('saveToDbConfirmBtn')
-
-  try {
-    // Show loading state
-    if (spinner) spinner.classList.remove('hidden')
-    if (label) label.textContent = 'Saving...'
-    if (confirmBtn) confirmBtn.disabled = true
-
-    // Import required functions
-    const { saveSessionSetting, createStemSet } = await import('./Auth/stemApi.js')
-
-    // Get current saved set for set name
-    const currentSet = savedSets[currentSavedSetIndex]
-    if (!currentSet) {
-      throw new Error('No saved set found')
-    }
-
-    // Get session settings from stemControlValues.master
-    const master = stemControlValues.master || {}
-    // Generate default session name if not set
-    const generateDefaultSessionName = () => {
-      const now = new Date()
-      const year = now.getFullYear()
-      const month = String(now.getMonth() + 1).padStart(2, '0')
-      const day = String(now.getDate()).padStart(2, '0')
-      const hours = String(now.getHours()).padStart(2, '0')
-      const minutes = String(now.getMinutes()).padStart(2, '0')
-      const seconds = String(now.getSeconds()).padStart(2, '0')
-      return `Session_${year}-${month}-${day}_${hours}-${minutes}-${seconds}`
-    }
-    const sessionData = {
-      genre: 'techno', // Default genre
-      sessionName: master.sessionName || generateDefaultSessionName(),
-      temp: String(master.tempo || DEFAULT_TEMPO),
-      bars: String(master.bars || DEFAULT_BARS),
-      rootBase: master.rootBase || 'A',
-      selectedAccidental: master.accidental || 'natural',
-      mode: master.mode || 'Minor'
-    }
-
-    // Step 1: Save or get session setting
-    const sessionResult = await saveSessionSetting(sessionData)
-    if (!sessionResult.success) {
-      throw new Error(`Failed to save session setting: ${sessionResult.error}`)
-    }
-    const sessionSettingId = sessionResult.sessionSettingId
-    console.log('Session setting saved:', sessionSettingId)
-
-    // Step 2: Create stem set linked to session setting
-    const setName = `Set ${currentSavedSetIndex + 1}`
-    const setResult = await createStemSet({
-      name: setName,
-      sessionSettingId: sessionSettingId
-    })
-    if (!setResult.success) {
-      throw new Error(`Failed to create stem set: ${setResult.error}`)
-    }
-    const setId = setResult.setId
-    console.log('Stem set created:', setId)
-
-    // Step 3: Save each stem and link to set
-    let successCount = 0
-    let failCount = 0
-    const savedStemIds = []
-
-    for (let i = 0; i < stemsToSave.length; i++) {
-      const stemData = stemsToSave[i]
-      try {
-        // Save stem to database (state is stored in stem_sets.stems_states array)
-        const result = await saveStemToDatabase(
-          setId,
-          stemData.stemType,
-          stemData.prompt,
-          stemData.tempo,
-          stemData.bars,
-          stemData.audioBuffer,
-          stemData.tier,
-          stemData.validated
-        )
-
-        if (result && result.success && result.stemId) {
-          savedStemIds.push({
-            stemId: result.stemId,
-            stemType: stemData.stemType,
-            position: i
-          })
-          successCount++
-        } else {
-          failCount++
-        }
-      } catch (error) {
-        console.error(`Error saving stem ${stemData.stemType}:`, error)
-        failCount++
-      }
-    }
-
-    // Step 4: State information is stored in stem_sets.stems_states array
-    // The stems are linked to the set via stems.stem_set_id
-
-    // Close modal
-    closeSaveToDbConfirmModal()
-
-    // Show result
-    if (successCount > 0) {
-      showSuccessToast(`Successfully saved ${successCount} stem${successCount > 1 ? 's' : ''} to cloud in "${setName}"`, 3000)
-    }
-    if (failCount > 0) {
-      showErrorToast(`Failed to save ${failCount} stem${failCount > 1 ? 's' : ''}`, 3000)
-    }
-  } catch (error) {
-    console.error('Error saving stems:', error)
-    showErrorToast(`Error saving stems to cloud: ${error.message}`, 4000)
-  } finally {
-    // Reset button state
-    if (spinner) spinner.classList.add('hidden')
-    if (label) label.textContent = 'Save'
-    if (confirmBtn) confirmBtn.disabled = false
-  }
-}
-
-/**
- * Send confirmation email for non-authenticated users
- * @param {string} email - User's email address
- */
-async function sendSaveToDbConfirmationEmail(email) {
-  try {
-    const { supabase } = await import('./Auth/index.js')
-    if (!supabase) {
-      throw new Error('Supabase not configured')
-    }
-
-    // Send magic link email
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email,
-      options: {
-        emailRedirectTo: `${window.location.origin}/#auth-callback`
-      }
-    })
-
-    if (error) {
-      throw error
-    }
-
-    // Show check email state
-    showSaveToDbCheckEmailState(email)
-  } catch (error) {
-    console.error('Error sending confirmation email:', error)
-    const errorEl = document.getElementById('saveToDbEmailError')
-    if (errorEl) {
-      errorEl.textContent = error.message || 'Failed to send email. Please try again.'
-      errorEl.classList.remove('hidden')
-    }
-  }
-}
-
-function getMasterForPrompt() {
+function getMasterForPrompt(){
   return {
     tempo: clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO),
-    bars: stemControlValues.master?.bars ?? DEFAULT_BARS,
-    root: getRootText(),
-    mode: stemControlValues.master?.mode || 'Minor'
+    bars:  stemControlValues.master?.bars ?? DEFAULT_BARS,
+    root:  getRootText(),
+    mode:  stemControlValues.master?.mode || 'Minor'
   }
 }
 
 /* ---------- Mixer (Docked tray) ---------- */
-function volumeKnobHTML(st) {
-  const v = stemControlValues[st]?.volume ?? 80
-  const label = stemConfigs[st]?.name || st
-  const ang = knobAngle(v)
+function volumeKnobHTML(st){
+  const v=stemControlValues[st]?.volume ?? 80
+  const label=stemConfigs[st]?.name || st
+  const ang=knobAngle(v)
   const idx = STEM_ORDER.indexOf(st) + 1
   return `\n        <div class="sg-mix-card relative flex flex-col items-center justify-center rounded-xl border border-white/15 bg-white/10 p-2 aspect-square select-none"\n             data-mix-card="${st}">\n          <span data-mix-number="${st}" class="absolute left-1 top-1 flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>\n          <div class="text-[10px] mb-1 text-white/85">${label}</div>\n          <div class="relative w-12 h-12 rounded-full border border-white/25 bg-white/10 shadow-inner cursor-[ns-resize]"\n               data-mix-knob data-stem="${st}" data-value="${v}" title="${label} Volume">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-4 bg-white/90 rounded pointer-events-none"\n                 data-mix-pointer style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] text-white/80"><span data-mix-readout="${st}">${v}</span>%</div>\n          <div class="mt-1 flex gap-1">\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>\n          </div>\n        </div>\n      `
 }
@@ -2883,9 +3189,9 @@ function volumeKnobHTML(st) {
 // controls cutoff frequency.  Mute and Solo buttons are included
 // along with the channel number.  Use data attributes to attach
 // event handlers.
-function mixChannelRowHTML(st) {
+function mixChannelRowHTML(st){
   const name = stemConfigs[st]?.name || st
-  const idx = STEM_ORDER.indexOf(st) + 1
+  const idx  = STEM_ORDER.indexOf(st) + 1
   // Retrieve current state values; initialise to defaults (50 => 0 dB) if undefined
   const volVal = stemControlValues[st]?.volume ?? 50
   const eq = stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
@@ -2940,45 +3246,89 @@ function mixChannelRowHTML(st) {
     </div>
   `
 }
-// Wrapper function for building floating mixer panel
-function buildFloatingMixerPanel() {
-  buildFloatingMixerPanelImpl(mixChannelRowHTML, updateMixerGlow, updateCardNumberColor)
+function buildFloatingMixerPanel(){
+  const tray=document.getElementById('mixerTray')
+  if (!tray) return
+  let grid = tray.querySelector('#mixerGrid')
+  // Create the grid element if it doesn't exist
+  if (!grid) {
+    grid = document.createElement('div')
+    grid.id = 'mixerGrid'
+    tray.querySelector('.mixer-inner')?.appendChild(grid)
+  }
+  // Always apply responsive classes: single column on extra small screens and two columns on small screens and above
+  // On desktop (sm and up) this results in two channels per row; on very small screens there is one channel per row
+  // Use two columns for the mixer on all screen sizes; maintain gap scaling on larger screens
+  // Use two columns on small screens and three columns on medium and larger screens for the mixer layout
+  // Display three channels per row on all screen sizes for consistency.
+  grid.className = 'grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 md:grid-cols-3'
+  // Populate with full-width channel rows
+  grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
+  // Update mixer glow and card number colours
+  STEM_ORDER.forEach(updateMixerGlow)
+  STEM_ORDER.forEach(updateCardNumberColor)
 }
-// Wrapper function for setting mixer open state
-function setMixerOpen(open) {
-  setMixerOpenImpl(open)
-}
+function setMixerOpen(open){
+  const tray=document.getElementById('mixerTray')
+  if (!tray) return
+  // Expand the mixer to full viewport height when open; collapse to zero when closed
+  tray.style.maxHeight = open ? '100vh' : '0px'
+  tray.dataset.open = open ? '1' : '0'
+  // Update player toggle button label + ARIA
+  const toggleBtn = document.getElementById('mixerToggleBtn')
+  if (toggleBtn) {
+    // Update the desktop label only.  The mobile label remains 'mixer' regardless of state.
+    const desktopSpan = toggleBtn.querySelector('span.hidden.sm\\:inline')
+    const mobileSpan  = toggleBtn.querySelector('span.inline.sm\\:hidden')
+    if (desktopSpan) desktopSpan.textContent = open ? 'close mixer' : 'open mixer'
+    // Do not modify the mobile label (mobileSpan) so it stays 'mixer'
+    toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
+  }
 
-// Wrapper function for toggling mixer open state
-function toggleMixerOpen() {
-  toggleMixerOpenImpl(setMixerOpen)
+  // When the mixer is open on mobile, prevent the page from scrolling or panning.
+  // Disable body overflow so touch interactions are confined to the mixer.
+  if (open) {
+    // Hide page scrolling and prevent gestures from propagating outside the mixer
+    document.body.style.overflow = 'hidden'
+    // When the mixer is open, disable touch-action on the tray so that horizontal drags are consumed by sliders and not by the page
+    tray.style.touchAction = 'none'
+    // Show overlay and close button when mixer is open
+    const overlay = document.getElementById('mixerOverlay')
+    if (overlay) overlay.classList.remove('hidden')
+    const closeBtn = document.getElementById('mixerCloseBtn')
+    if (closeBtn) closeBtn.classList.remove('hidden')
+  } else {
+    document.body.style.overflow = ''
+    tray.style.touchAction = ''
+    // Hide overlay and close button when mixer is closed
+    const overlay = document.getElementById('mixerOverlay')
+    if (overlay) overlay.classList.add('hidden')
+    const closeBtn = document.getElementById('mixerCloseBtn')
+    if (closeBtn) closeBtn.classList.add('hidden')
+  }
+}
+function toggleMixerOpen(){
+  const tray=document.getElementById('mixerTray')
+  if (!tray) return
+  const open = tray.dataset.open === '1'
+  setMixerOpen(!open)
 }
 
 /* ---------- Hotkey helpers ---------- */
-function toggleMute(st) {
+function toggleMute(st){
   stemMuteStates[st] = !stemMuteStates[st]
-  const vol = (stemControlValues[st]?.volume ?? 80) / 100
+  const vol = (stemControlValues[st]?.volume ?? 80)/100
   const target = stemMuteStates[st] ? 0 : vol
   if (stemNodes[st]?.gain) {
     const p = stemNodes[st].gain.gain, t = audioContext.currentTime
     p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
   }
   const icon = document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"] [data-lucide]`)
-  if (icon) {
-    icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2');
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
-      try {
-        if (window.safeCreateIcons) {
-          window.safeCreateIcons()
-        }
-      } catch (error) {
-        console.error('Error updating volume icon:', error)
-      }
-    }
-  }
+  if (icon) { icon.setAttribute('data-lucide', stemMuteStates[st] ? 'volume-x' : 'volume-2'); window.lucide?.createIcons() }
   reflectMuteSoloButtons(st); updateMixerGlow(st)
   updateCardNumberColor(st)
   updateMutedBorder(st)
+  updateDragButtonState(st)
 }
 
 /* ---------- Events ---------- */
@@ -2986,7 +3336,7 @@ function toggleMute(st) {
 // the app no longer exposes a master tempo slider or readout.
 
 // new helper functions for card numbers and history indicators
-function updateHistoryIndicator(st) {
+function updateHistoryIndicator(st){
   ensureStemHistory(st)
   const count = stemHistory[st]?.length || 0
   const active = (stemActiveIndex[st] != null && stemActiveIndex[st] >= 0) ? (stemActiveIndex[st] + 1) : 0
@@ -3008,7 +3358,53 @@ function updateTempoIndicator(st) {
   }
   el.textContent = `tempo: ${tempo}`
 }
-function updateCardNumberColor(st) {
+/**
+ * Update the drag button state with validation and file size information.
+ * The button is disabled when no sample is available or on non-Chromium browsers.
+ * @param {string} st - Stem identifier
+ */
+function updateDragButtonState(st) {
+  const dragBtn = document.querySelector(`[data-action="drag-stem"][data-stem="${st}"]`)
+  if (!dragBtn) return
+
+  const buf = stemLoop[st]
+  const hasActiveSample = (stemActiveIndex[st] ?? -1) >= 0 && buf
+  const isChromium = isChromiumBrowser()
+
+  // Validate buffer has actual data
+  const hasValidData = hasActiveSample && buf.length > 0 && buf.duration > 0
+
+  // Enable button only if valid data exists and browser is Chromium
+  dragBtn.disabled = !hasValidData || !isChromium
+
+  // Update tooltip with detailed information
+  if (!isChromium) {
+    dragBtn.title = 'Drag to DAW feature requires Chrome or Edge browser'
+  } else if (!hasActiveSample) {
+    dragBtn.title = 'Create a sample first to enable drag-to-DAW'
+  } else if (!hasValidData) {
+    dragBtn.title = 'Audio buffer is empty - please regenerate'
+  } else {
+    const filename = generateWavFilename(st)
+    // Calculate approximate WAV file size (16-bit stereo)
+    const estimatedSize = (buf.length * buf.numberOfChannels * 2 + 44)
+    const sizeKB = (estimatedSize / 1024).toFixed(1)
+    dragBtn.title = `Drag to DAW: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
+  }
+
+  // Hide the entire drag container on non-Chromium browsers
+  const container = document.querySelector(`[data-drag-container="${st}"]`)
+  if (container && !isChromium) {
+    container.style.display = 'none'
+  } else if (container && !hasValidData) {
+    // Visual feedback for empty buffer
+    dragBtn.style.opacity = '0.5'
+  } else if (container) {
+    dragBtn.style.opacity = '1'
+  }
+}
+
+function updateCardNumberColor(st){
   const nTakes = (stemHistory[st]?.length || 0)
   const muted = stemMuteStates[st]
   const color = (nTakes === 0 || muted) ? '#ef4444' : '#ffffff'
@@ -3023,13 +3419,13 @@ function updateCardNumberColor(st) {
     mixNumEl.style.borderColor = color
   }
 }
-function updateMutedBorder(st) {
+function updateMutedBorder(st){
   const card = document.querySelector(`[data-stem="${st}"]`)
   if (card) {
     if (stemMuteStates[st]) card.classList.add('sg-muted-border')
     else card.classList.remove('sg-muted-border')
   }
-  const mixCard = document.querySelector(`[data-mix-card="${st}"]`)
+  const mixCard=document.querySelector(`[data-mix-card="${st}"]`)
   if (mixCard) {
     if (stemMuteStates[st]) mixCard.classList.add('sg-muted-border')
     else mixCard.classList.remove('sg-muted-border')
@@ -3037,23 +3433,25 @@ function updateMutedBorder(st) {
 }
 
 function setupEventListeners() {
+  // Clean up blob URLs when page unloads to prevent memory leaks
+  window.addEventListener('beforeunload', () => {
+    Object.keys(stemBlobUrls).forEach(st => {
+      if (stemBlobUrls[st]) {
+        URL.revokeObjectURL(stemBlobUrls[st])
+        console.log(`Cleaned up blob URL for ${st} on page unload`)
+      }
+    })
+  })
+
   // Player Play/Pause
   const playBtn = document.getElementById('playBtn')
   if (playBtn) playBtn.addEventListener('click', async () => {
-    console.log('Play/Pause button clicked, isPlaying:', isPlaying)
     await ensureAudioContext()
-    if (isPlaying) {
-      // Pause playback using audioContext.suspend() to maintain position
-      pauseTransport()
-    } else {
-      // Resume or start playback
-      // If nodes exist, we're resuming; otherwise starting fresh
-      const hasNodes = Object.keys(stemNodes).length > 0
-      if (hasNodes) {
-        resumeTransport()
-      } else {
-        startTransport()
-      }
+    if (isPlaying) stopTransport()
+    else {
+      // Do not rebuild loops when starting transport.  Each stem retains its own
+      // loop duration and tempo.
+      startTransport()
     }
   })
 
@@ -3065,148 +3463,18 @@ function setupEventListeners() {
   const mixerCloseBtn = document.getElementById('mixerCloseBtn')
   if (mixerCloseBtn) mixerCloseBtn.addEventListener('click', () => setMixerOpen(false))
 
-  // Session setup button: allow user to reconfigure session settings
-  const sessionSetupBtn = document.getElementById('sessionSetupBtn')
-  if (sessionSetupBtn) {
-    sessionSetupBtn.addEventListener('click', () => {
-      // Reset session setup flag and clear localStorage
-      sessionSetupDone = false
-      clearSessionSettingsFromStorage()
-      // Show the session setup modal again
-      showSessionSetupModal()
-    })
-  }
-
   // Download all button: prompt the user to confirm downloading all files
   const downloadAllBtn = document.getElementById('downloadAllBtn')
   if (downloadAllBtn) {
-    downloadAllBtn.addEventListener('click', async () => {
-      // Check if user can download (requires email confirmation)
-      const { canUserDownload } = await import('./Auth/selectionPage.js')
-      const canDownload = await canUserDownload()
-
-      if (canDownload) {
-        // User can download, proceed with download
-        openDownloadConfirmModal()
-      } else {
-        // User cannot download, show restriction modal
-        const { showDownloadRestrictionModal } = await import('./Auth/selectionPage.js')
-        showDownloadRestrictionModal()
-      }
+    downloadAllBtn.addEventListener('click', () => {
+      openDownloadConfirmModal()
     })
-  }
-
-  // Save to database button: check auth and show appropriate modal
-  const saveToDbTrigger = document.getElementById('saveToDbTrigger')
-  if (saveToDbTrigger) {
-    saveToDbTrigger.addEventListener('click', handleSaveToDbClick)
-  }
-
-  // Save to database confirmation modal handlers
-  const saveToDbConfirmModal = document.getElementById('saveToDbConfirmModal')
-  if (saveToDbConfirmModal) {
-    const overlay = document.getElementById('saveToDbConfirmOverlay')
-    const closeBtn = document.getElementById('saveToDbConfirmCloseBtn')
-    const cancelBtn = document.getElementById('saveToDbConfirmCancelBtn')
-    const confirmBtn = document.getElementById('saveToDbConfirmBtn')
-
-    const closeModal = () => closeSaveToDbConfirmModal()
-
-    if (overlay) overlay.addEventListener('click', closeModal)
-    if (closeBtn) closeBtn.addEventListener('click', closeModal)
-    if (cancelBtn) cancelBtn.addEventListener('click', closeModal)
-    if (confirmBtn) {
-      confirmBtn.addEventListener('click', () => {
-        const stemsToSave = collectStemsToSave()
-        saveAllStemsToDatabase(stemsToSave)
-      })
-    }
-  }
-
-  // Save to database email modal handlers
-  const saveToDbEmailModal = document.getElementById('saveToDbEmailModal')
-  if (saveToDbEmailModal) {
-    const overlay = document.getElementById('saveToDbEmailOverlay')
-    const closeBtn = document.getElementById('saveToDbEmailCloseBtn')
-    const cancelBtn = document.getElementById('saveToDbEmailCancelBtn')
-    const continueBtn = document.getElementById('saveToDbEmailContinueBtn')
-    const resendBtn = document.getElementById('saveToDbResendEmailBtn')
-    const changeEmailBtn = document.getElementById('saveToDbChangeEmailBtn')
-    const emailInput = document.getElementById('saveToDbEmailInput')
-
-    const closeModal = () => closeSaveToDbEmailModal()
-
-    if (overlay) overlay.addEventListener('click', closeModal)
-    if (closeBtn) closeBtn.addEventListener('click', closeModal)
-    if (cancelBtn) cancelBtn.addEventListener('click', closeModal)
-
-    if (continueBtn) {
-      continueBtn.addEventListener('click', async () => {
-        const email = emailInput?.value?.trim()
-        if (!email) {
-          const errorEl = document.getElementById('saveToDbEmailError')
-          if (errorEl) {
-            errorEl.textContent = 'Please enter your email address'
-            errorEl.classList.remove('hidden')
-          }
-          return
-        }
-
-        // Validate email
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-        if (!emailRegex.test(email)) {
-          const errorEl = document.getElementById('saveToDbEmailError')
-          if (errorEl) {
-            errorEl.textContent = 'Please enter a valid email address'
-            errorEl.classList.remove('hidden')
-          }
-          return
-        }
-
-        // Send confirmation email
-        await sendSaveToDbConfirmationEmail(email)
-      })
-    }
-
-    if (resendBtn) {
-      resendBtn.addEventListener('click', async () => {
-        const email = emailInput?.value?.trim()
-        if (email) {
-          await sendSaveToDbConfirmationEmail(email)
-        }
-      })
-    }
-
-    if (changeEmailBtn) {
-      changeEmailBtn.addEventListener('click', () => {
-        const emailInputState = document.getElementById('saveToDbEmailInputState')
-        const checkEmailState = document.getElementById('saveToDbCheckEmailState')
-        if (emailInputState) emailInputState.classList.remove('hidden')
-        if (checkEmailState) checkEmailState.classList.add('hidden')
-      })
-    }
-
-    if (emailInput) {
-      emailInput.addEventListener('input', () => {
-        const errorEl = document.getElementById('saveToDbEmailError')
-        if (errorEl) {
-          errorEl.classList.add('hidden')
-          errorEl.textContent = ''
-        }
-      })
-
-      emailInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          continueBtn?.click()
-        }
-      })
-    }
   }
 
   // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
   const genCancelBtn = document.getElementById('generateSettingsCancelBtn')
-  const genStartBtn = document.getElementById('generateSettingsStartBtn')
-  const genOverlay = document.getElementById('generateSettingsOverlay')
+  const genStartBtn  = document.getElementById('generateSettingsStartBtn')
+  const genOverlay   = document.getElementById('generateSettingsOverlay')
   if (genCancelBtn) genCancelBtn.addEventListener('click', () => hideGenerateSettingsModal())
   if (genOverlay) genOverlay.addEventListener('click', () => hideGenerateSettingsModal())
   if (genStartBtn) genStartBtn.addEventListener('click', () => { applyGenerateSettingsAndStart() })
@@ -3238,23 +3506,17 @@ function setupEventListeners() {
   document.addEventListener('keydown', async (e) => {
     const ae = document.activeElement
     const tag = (ae && ae.tagName) || ''
-    const editing = (ae && (ae.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)))
+    const editing = (ae && (ae.isContentEditable || ['INPUT','TEXTAREA','SELECT'].includes(tag)))
     if (editing) return
 
-    // Space: toggle transport (pause/resume)
+    // Space: toggle transport
     if (e.code === 'Space' || e.key === ' ') {
       e.preventDefault()
       await ensureAudioContext()
-      if (isPlaying) {
-        pauseTransport()
-      } else {
-        // Resume if nodes exist, otherwise start fresh
-        const hasNodes = Object.keys(stemNodes).length > 0
-        if (hasNodes) {
-          resumeTransport()
-        } else {
-          startTransport()
-        }
+      if (isPlaying) stopTransport()
+      else {
+        // Do not rebuild loops on playback toggle.  Use existing per‑stem loops.
+        startTransport()
       }
       return
     }
@@ -3324,8 +3586,31 @@ function setupEventListeners() {
     })
   }
 
-  // Master Volume: controls the global output gain.  Uses imported function
-  initializeMasterVolumeSliderImpl(masterGain, ensureAudioContext, audioContext)
+  // Master Volume: controls the global output gain.  Updates the text display and ramps the master gain.
+  const masterVolSlider = document.getElementById('masterVolumeSlider')
+  const masterVolValue  = document.getElementById('masterVolumeValue')
+  if (masterVolSlider) {
+    // Initialize the slider display based on the current masterGain value, if available
+    if (masterVolValue && typeof masterGain?.gain?.value === 'number') {
+      const initVal = Math.round((masterGain.gain.value || 0) * 100)
+      masterVolSlider.value = String(initVal)
+      masterVolValue.textContent = `${initVal}%`
+    }
+    masterVolSlider.addEventListener('input', async e => {
+      const v = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0)))
+      // Update displayed percentage
+      if (masterVolValue) masterVolValue.textContent = `${v}%`
+      // Ensure the audio context exists and update the gain
+      await ensureAudioContext()
+      if (masterGain) {
+        const now = audioContext.currentTime
+        // Ramp smoothly to new gain value
+        masterGain.gain.cancelScheduledValues(now)
+        masterGain.gain.setValueAtTime(masterGain.gain.value, now)
+        masterGain.gain.linearRampToValueAtTime(v / 100, now + 0.02)
+      }
+    })
+  }
 
   // Key: root + accidental + mode
   const rootSelector = document.getElementById('rootSelector')
@@ -3380,7 +3665,7 @@ function setupEventListeners() {
         g.setValueAtTime(g.value, now)
         const muted = stemMuteStates[st]
         const soloedOther = (soloedStem && soloedStem !== st)
-        const val = (muted || soloedOther) ? 0 : (v / 100)
+        const val = (muted || soloedOther) ? 0 : (v/100)
         g.linearRampToValueAtTime(val, now + 0.01)
       }
       return
@@ -3421,6 +3706,23 @@ function setupEventListeners() {
 
   // Slider tooltip handling for mixer sliders.  Display a small popup showing dB or Hz while adjusting.
   let activeSlider = null
+  let tooltipUpdateFrame = null
+  let tooltipPendingSlider = null
+  let tooltipPendingX = 0
+  let tooltipPendingY = 0
+
+  function requestTooltipUpdate(sliderEl, pageX, pageY) {
+    tooltipPendingSlider = sliderEl
+    tooltipPendingX = pageX
+    tooltipPendingY = pageY
+    if (tooltipUpdateFrame !== null) return
+    tooltipUpdateFrame = requestAnimationFrame(() => {
+      tooltipUpdateFrame = null
+      if (tooltipPendingSlider) {
+        updateSliderTooltip(tooltipPendingSlider, tooltipPendingX, tooltipPendingY)
+      }
+    })
+  }
   // Helper to update tooltip content and position
   function updateSliderTooltip(sliderEl, pageX, pageY) {
     if (!sliderTooltipEl) return
@@ -3436,7 +3738,7 @@ function setupEventListeners() {
     } else if (sliderEl.dataset.mixFilter === 'cutoff') {
       // Show frequency
       const hz = knobToFreq(val)
-      text = hz >= 1000 ? `${(hz / 1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
+      text = hz >= 1000 ? `${(hz/1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
     }
     sliderTooltipEl.textContent = text
     // Position tooltip relative to pointer
@@ -3451,30 +3753,41 @@ function setupEventListeners() {
     if (t && (t.matches('input[data-mix-slider="volume"]') || t.matches('input[data-mix-eq]') || t.matches('input[data-mix-filter="cutoff"]'))) {
       activeSlider = t
       updateSliderTooltip(t, e.pageX, e.pageY)
+      tooltipPendingSlider = t
       if (sliderTooltipEl) sliderTooltipEl.style.opacity = '1'
     }
   })
   // Update tooltip position/value while dragging
   document.addEventListener('pointermove', e => {
     if (activeSlider) {
-      updateSliderTooltip(activeSlider, e.pageX, e.pageY)
+      requestTooltipUpdate(activeSlider, e.pageX, e.pageY)
     }
   })
   // Hide tooltip on pointerup/cancel
   document.addEventListener('pointerup', () => {
     if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
     activeSlider = null
+    tooltipPendingSlider = null
+    if (tooltipUpdateFrame !== null) {
+      cancelAnimationFrame(tooltipUpdateFrame)
+      tooltipUpdateFrame = null
+    }
   })
   document.addEventListener('pointercancel', () => {
     if (sliderTooltipEl) sliderTooltipEl.style.opacity = '0'
     activeSlider = null
+    tooltipPendingSlider = null
+    if (tooltipUpdateFrame !== null) {
+      cancelAnimationFrame(tooltipUpdateFrame)
+      tooltipUpdateFrame = null
+    }
   })
 
   /*
     -------------------------------------------------------------------------
     Dial plus/minus button handlers
 
-    The volume and endpoint infinite dials are flanked by "-" and "+" buttons.
+    The volume and endpoint infinite dials are flanked by "−" and "+" buttons.
     These buttons allow fine adjustments without dragging the dial.  Holding
     a button continuously steps the value up or down.  Each button has
     data-dial-type ("volume" or "endpoint"), data-dial-step ("-1" or "1"),
@@ -3489,7 +3802,7 @@ function setupEventListeners() {
   function applyDialButtonStep(btn) {
     if (!btn) return
     const type = btn.getAttribute('data-dial-type')
-    const st = btn.getAttribute('data-stem')
+    const st   = btn.getAttribute('data-stem')
     const stepAttr = btn.getAttribute('data-dial-step')
     const step = stepAttr ? parseFloat(stepAttr) || 0 : 0
     if (!type || !st || !step) return
@@ -3556,13 +3869,13 @@ function setupEventListeners() {
 
   // EQ knob gestures
   let activeEqKnob = null, startX = 0, startY = 0, startVal = 0
-  function onEqMove(e) { if (!activeEqKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, startVal + delta * 0.5)); setEqValue(activeEqKnob.stem, activeEqKnob.band, v) }
-  function onEqUp() { activeEqKnob = null; window.removeEventListener('pointermove', onEqMove); window.removeEventListener('pointerup', onEqUp) }
+  function onEqMove(e){ if(!activeEqKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,startVal+delta*0.5)); setEqValue(activeEqKnob.stem, activeEqKnob.band, v) }
+  function onEqUp(){ activeEqKnob=null; window.removeEventListener('pointermove',onEqMove); window.removeEventListener('pointerup',onEqUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-eq-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); const val = Number(k.getAttribute('data-value')) || EQ_DEFAULT
+    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); const val=Number(k.getAttribute('data-value'))||EQ_DEFAULT
     if (e.shiftKey) { setEqValue(st, band, 0); return }
-    activeEqKnob = { stem: st, band }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; startVal = val
+    activeEqKnob={stem:st, band}; startX=e.clientX??0; startY=e.clientY??0; startVal=val
     window.addEventListener('pointermove', onEqMove); window.addEventListener('pointerup', onEqUp)
   })
   document.addEventListener('dblclick', e => {
@@ -3572,13 +3885,13 @@ function setupEventListeners() {
 
   // Filter knob gestures
   let activeFilterKnob = null, fStartVal = 0
-  function onFilterMove(e) { if (!activeFilterKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, fStartVal + delta * 0.5)); setFilterCutoff(activeFilterKnob.stem, v) }
-  function onFilterUp() { activeFilterKnob = null; window.removeEventListener('pointermove', onFilterMove); window.removeEventListener('pointerup', onFilterUp) }
+  function onFilterMove(e){ if(!activeFilterKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,fStartVal+delta*0.5)); setFilterCutoff(activeFilterKnob.stem, v) }
+  function onFilterUp(){ activeFilterKnob=null; window.removeEventListener('pointermove',onFilterMove); window.removeEventListener('pointerup',onFilterUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-filter-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const val = Number(k.getAttribute('data-value')) || freqToKnob(FILTER_DEFAULT_HZ)
+    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value'))||freqToKnob(FILTER_DEFAULT_HZ)
     if (e.shiftKey) { setFilterCutoff(st, freqToKnob(FILTER_DEFAULT_HZ)); return }
-    activeFilterKnob = { stem: st }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; fStartVal = val
+    activeFilterKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; fStartVal=val
     window.addEventListener('pointermove', onFilterMove); window.addEventListener('pointerup', onFilterUp)
   })
   document.addEventListener('dblclick', e => {
@@ -3588,18 +3901,184 @@ function setupEventListeners() {
 
   // Mixer knobs
   let activeMixKnob = null, mStartVal = 0
-  function onMixMove(e) { if (!activeMixKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, mStartVal + delta * 0.5)); setVolumeUnified(activeMixKnob.stem, v) }
-  function onMixUp() { activeMixKnob = null; window.removeEventListener('pointermove', onMixMove); window.removeEventListener('pointerup', onMixUp) }
+  function onMixMove(e){ if(!activeMixKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,mStartVal+delta*0.5)); setVolumeUnified(activeMixKnob.stem, v) }
+  function onMixUp(){ activeMixKnob=null; window.removeEventListener('pointermove',onMixMove); window.removeEventListener('pointerup',onMixUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-mix-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const val = Number(k.getAttribute('data-value')) || (stemControlValues[st]?.volume ?? 80)
+    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value')) || (stemControlValues[st]?.volume ?? 80)
     if (e.shiftKey) { setVolumeUnified(st, 0); return }
-    activeMixKnob = { stem: st }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; mStartVal = val
+    activeMixKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; mStartVal=val
     window.addEventListener('pointermove', onMixMove); window.addEventListener('pointerup', onMixUp)
   })
   document.addEventListener('dblclick', e => {
     const k = e.target.closest('[data-mix-knob]'); if (!k) return
     const st = k.getAttribute('data-stem'); setVolumeUnified(st, stemConfigs[st]?.controls?.volume?.default ?? 80)
+  })
+
+  // Dragstart handler for drag-to-DAW functionality (Chromium only)
+  // Enhanced with File object and DataTransferItem for DAW compatibility
+  document.addEventListener('dragstart', e => {
+    const btn = e.target.closest('[data-action="drag-stem"]')
+    if (!btn) return
+
+    const st = btn.dataset.stem
+    if (!st) return
+
+    try {
+      // Check if stem has an active buffer
+      const buf = stemLoop[st]
+      if (!buf) {
+        console.warn(`No audio buffer for drag: ${st}`)
+        e.preventDefault()
+        return
+      }
+
+      // Validate buffer has actual data
+      if (buf.length === 0 || buf.duration === 0) {
+        console.error(`Empty buffer for drag: ${st}`)
+        e.preventDefault()
+        alert('Audio buffer is empty. Please regenerate the audio.')
+        return
+      }
+
+      console.log(`Preparing drag for ${st}: ${buf.length} samples, ${buf.duration.toFixed(2)}s`)
+
+      // Try to reuse cached WAV blob, or generate new one
+      let wavBlob = stemWavCache[st]
+      let isCached = false
+
+      if (!wavBlob || wavBlob.size === 0) {
+        // Generate new WAV blob with error handling
+        try {
+          wavBlob = encodeWAV(buf)
+          // Cache the blob for reuse
+          stemWavCache[st] = wavBlob
+        } catch (encodeErr) {
+          console.error('WAV encoding failed during drag:', encodeErr)
+          e.preventDefault()
+          alert(`Failed to prepare audio for drag: ${encodeErr.message}`)
+          return
+        }
+      } else {
+        isCached = true
+        console.log(`Using cached WAV blob for ${st}`)
+      }
+
+      // Verify blob has data
+      if (!wavBlob || wavBlob.size === 0) {
+        console.error('Generated WAV blob is empty')
+        e.preventDefault()
+        alert('Failed to generate audio file. The file is empty.')
+        return
+      }
+
+      console.log(`WAV blob ready: ${(wavBlob.size / 1024).toFixed(1)}KB ${isCached ? '(cached)' : '(new)'}`)
+
+      const filename = generateWavFilename(st)
+
+      // Create a File object from the Blob for better DAW compatibility
+      // File objects provide proper metadata that DAWs expect
+      const wavFile = new File([wavBlob], filename, {
+        type: 'audio/wav',
+        lastModified: Date.now()
+      })
+
+      console.log(`File object created: ${filename} (${(wavFile.size / 1024).toFixed(1)}KB)`)
+
+      // Clean up any existing blob URL for this stem
+      if (stemBlobUrls[st]) {
+        URL.revokeObjectURL(stemBlobUrls[st])
+        delete stemBlobUrls[st]
+      }
+
+      // Create new blob URL for fallback compatibility
+      const url = URL.createObjectURL(wavFile)
+      stemBlobUrls[st] = url
+
+      // Try to add file using DataTransferItem API (best for DAWs)
+      // This provides native file handling that DAWs can properly import
+      let addedViaItems = false
+      if (e.dataTransfer.items && typeof e.dataTransfer.items.add === 'function') {
+        try {
+          e.dataTransfer.items.add(wavFile)
+          addedViaItems = true
+          console.log(`Added file via DataTransferItem API for ${st}`)
+        } catch (itemErr) {
+          console.warn('DataTransferItem.add() failed, falling back to legacy methods:', itemErr)
+        }
+      }
+
+      // Set drag data in multiple formats for maximum compatibility
+      // These serve as fallbacks when DataTransferItem isn't available or supported
+      e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${url}`)
+      e.dataTransfer.setData('text/uri-list', url)
+      e.dataTransfer.setData('text/plain', url)
+      e.dataTransfer.effectAllowed = 'copy'
+
+      console.log(`Drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'} - ${filename}`)
+
+      // Create custom drag image with filename display
+      try {
+        const dragImg = document.createElement('div')
+        dragImg.style.cssText = `
+          position: absolute;
+          top: -9999px;
+          padding: 12px 16px;
+          background: rgba(0, 0, 0, 0.9);
+          color: white;
+          border-radius: 8px;
+          font-size: 14px;
+          font-weight: 500;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+          white-space: nowrap;
+          pointer-events: none;
+        `
+        dragImg.textContent = `🎵 ${filename}`
+        document.body.appendChild(dragImg)
+
+        e.dataTransfer.setDragImage(dragImg, 0, 0)
+
+        // Clean up drag image after a short delay
+        setTimeout(() => dragImg.remove(), 100)
+      } catch (imgErr) {
+        console.warn('Failed to set custom drag image:', imgErr)
+      }
+
+      // Add visual feedback
+      if (btn) {
+        btn.style.opacity = '0.7'
+      }
+
+    } catch (err) {
+      console.error('Drag preparation failed:', err)
+      e.preventDefault()
+      alert(`Failed to prepare audio for drag: ${err.message}`)
+    }
+  })
+
+  // Dragend handler to clean up and restore UI
+  document.addEventListener('dragend', e => {
+    const btn = e.target.closest('[data-action="drag-stem"]')
+    if (!btn) return
+
+    const st = btn.dataset.stem
+    if (!st) return
+
+    // Restore button appearance
+    btn.style.opacity = '1'
+
+    // Clean up blob URL after 5 minutes to ensure drag operation completes
+    // Extended timeout ensures DAWs have time to read the file data
+    // Some DAWs may delay file access during complex drag operations
+    setTimeout(() => {
+      if (stemBlobUrls[st]) {
+        URL.revokeObjectURL(stemBlobUrls[st])
+        delete stemBlobUrls[st]
+        console.log(`Cleaned up blob URL for ${st} after 5 minutes`)
+      }
+    }, 300000) // 5 minutes = 300,000ms
+
+    console.log(`Drag operation completed for ${st}`)
   })
 
   // Click actions (Generate / Download / Filter mode / options overlay / history / waveform navigation)
@@ -3614,24 +4093,16 @@ function setupEventListeners() {
     {
       const cardEl = e.target.closest('[data-stem]')
       if (cardEl) {
-        // Allow mute/solo buttons to work by checking if this is specifically a mute/solo button
-        const isMuteSoloButton = e.target.closest('[data-action="mute-stem"], [data-action="solo-stem"]')
-
-        // If it's a mute/solo button, let it pass through to the action handler below
-        if (isMuteSoloButton) {
-          // Don't handle it here, let the action handler below process it
-        } else {
-          // For other clicks, only toggle mute if not on interactive elements
-          const isFormElement = e.target.closest('input, label, select, textarea, .infinite-dial')
-          const isWaveform = e.target.closest('.waveform-canvas')
-          const isOtherButton = e.target.closest('button, [data-action]')
-
-          if (!isFormElement && !isWaveform && !isOtherButton) {
-            const st = cardEl.getAttribute('data-stem')
-            if (st) {
-              toggleMute(st)
-              return
-            }
+        // Do not toggle if the click is on a button, an element with a data-action,
+        // a form element, or an infinite dial.  This prevents the volume and
+        // endpoint dials from muting/unmuting the stem when clicked.
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
+        const isWaveform = e.target.closest('.waveform-canvas')
+        if (!isInteractive && !isWaveform) {
+          const st = cardEl.getAttribute('data-stem')
+          if (st) {
+            toggleMute(st)
+            return
           }
         }
       }
@@ -3641,22 +4112,13 @@ function setupEventListeners() {
     {
       const mixCardEl = e.target.closest('[data-mix-card]')
       if (mixCardEl) {
-        // Allow mute/solo buttons to work
-        const isMuteSoloButton = e.target.closest('[data-action="mix-mute"], [data-action="mix-solo"]')
-
-        if (isMuteSoloButton) {
-          // Don't handle it here, let the action handler below process it
-        } else {
-          // For other clicks, only toggle mute if not on interactive elements
-          const isFormElement = e.target.closest('input, label, select, textarea, .infinite-dial')
-          const isOtherButton = e.target.closest('button, [data-action]')
-
-          if (!isFormElement && !isOtherButton) {
-            const st = mixCardEl.getAttribute('data-mix-card')
-            if (st) {
-              toggleMute(st)
-              return
-            }
+        // Prevent toggling if the click is on a slider, button or other interactive element
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
+        if (!isInteractive) {
+          const st = mixCardEl.getAttribute('data-mix-card')
+          if (st) {
+            toggleMute(st)
+            return
           }
         }
       }
@@ -3706,9 +4168,6 @@ function setupEventListeners() {
       if (action === 'close-history' && st) { toggleHistoryDrawer(st, false); return }
       if (action === 'mix-mute' || action === 'mute-stem') { toggleMute(st); return }
       if (action === 'mix-solo' || action === 'solo-stem') {
-        // Ensure audio context is ready before manipulating audio nodes
-        await ensureAudioContext()
-
         // Custom solo logic: if the stem is muted, soloing will unmute it and
         // remember its previous mute state.  When unsoloing, the previous
         // mute state is restored.  Only one stem can be soloed at a time.
@@ -3737,7 +4196,7 @@ function setupEventListeners() {
             target = stemMuteStates[name] ? 0 : vol
           }
           const n = stemNodes[name]
-          if (n?.gain && audioContext && audioContext.state !== 'closed') {
+          if (n?.gain) {
             const p = n.gain.gain, t = audioContext.currentTime
             p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(target, t + 0.01)
           }
@@ -3763,6 +4222,7 @@ function setupEventListeners() {
           selectStemVersion(st, newIndex)
           updateHistoryIndicator(st)
           updateCardNumberColor(st)
+          updateDragButtonState(st)
         }
         return
       }
@@ -3776,6 +4236,7 @@ function setupEventListeners() {
           selectStemVersion(st, newIndex)
           updateHistoryIndicator(st)
           updateCardNumberColor(st)
+          updateDragButtonState(st)
         }
         return
       }
@@ -3807,7 +4268,7 @@ function setupEventListeners() {
     const target = e.target
     if (!target || !target.getAttribute) return
     const action = target.getAttribute('data-action')
-    const st = target.getAttribute('data-stem')
+    const st     = target.getAttribute('data-stem')
     if (!st || !action) return
     if (action === 'adjust-volume') {
       handleVolumeSlider(st, target.value)
@@ -3826,71 +4287,80 @@ function setupEventListeners() {
 }
 
 /* ---------- EQ/Filter setters ---------- */
-function setEqValue(st, band, newVal) {
-  const v = Math.max(0, Math.min(100, Math.round(newVal)))
+function setEqValue(st, band, newVal){
+  const v=Math.max(0, Math.min(100, Math.round(newVal)))
   stemEqValues[st] = { ...(stemEqValues[st] || {}), [band]: v }
-  const knob = document.querySelector(`[data-eq-knob][data-stem="${st}"][data-band="${band}"]`)
+  const knob=document.querySelector(`[data-eq-knob][data-stem="${st}"][data-band="${band}"]`)
   if (knob) updateEqKnobVisual(knob, v)
   updateEqReadout(st, band)
-  const eq = stemNodes[st]?.eq
+  const eq=stemNodes[st]?.eq
   if (eq) applyEqValuesToNodes(eq, stemEqValues[st])
 }
-function setFilterCutoff(st, newVal) {
-  const v = Math.max(0, Math.min(100, Math.round(newVal)))
+function setFilterCutoff(st, newVal){
+  const v=Math.max(0, Math.min(100, Math.round(newVal)))
   stemFilterValues[st] = { ...(stemFilterValues[st] || {}), cutoff: v }
-  const knob = document.querySelector(`[data-filter-knob][data-stem="${st}"]`)
+  const knob=document.querySelector(`[data-filter-knob][data-stem="${st}"]`)
   if (knob) updateFilterKnobVisual(knob, v)
   updateFilterReadout(st)
-  const filter = stemNodes[st]?.filter
+  const filter=stemNodes[st]?.filter
   if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
 }
-function toggleFilterMode(st) {
-  const current = (stemFilterValues[st] || {}).mode || 'lowpass'
-  const next = current === 'lowpass' ? 'highpass' : 'lowpass'
+function toggleFilterMode(st){
+  const current=(stemFilterValues[st]||{}).mode || 'lowpass'
+  const next=current==='lowpass' ? 'highpass' : 'lowpass'
   stemFilterValues[st] = { ...(stemFilterValues[st] || {}), mode: next }
   updateFilterModeButton(st)
-  const filter = stemNodes[st]?.filter
+  const filter=stemNodes[st]?.filter
   if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
 }
 
 /* =========================================================
    History UI
    ========================================================= */
-function updateHistoryBadge(st) {
-  const badgeEls = document.querySelectorAll(`[data-history-count="${st}"]`)
-  const n = stemHistory[st]?.length || 0
-  badgeEls.forEach(badge => { badge.textContent = n; badge.style.opacity = n > 0 ? '1' : '0.4' })
+function updateHistoryBadge(st){
+  const badgeEls=document.querySelectorAll(`[data-history-count="${st}"]`)
+  const n=stemHistory[st]?.length || 0
+  badgeEls.forEach(badge => { badge.textContent=n; badge.style.opacity = n > 0 ? '1' : '0.4' })
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
+  updateDragButtonState(st)
 }
-function toggleHistoryDrawer(st, forceOpen = null) {
-  const drawer = document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
-  const isOpen = drawer.classList.contains('open')
-  const open = forceOpen === null ? !isOpen : !!forceOpen
+function toggleHistoryDrawer(st, forceOpen=null){
+  const drawer=document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
+  const isOpen=drawer.classList.contains('open')
+  const open=forceOpen===null ? !isOpen : !!forceOpen
   drawer.classList.toggle('open', open)
   drawer.style.maxHeight = open ? '160px' : '0px'
   if (open) renderHistoryDrawer(st)
 }
-function renderHistoryDrawer(st) {
-  const list = document.querySelector(`[data-history-list="${st}"]`); if (!list) return
+function renderHistoryDrawer(st){
+  const list=document.querySelector(`[data-history-list="${st}"]`); if (!list) return
   ensureStemHistory(st)
-  list.innerHTML = ''
-  const takes = stemHistory[st]
+  list.innerHTML=''
+  const takes=stemHistory[st]
   if (!takes.length) { list.innerHTML = `<div class="text-xs text-white/60 px-2 py-6">No takes yet. Create some!</div>`; return }
-  const active = stemActiveIndex[st]
+  const active=stemActiveIndex[st]
   takes.forEach((take, i) => {
-    const item = document.createElement('button')
-    item.className = `relative shrink-0 w-28 h-16 rounded-md border ${i === active ? 'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]' : 'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
+    const item=document.createElement('button')
+    item.className=`relative shrink-0 w-28 h-16 rounded-md border ${i===active?'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]':'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
     item.setAttribute('data-take-index', i)
     item.setAttribute('data-stem', st)
-    item.title = `v${i + 1} • ${take.tempo} BPM • ${take.bars} bars`
+    item.title=`v${i+1} • ${take.tempo} BPM • ${take.bars} bars${take.isSeparated ? ' • Separated' : ''}`
 
-    const c = document.createElement('canvas'); c.width = 112; c.height = 64; c.className = 'w-full h-full rounded-md'
+    const c=document.createElement('canvas'); c.width=112; c.height=64; c.className='w-full h-full rounded-md'
     item.appendChild(c)
 
-    const meta = document.createElement('div')
-    meta.className = 'absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
-    meta.textContent = `v${i + 1} • ${take.tempo} • ${take.bars}b`
+    // Add separated badge if this is a separated take
+    if (take.isSeparated) {
+      const badge=document.createElement('div')
+      badge.className='absolute top-1 right-1 px-1.5 py-0.5 text-[9px] leading-none bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded flex items-center gap-0.5'
+      badge.innerHTML='<svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg><span>SEP</span>'
+      item.appendChild(badge)
+    }
+
+    const meta=document.createElement('div')
+    meta.className='absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
+    meta.textContent=`v${i+1} • ${take.tempo} • ${take.bars}b`
     item.appendChild(meta)
 
     list.appendChild(item)
@@ -3901,27 +4371,29 @@ function renderHistoryDrawer(st) {
     drawTinyWaveform(c, take.raw)
   })
 }
-function selectStemVersion(st, index) {
+function selectStemVersion(st, index){
   ensureStemHistory(st)
-  const takes = stemHistory[st]; if (!takes || index < 0 || index >= takes.length) return
-  stemActiveIndex[st] = index
-  const take = takes[index]
+  const takes=stemHistory[st]; if (!takes || index<0 || index>=takes.length) return
+  stemActiveIndex[st]=index
+  const take=takes[index]
   // Use the stored tempo and bar count from the take itself to build a
   // loop that matches the original generation.  Do not reference the current
   // master tempo, as each stem may have been generated at a different BPM.
-  const tempo = take.tempo
-  const bars = take.bars
-  stemRaw[st] = take.raw
+  const tempo  = take.tempo
+  const bars   = take.bars
+  stemRaw[st]  = take.raw
   // Loop directly from the raw audio; do not rebuild loop based on tempo
   stemLoop[st] = take.raw
   // Record the loop duration for this stem
   stemLoopDuration[st] = take.raw.duration
-  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  // Invalidate cached WAV since we've switched to different audio
+  invalidateStemCache(st)
+  const canvas=document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
-    const cfg = stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+    const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
   }
-  const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
-  if (statusEl) statusEl.textContent = `Selected v${index + 1} (${tempo} BPM • ${bars} bars)`
+  const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
+  if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${bars} bars)`
   renderHistoryDrawer(st)
   // Restore the saved endpoint factor for this take (if present).  If not present, default to 1.
   {
@@ -3936,349 +4408,46 @@ function selectStemVersion(st, index) {
   if (isPlaying) restartStemNextBoundary(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
+  updateDragButtonState(st)
   updateTempoIndicator(st)
 }
 
 /* =========================================================
    App init + navigation
    ========================================================= */
-function showPage(pageId) {
-  try { console.log('[router] showPage ->', pageId) } catch { }
-  const pages = ['login-page', 'selection-page', 'techno-generator-page', 'reset-password-page', 'confirm-email-page', 'profile-page']
-  pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
-  const targetPage = document.getElementById(pageId);
-  if (targetPage) {
-    targetPage.classList.remove('hidden')
-    console.log('[router] Page shown:', pageId, 'Element:', targetPage, 'Classes:', targetPage.className)
-  } else {
-    console.error('[router] Page not found:', pageId)
-  }
-
-  // Show studio header only on studio pages (techno-generator-page)
-  const studioHeader = document.getElementById('studioHeader')
-  const showStudioHeader = pageId === 'techno-generator-page'
-  if (studioHeader) studioHeader.classList.toggle('hidden', !showStudioHeader)
+function showPage(pageId){
+  const pages=['login-page', 'selection-page', 'techno-generator-page']
+  pages.forEach(id => { const page=document.getElementById(id); if (page) page.classList.add('hidden') })
+  const targetPage=document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
 
   // Show bottom player only on Studio page
-  const playerBar = document.getElementById('playerBar')
+  const playerBar=document.getElementById('playerBar')
   const showDock = pageId === 'techno-generator-page'
   if (playerBar) playerBar.classList.toggle('hidden', !showDock)
   if (!showDock) setMixerOpen(false)
-
-  // Show guest mode notice on techno generator page if user is not authenticated
-  if (pageId === 'techno-generator-page') {
-    updateGuestModeNotice()
-  }
 }
-
-
-/**
- * Update guest mode notice visibility based on authentication status
- */
-async function updateGuestModeNotice() {
-  const guestModeNotice = document.getElementById('guestModeNotice')
-  if (!guestModeNotice) return
-
-  const user = getAuthGuard().getCurrentUser()
-  if (user) {
-    // User is authenticated, hide guest mode notice
-    guestModeNotice.classList.add('hidden')
-  } else {
-    // User is in guest mode, show notice
-    guestModeNotice.classList.remove('hidden')
-  }
-}
-
-// Make showPage and initTechnoGenerator globally accessible
-window.showPage = showPage
-window.initTechnoGenerator = initTechnoGenerator
-function setupNavigationListeners() {
-  // Note: loginBtn is now handled by setupLoginPage() in Auth/loginPage.js
+function setupNavigationListeners(){
+  const loginBtn = document.getElementById('loginBtn')
+  if (loginBtn) loginBtn.addEventListener('click', () => { showPage('selection-page') })
   const launchTechno = document.getElementById('launchTechno')
-  if (launchTechno) launchTechno.addEventListener('click', () => {
-    showPage('techno-generator-page');
-    initTechnoGenerator()
-  })
-  const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => { })
-  const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => { })
+  if (launchTechno) launchTechno.addEventListener('click', () => { showPage('techno-generator-page'); initTechnoGenerator() })
+  const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => {})
+  const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => {})
 }
-
-function setupRouteHandling() {
-  // Handle hash changes for routing
-  window.addEventListener('hashchange', handleHashChange)
-
-  // Handle initial hash on page load
-  handleHashChange()
-
-}
-
-/**
- * Handle email verification when user clicks confirmation link
- */
-async function handleEmailVerification() {
-  try {
-    console.log('[email-verification] Starting email verification process')
-
-    // Parse URL parameters to get verification tokens
-    const urlParams = new URLSearchParams(window.location.search)
-    const hashParams = new URLSearchParams(window.location.hash.split('?')[1] || '')
-
-    // Check for new token format (from custom email template)
-    const token = urlParams.get('token') || hashParams.get('token')
-    const email = urlParams.get('email') || hashParams.get('email')
-
-    // Check for old token format (from Supabase default)
-    const accessToken = urlParams.get('access_token') || hashParams.get('access_token')
-    const refreshToken = urlParams.get('refresh_token') || hashParams.get('refresh_token')
-    const type = urlParams.get('type') || hashParams.get('type')
-
-    console.log('[email-verification] Found tokens:', {
-      hasToken: !!token,
-      hasEmail: !!email,
-      hasAccessToken: !!accessToken,
-      hasRefreshToken: !!refreshToken,
-      type
-    })
-
-    // Import supabase client
-    const { supabase } = await import('./Auth/index.js')
-
-    let data, error
-
-    // Handle new token format (token hash for verifyOtp)
-    if (token) {
-      console.log('[email-verification] Using new token format (verifyOtp)')
-
-      const result = await supabase.auth.verifyOtp({
-        token_hash: token,
-        type: 'signup'
-      })
-
-      data = result.data
-      error = result.error
-
-    }
-    // Handle old token format (access_token/refresh_token for setSession)
-    else if (accessToken && refreshToken) {
-      console.log('[email-verification] Using old token format (setSession)')
-
-      if (type !== 'signup') {
-        console.log('[email-verification] Not a signup verification, type:', type)
-        return
-      }
-
-      const result = await supabase.auth.setSession({
-        access_token: accessToken,
-        refresh_token: refreshToken
-      })
-
-      data = result.data
-      error = result.error
-
-    } else {
-      console.log('[email-verification] No verification tokens found')
-      return
-    }
-
-    if (error) {
-      console.error('[email-verification] Failed to verify email:', error)
-      showEmailVerificationError('Email verification failed. Please try again.')
-      return
-    }
-
-    console.log('[email-verification] Email verified successfully:', data.user?.email)
-
-    // Show success message and redirect to login
-    showEmailVerificationSuccess('Email verified successfully! You can now log in.')
-
-    // Store verification success flag for login page
-    localStorage.setItem('emailVerified', 'true')
-    localStorage.setItem('verifiedEmail', data.user?.email || email || '')
-
-    // Clear URL parameters and redirect to login after a delay
-    setTimeout(() => {
-      window.location.hash = '#login'
-    }, 3000)
-
-  } catch (error) {
-    console.error('[email-verification] Unexpected error:', error)
-    showEmailVerificationError('An unexpected error occurred during email verification.')
-  }
-}
-
-/**
- * Show email verification success message
- */
-function showEmailVerificationSuccess(message) {
-  const page = document.getElementById('confirm-email-page')
-  if (!page) return
-
-  // Update the page content to show success message
-  page.innerHTML = `
-    <div class="min-h-screen flex items-center justify-center p-4">
-      <div class="max-w-md w-full text-center">
-        <div class="glass card-border rounded-2xl p-8">
-          <div class="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <i data-lucide="check-circle" class="w-8 h-8 text-green-400"></i>
-          </div>
-          <h2 class="text-2xl font-bold text-white mb-4">Email Verified!</h2>
-          <p class="text-white/70 mb-6">${message}</p>
-          <div class="text-sm text-white/50">
-            Redirecting to login page...
-          </div>
-        </div>
-      </div>
-    </div>
-  `
-
-  // Initialize Lucide icons safely
-  if (window.safeCreateIcons) {
-    window.safeCreateIcons()
-  }
-}
-
-/**
- * Show email verification error message
- */
-function showEmailVerificationError(message) {
-  const page = document.getElementById('confirm-email-page')
-  if (!page) return
-
-  // Update the page content to show error message
-  page.innerHTML = `
-    <div class="min-h-screen flex items-center justify-center p-4">
-      <div class="max-w-md w-full text-center">
-        <div class="glass card-border rounded-2xl p-8">
-          <div class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-            <i data-lucide="x-circle" class="w-8 h-8 text-red-400"></i>
-          </div>
-          <h2 class="text-2xl font-bold text-white mb-4">Verification Failed</h2>
-          <p class="text-white/70 mb-6">${message}</p>
-          <a href="#login" class="inline-block px-6 py-3 bg-purple-500 hover:bg-purple-600 rounded-lg text-white font-medium transition-colors">
-            Go to Login
-          </a>
-        </div>
-      </div>
-    </div>
-  `
-
-  // Initialize Lucide icons safely
-  if (window.safeCreateIcons) {
-    window.safeCreateIcons()
-  }
-}
-
-function handleHashChange() {
-  const rawHash = window.location.hash.substring(1) // Remove the # symbol
-  try { console.log('[router] handleHashChange rawHash=', rawHash) } catch { }
-  const baseRoute = rawHash.split('?')[0].replace(/\/$/, '') // support params like reset-password?x=1
-  try { console.log('[router] baseRoute=', baseRoute) } catch { }
-
-  // Check for Supabase password reset parameters in hash
-  const hashParams = new URLSearchParams(rawHash.split('?')[1] || '')
-  const hasResetToken = hashParams.get('token') || hashParams.get('access_token')
-  const hasResetEmail = hashParams.get('email')
-  try { console.log('[router] reset params in hash:', { hasToken: !!hasResetToken, hasEmail: !!hasResetEmail }) } catch { }
-
-  switch (baseRoute) {
-    case 'login':
-      showPage('login-page')
-      break
-    case 'selection':
-      showPage('selection-page')
-      break
-    case 'studio':
-    case 'techno-generator':
-      showPage('techno-generator-page')
-      initTechnoGenerator()
-      break
-    case 'reset-password':
-      try { console.log('[router] showing reset-password-page') } catch { }
-      showPage('reset-password-page')
-      console.log('[router] Reset password page should be visible now')
-      // Force a small delay to ensure DOM is ready
-      setTimeout(() => {
-        const page = document.getElementById('reset-password-page')
-        console.log('[router] Reset password page element:', page)
-        console.log('[router] Reset password page classes:', page?.className)
-        console.log('[router] Reset password page hidden:', page?.classList.contains('hidden'))
-      }, 100)
-      break
-    case 'confirm-email':
-      showPage('confirm-email-page')
-      // Handle email verification tokens if present
-      handleEmailVerification()
-      break
-    case 'profile':
-      // Check if user is authenticated before showing profile page
-      const authGuard = getAuthGuard()
-      if (!authGuard.getIsAuthenticated()) {
-        // Redirect to homepage (techno generator page) if not authenticated
-        showPage('techno-generator-page')
-        initTechnoGenerator()
-        break
-      }
-      showPage('profile-page')
-      break
-    default:
-      // If the hash contains auth params, route to the reset page
-      if (/access_token|type=recovery|token=/.test(rawHash)) {
-        showPage('reset-password-page')
-        break
-      }
-      // Default to techno generator page if no valid hash
-      if (!baseRoute) {
-        showPage('techno-generator-page')
-        initTechnoGenerator()
-      }
-      break
-  }
-}
-
-
-
-function initTechnoGenerator() {
+function initTechnoGenerator(){
+  console.log('🎛️ Initializing Techno Generator…')
   injectGlobalStyles()
   initializeStemControlValues()
-
-  // Check authentication status for techno generator page
-  setTimeout(async () => {
-    try {
-      const { checkAuthenticationStatus } = await import('./Auth/tecnoGeneratorPage.js')
-      if (typeof checkAuthenticationStatus === 'function') {
-        checkAuthenticationStatus()
-      }
-    } catch (error) {
-      console.error('Error loading techno generator auth:', error)
-    }
-  }, 100)
 
   // Build cards
   const container = document.getElementById('stem-container')
   if (container && PROMPTS_MODE === 'builder') {
     container.innerHTML = ''
     STEM_ORDER.forEach(st => container.appendChild(createBuilderStemCard(st, stemConfigs[st])))
-
-    // Re-initialize Lucide icons after cards are created
-    setTimeout(() => {
-      if (window.initializeIcons) {
-        window.initializeIcons()
-      } else if (window.safeCreateIcons) {
-        window.safeCreateIcons()
-      }
-    }, 50)
   }
 
   setupEventListeners()
-
-  // Initialize Lucide icons with a delay to ensure templates are loaded
-  setTimeout(() => {
-    if (window.initializeIcons) {
-      window.initializeIcons()
-    } else if (window.safeCreateIcons) {
-      window.safeCreateIcons()
-    }
-  }, 200) // Small delay to ensure templates are fully loaded
+  window.lucide?.createIcons()
 
   // Build docked mixer
   buildFloatingMixerPanel()
@@ -4320,146 +4489,26 @@ function initTechnoGenerator() {
     updateCardNumberColor(st)
     updateMutedBorder(st)
     updateTempoIndicator(st)
+    updateDragButtonState(st)
   })
   // Present the session setup modal if settings have not been chosen
   // yet.  This ensures the user sets the master tempo, bars and key
   // before generating any stems.  The modal will only appear once
   // per session.
   showSessionSetupModal()
+  console.log('✅ App ready (session ' + SESSION_TAG + ')')
 }
 
-export async function initApp() {
-
-
-  try {
-    // Initialize authentication guard
-    await initializeAuthGuard()
-
-    // Set up auth state change listener
-    addAuthListener((event, session, user) => {
-      // handleAuthStateChange(event, session, user)  
-    })
-
-    // Set up navigation listeners
-    setupNavigationListeners()
-    // Enable hash-based routing for deep links like #reset-password?access_token=...
-    setupRouteHandling()
-
-    // Set up UI components
-    // Safe Lucide icon initialization using global safe function
-    if (window.safeCreateIcons) {
-      const success = window.safeCreateIcons()
-      if (!success) {
-        console.warn('Lucide icons initialization failed in main app')
-        if (window.initializeFallbackIcons) {
-          window.initializeFallbackIcons()
-        }
-      }
-    }
-    setupHelpModal()
-    setupUserMenu() // Setup main header user menu
-    updateUserMenuVisibility() // Set initial visibility based on auth state
-    setupLoginPage()
-    setupResetPasswordPage()
-    setupSelectionPage()
-    setupTechnoGeneratorPage()
-    setupProfilePage()
-
-    // Determine initial page based on URL hash first, then auth state
-    const hash = window.location.hash.substring(1)
-    const authGuard = getAuthGuard()
-    const isAuthenticated = authGuard.isAuthenticated
-
-    if (hash) {
-      // If there's a hash, use hash-based routing
-      handleHashChange()
-    } else {
-      // If no hash, show techno generator page by default
-      console.log('🎛️ Showing techno generator page')
-      showPage('techno-generator-page')
-      initTechnoGenerator()
-    }
-
-    // console.log('✅ Navigation system ready')
-  } catch (error) {
-    console.error('❌ App initialization error:', error)
-    // Fallback to login page if auth initialization fails
-    showPage('login-page')
-  }
-}
-
-/**
- * Handle authentication state changes
- */
-async function handleAuthStateChange(event, session, user) {
-  try {
-    if (event === 'SIGNED_IN' && user) {
-
-      // Initialize user profile
-      await initializeUserProfile(user)
-
-      // Update user menu with user info
-      await updateUserMenu()
-
-      // Show user menu since user is now authenticated
-      updateUserMenuVisibility()
-
-      // Dispatch auth state change event for other components
-      window.dispatchEvent(new CustomEvent('authStateChanged', {
-        detail: { event, session, user }
-      }))
-
-      // Update guest mode notice if on techno generator page
-      updateGuestModeNotice()
-
-      // Only navigate if we're not already on the selection page and there's no hash
-      const currentHash = window.location.hash.substring(1)
-      const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
-
-      // Don't redirect if we're on the reset-password page (user is in the middle of resetting)
-      if (currentPage === 'reset-password-page') {
-        console.log('User is on reset-password page, not redirecting')
-        return
-      }
-
-      if (!currentHash && currentPage !== 'techno-generator-page') {
-        showPage('techno-generator-page')
-        initTechnoGenerator()
-      } else {
-      }
-    } else if (event === 'SIGNED_OUT') {
-      console.log('🚪 SIGNED_OUT event received, handling logout...')
-
-      // Clear user menu
-      await updateUserMenu()
-
-      // Hide user menu since user is no longer authenticated
-      updateUserMenuVisibility()
-
-      // Dispatch auth state change event for other components
-      window.dispatchEvent(new CustomEvent('authStateChanged', {
-        detail: { event, session: null, user: null }
-      }))
-
-      // Update guest mode notice if on techno generator page
-      updateGuestModeNotice()
-
-      // Only navigate if we're not already on the login page and there's no hash
-      const currentHash = window.location.hash.substring(1)
-      const currentPage = document.querySelector('[id$="-page"]:not(.hidden)')?.id
-
-      console.log('🚪 Current page:', currentPage, 'Current hash:', currentHash)
-
-      if (!currentHash && currentPage !== 'login-page') {
-        console.log('🚪 Redirecting to login page...')
-        showPage('login-page')
-      } else {
-        console.log('🚪 Not redirecting - already on login page or hash present')
-      }
-    }
-  } catch (error) {
-    console.error('Error handling auth state change:', error)
-  }
+export async function initApp(){
+  console.log('🎬 Initializing App Navigation System…')
+  setupNavigationListeners()
+  // Start directly on the genre selection page instead of the login page
+  showPage('selection-page')
+  window.lucide?.createIcons()
+  setupHelpModal()
+  // Initialise the user menu in the header
+  setupUserMenu()
+  console.log('✅ Navigation system ready')
 }
 
 // -----------------------------------------------------------------------------
@@ -4480,13 +4529,44 @@ function customHeaderActionButtonsMobileHTML(st) {
 /* =========================================================
    Global styles
    ========================================================= */
-// injectGlobalStyles moved to ./UI/styles.js
+function injectGlobalStyles(){
+  if (document.getElementById('sg-global-styles')) return
+  const style=document.createElement('style')
+  style.id='sg-global-styles'
+  style.textContent=
+    `@keyframes soft-pulse-glow {\n      0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.28), 0 0 16px rgba(255,255,255,0.12); transform: translateY(0) scale(1); }\n      50%      { box-shadow: 0 0 0 12px rgba(255,255,255,0), 0 0 22px rgba(255,255,255,0.22); transform: translateY(-0.5px) scale(1.012); }\n    }\n    #playBtn { animation: soft-pulse-glow 2.6s ease-in-out infinite; transition: transform 160ms ease, box-shadow 160ms ease; will-change: transform, box-shadow; }\n    #playBtn:hover { transform: translateY(-1px) scale(1.02); }\n    #playBtn:active { transform: translateY(0); }\n    .sg-mix-card.sg-glow { animation: soft-pulse-glow 2.6s ease-in-out infinite; }\n    .sg-toggle-active { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); }`;
+  document.head.appendChild(style)
+}
 
 /* =========================================================
    Help Modal setup
    ========================================================= */
-// moved to ./UI/helpModal.js
-// setupHelpModal moved to ./UI/helpModal.js
+function setupHelpModal(){
+  const helpBtn = document.getElementById('helpBtn')
+  const helpModal = document.getElementById('helpModal')
+  const overlay = document.getElementById('helpModalOverlay')
+  const closeBtn = document.getElementById('helpModalCloseBtn')
+  if (!helpModal) return
+  function openModal(){
+    helpModal.classList.remove('hidden')
+    requestAnimationFrame(() => {
+      helpModal.style.opacity = '1'
+    })
+    // Disable body scroll while help modal is open
+    document.body.style.overflow = 'hidden'
+  }
+  function closeModal(){
+    helpModal.style.opacity = '0'
+    setTimeout(() => {
+      helpModal.classList.add('hidden')
+      // Restore body scroll when help modal is closed
+      document.body.style.overflow = ''
+    }, 300)
+  }
+  if (helpBtn) helpBtn.addEventListener('click', openModal)
+  if (overlay) overlay.addEventListener('click', closeModal)
+  if (closeBtn) closeBtn.addEventListener('click', closeModal)
+}
 
 // -----------------------------------------------------------------------------
 // Note: The default headerActionButtonsMobileHTML defined earlier is retained.
@@ -4521,17 +4601,17 @@ function buildGenerateSettingsContent(st) {
     if (c.type === 'knob') {
       // Use a taller track for mobile (h-3) and add touch-action-none to prevent page scrolling while dragging.
       html += `<div class="flex items-center gap-2">\n` +
-        `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
-        // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
-        `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
-        `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
-        `</div>`
+              `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
+              // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
+              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
+              `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
+              `</div>`
     } else if (c.type === 'toggle') {
       const checked = val ? 'checked' : ''
       html += `<label class="flex items-center gap-2 text-xs text-white/90">\n` +
-        `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
-        `  <span>${c.label}</span>\n` +
-        `</label>`
+              `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
+              `  <span>${c.label}</span>\n` +
+              `</label>`
     }
   }
   return html
@@ -4607,15 +4687,7 @@ async function applyGenerateSettingsAndStart() {
       startBtn.dataset.originalLabel = startBtn.innerHTML
     }
     startBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 loading-spin"></i>`
-    if (window.lucide && typeof window.lucide.createIcons === 'function') {
-      try {
-        if (window.safeCreateIcons) {
-          window.safeCreateIcons()
-        }
-      } catch (error) {
-        console.error('Error updating Lucide icons:', error)
-      }
-    }
+    window.lucide?.createIcons()
   }
   if (cancelBtn) {
     cancelBtn.disabled = true
@@ -4634,20 +4706,120 @@ async function applyGenerateSettingsAndStart() {
 // stored in stemControlValues.master and the bottom controls are
 // disabled accordingly.  The selected values persist for the
 // remainder of the session.
-// Wrapper function that calls the imported session setup function
 function showSessionSetupModal() {
-  showSessionSetupModalImpl(
-    sessionSetupDone,
-    stemControlValues,
-    (value) => { sessionSetupDone = value },
-    applySessionSettingsToUI,
-    updateTempoIndicator
-  )
+  if (sessionSetupDone) return
+  const modal = document.getElementById('sessionSetupModal')
+  if (!modal) return
+  const overlay = document.getElementById('sessionSetupOverlay')
+  const tempoSlider = document.getElementById('setupTempoSlider')
+  const tempoValue = document.getElementById('setupTempoValue')
+  const barsSelector = document.getElementById('setupBarsSelector')
+  const rootSelector = document.getElementById('setupRootSelector')
+  const accidentalSelector = document.getElementById('setupAccidentalSelector')
+  const modeSelector = document.getElementById('setupModeSelector')
+  // The cancel button has been removed (the session setup cannot be dismissed).  It may
+  // still exist in older templates, but we treat it as optional.
+  const cancelBtn = document.getElementById('setupCancelBtn')
+  const saveBtn = document.getElementById('setupSaveBtn')
+  if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !saveBtn) return
+  // Update displayed tempo when slider moves
+  tempoSlider.addEventListener('input', e => {
+    const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
+    tempoValue.textContent = String(val)
+  })
+  // If a cancel button exists (legacy HTML), wire it to simply hide the modal.
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      modal.style.opacity = '0'
+      setTimeout(() => { modal.classList.add('hidden') }, 300)
+      document.body.style.overflow = ''
+    })
+  }
+  // Save button applies settings and locks them
+  saveBtn.addEventListener('click', () => {
+    const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
+    const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
+    const rootText = String(rootSelector.value || 'A')
+    // Determine base letter and accidental from the root selection
+    let rootBase = rootText.replace(/[♯♭]/g, '').toUpperCase()
+    const selectedAccidental = accidentalSelector.value
+    const modeVal = String(modeSelector.value || 'Minor')
+    // Set master values
+    stemControlValues.master.tempo = tempoVal
+    stemControlValues.master.bars = barsVal
+    stemControlValues.master.rootBase = rootBase
+    stemControlValues.master.accidental = selectedAccidental
+    stemControlValues.master.mode = modeVal
+    sessionSetupDone = true
+    applySessionSettingsToUI()
+    // Hide modal
+    modal.style.opacity = '0'
+    setTimeout(() => { modal.classList.add('hidden') }, 300)
+    // Restore page scrolling when the session setup modal is closed
+    document.body.style.overflow = ''
+  })
+  // Show the modal
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+  })
+  // Disable page scrolling while the session setup modal is visible
+  document.body.style.overflow = 'hidden'
 }
 
-// Wrapper function that calls the imported apply session settings function
+// Apply the session settings to the UI: update the bottom controls
+// with the locked values and disable them so the user cannot modify
+// them mid-session.  Also refresh the tempo indicators on the
+// waveform cards and update the history drawer where needed.
 function applySessionSettingsToUI() {
-  applySessionSettingsToUIImpl(stemControlValues, updateTempoIndicator)
+  const master = stemControlValues.master
+  // If any of the old master controls exist (tempo, bars, key selectors), disable them and set their values.
+  // This keeps compatibility in case those elements are still present in the DOM for other generators.
+  const tempoSlider = document.getElementById('tempoSlider')
+  const tempoValueEl = document.getElementById('tempoValue')
+  if (tempoSlider) {
+    tempoSlider.value = String(master.tempo)
+    tempoSlider.disabled = true
+  }
+  if (tempoValueEl) {
+    tempoValueEl.textContent = String(master.tempo)
+  }
+  const barsSelector = document.getElementById('barsSelector')
+  if (barsSelector) {
+    barsSelector.value = String(master.bars)
+    barsSelector.disabled = true
+  }
+  const rootSelector = document.getElementById('rootSelector')
+  const accidentalSelector = document.getElementById('accidentalSelector')
+  const modeSelector = document.getElementById('modeSelector')
+  if (rootSelector) {
+    let rootDisplay = master.rootBase
+    if (master.accidental === 'sharp') rootDisplay += '#'
+    else if (master.accidental === 'flat') rootDisplay += 'b'
+    rootSelector.value = rootDisplay
+    rootSelector.disabled = true
+  }
+  if (accidentalSelector) {
+    accidentalSelector.value = master.accidental
+    accidentalSelector.disabled = true
+  }
+  if (modeSelector) {
+    modeSelector.value = master.mode
+    modeSelector.disabled = true
+  }
+  // Update the session info card in the player bar.
+  const infoEl = document.getElementById('sessionInfoText')
+  const infoElMob = document.getElementById('sessionInfoTextMobile')
+  const infoString = (() => {
+    const rootName = getRootText()
+    return `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
+  })()
+  if (infoEl) infoEl.textContent = infoString
+  if (infoElMob) infoElMob.textContent = infoString
+  // Refresh tempo indicators on all cards
+  STEM_ORDER.forEach(st => {
+    updateTempoIndicator(st)
+  })
 }
 
 /* =========================================================
@@ -4689,7 +4861,7 @@ function handleDialPointerDown(e) {
   const dial = e.target.closest('.infinite-dial')
   if (!dial) return
   const type = dial.getAttribute('data-dial-type')
-  const st = dial.getAttribute('data-stem')
+  const st   = dial.getAttribute('data-stem')
   if (!type || !st) return
   dialState.active = true
   dialState.dial = dial
@@ -4785,7 +4957,7 @@ function handleDialWheel(e) {
   const dial = e.target.closest('.infinite-dial')
   if (!dial) return
   const type = dial.getAttribute('data-dial-type')
-  const st = dial.getAttribute('data-stem')
+  const st   = dial.getAttribute('data-stem')
   if (!type || !st) return
   let currentVal, newVal
   if (type === 'volume') {
