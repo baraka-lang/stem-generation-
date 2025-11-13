@@ -718,6 +718,38 @@ function getStemDataUri(st) {
 }
 
 /**
+ * Extract raw PCM S16LE data from an AudioBuffer
+ * Converts floating-point audio data to 16-bit signed PCM
+ * @param {AudioBuffer} audioBuffer - The audio buffer to extract from
+ * @returns {ArrayBuffer} Raw PCM data as S16LE
+ */
+function extractPCMFromAudioBuffer(audioBuffer) {
+  const numChannels = audioBuffer.numberOfChannels
+  const length = audioBuffer.length
+  const sampleRate = audioBuffer.sampleRate
+
+  // Create interleaved PCM data
+  const pcmData = new Int16Array(length * numChannels)
+
+  // Get channel data
+  const channels = []
+  for (let ch = 0; ch < numChannels; ch++) {
+    channels.push(audioBuffer.getChannelData(ch))
+  }
+
+  // Interleave and convert to 16-bit PCM
+  for (let i = 0; i < length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      // Convert float [-1, 1] to int16 [-32768, 32767]
+      const sample = Math.max(-1, Math.min(1, channels[ch][i]))
+      pcmData[i * numChannels + ch] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
+    }
+  }
+
+  return pcmData.buffer
+}
+
+/**
  * Pre-compute WAV blob, data URI, and ArrayBuffer for a stem asynchronously
  * This should be called immediately after audio generation to avoid blocking during drag
  * @param {string} st - Stem identifier
@@ -779,6 +811,8 @@ function invalidateStemCache(st) {
     console.log(`Cleaned up blob URL for ${st}`)
   }
   stemDragReady[st] = false
+  // Also clear PCM cache when invalidating stem cache
+  clearStemPCM(st)
 }
 const HISTORY_LIMIT = 50
 function ensureStemHistory(st) {
@@ -1824,8 +1858,15 @@ function adjustEndpoint(st, factor) {
   stemLoopDuration[st] = out.duration
   // Invalidate cached WAV since loop has been adjusted
   invalidateStemCache(st)
-  // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
-  prepareStemmForDrag(st, out)
+
+  // Extract PCM from the adjusted AudioBuffer for drag-and-drop
+  try {
+    const pcmData = extractPCMFromAudioBuffer(out)
+    storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
+    console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+  } catch (pcmErr) {
+    console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
+  }
   // Redraw waveform
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
@@ -2160,9 +2201,15 @@ async function separateCurrentStem(st) {
     // Invalidate cached WAV since we have new separated audio
     invalidateStemCache(st)
 
-    // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
+    // Extract PCM from the separated audio for drag-and-drop
     if (loopBuffer) {
-      prepareStemmForDrag(st, loopBuffer)
+      try {
+        const pcmData = extractPCMFromAudioBuffer(loopBuffer)
+        storeStemPCM(st, pcmData, loopBuffer.sampleRate, loopBuffer.numberOfChannels, `pcm_${loopBuffer.sampleRate}`)
+        console.log(`[Separation] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+      } catch (pcmErr) {
+        console.warn(`[Separation] Failed to extract PCM for ${st}:`, pcmErr.message)
+      }
     }
 
     // Update waveform visualization
@@ -2584,8 +2631,15 @@ async function generateStem(st) {
       endpointFactors[st] = 1
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
-      // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
-      prepareStemmForDrag(st, strictLoop)
+
+      // Extract PCM from AudioBuffer for drag-and-drop (fallback path)
+      try {
+        const pcmData = extractPCMFromAudioBuffer(strictLoop)
+        storeStemPCM(st, pcmData, strictLoop.sampleRate, strictLoop.numberOfChannels, `pcm_${strictLoop.sampleRate}`)
+        console.log(`[Gen] Extracted PCM from AudioBuffer for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+      } catch (pcmErr) {
+        console.warn(`[Gen] Failed to extract PCM from AudioBuffer for ${st}:`, pcmErr.message)
+      }
     }
 
     // Push the new version into history
@@ -3471,13 +3525,21 @@ function updateDragButtonState(st) {
   const buf = stemLoop[st]
   const hasActiveSample = (stemActiveIndex[st] ?? -1) >= 0 && buf
   const isChromium = isChromiumBrowser()
-  const isDragReady = stemDragReady[st] === true
+
+  // Check if PCM data is ready for drag (new implementation using PCM cache)
+  const isPCMReady = isPCMReadyForDrag(st)
+  const pcmCache = getStemPCM(st)
 
   // Validate buffer has actual data
   const hasValidData = hasActiveSample && buf.length > 0 && buf.duration > 0
 
-  // Enable button only if valid data exists, is ready for drag, and browser is Chromium
-  dragBtn.disabled = !hasValidData || !isChromium || !isDragReady
+  // Enable button only if valid data exists, PCM is ready, and browser is Chromium
+  dragBtn.disabled = !hasValidData || !isChromium || !isPCMReady
+
+  // Log PCM cache status for debugging
+  if (hasValidData && !isPCMReady) {
+    console.log(`[DragButton] ${st} has audio buffer but PCM not ready. PCM cache:`, pcmCache ? 'exists' : 'missing')
+  }
 
   // Update tooltip with detailed information
   if (!isChromium) {
@@ -3486,12 +3548,12 @@ function updateDragButtonState(st) {
     dragBtn.title = 'Create a sample first to enable Drag & Drop'
   } else if (!hasValidData) {
     dragBtn.title = 'Audio buffer is empty - please regenerate'
-  } else if (!isDragReady) {
+  } else if (!isPCMReady) {
     dragBtn.title = 'Preparing audio file... Please wait'
   } else {
     const filename = generateWavFilename(st)
-    // Calculate approximate WAV file size (16-bit stereo)
-    const estimatedSize = (buf.length * buf.numberOfChannels * 2 + 44)
+    // Calculate approximate WAV file size (16-bit stereo) from PCM data
+    const estimatedSize = pcmCache ? (pcmCache.size + 44) : (buf.length * buf.numberOfChannels * 2 + 44)
     const sizeKB = (estimatedSize / 1024).toFixed(1)
     dragBtn.title = `Drag & Drop: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
   }
@@ -3500,7 +3562,7 @@ function updateDragButtonState(st) {
   const container = document.querySelector(`[data-drag-container="${st}"]`)
   if (container && !isChromium) {
     container.style.display = 'none'
-  } else if (container && (!hasValidData || !isDragReady)) {
+  } else if (container && (!hasValidData || !isPCMReady)) {
     // Visual feedback for empty buffer or not ready
     dragBtn.style.opacity = '0.5'
   } else if (container) {
@@ -4517,8 +4579,15 @@ function selectStemVersion(st, index){
   stemLoopDuration[st] = take.raw.duration
   // Invalidate cached WAV since we've switched to different audio
   invalidateStemCache(st)
-  // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
-  prepareStemmForDrag(st, take.raw)
+
+  // Extract PCM from the selected version for drag-and-drop
+  try {
+    const pcmData = extractPCMFromAudioBuffer(take.raw)
+    storeStemPCM(st, pcmData, take.raw.sampleRate, take.raw.numberOfChannels, `pcm_${take.raw.sampleRate}`)
+    console.log(`[Version] Extracted PCM for ${st} v${index+1}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+  } catch (pcmErr) {
+    console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
+  }
   const canvas=document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
     const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
