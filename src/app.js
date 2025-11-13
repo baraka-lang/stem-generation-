@@ -3995,9 +3995,9 @@ function setupEventListeners() {
     const st = k.getAttribute('data-stem'); setVolumeUnified(st, stemConfigs[st]?.controls?.volume?.default ?? 80)
   })
 
-  // Dragstart handler for drag-to-DAW functionality (Chromium only)
-  // NOW SYNCHRONOUS - all data is pre-computed to prevent UI freezing
-  document.addEventListener('dragstart', e => {
+  // Dragstart handler for drag-to-DAW functionality
+  // Supports both Electron native drag (for proper DAW compatibility) and browser-based drag
+  document.addEventListener('dragstart', async e => {
     const btn = e.target.closest('[data-action="drag-stem"]')
     if (!btn) return
 
@@ -4035,9 +4035,61 @@ function setupEventListeners() {
 
       const filename = generateWavFilename(st)
 
-      // Create a File object from the Blob for better DAW compatibility
-      // File objects provide proper metadata (MIME type, filename, timestamp) that DAWs expect
-      // WAV format: 16-bit PCM, little-endian, standard RIFF headers
+      // Check if running in Electron environment
+      const isElectron = typeof window.electronAPI !== 'undefined'
+
+      if (isElectron) {
+        // Use Electron native drag for proper DAW compatibility
+        // This creates a real file on disk that DAWs can recognize and import
+        e.preventDefault()
+
+        try {
+          const result = await window.electronAPI.startNativeDrag(st, wavBlob, filename)
+
+          if (result.success) {
+            console.log(`✓ Native drag started for ${st}: ${result.filePath}`)
+            btn.style.opacity = '0.7'
+
+            // Visual feedback
+            const dragFeedback = document.createElement('div')
+            dragFeedback.style.cssText = `
+              position: fixed;
+              top: 50%;
+              left: 50%;
+              transform: translate(-50%, -50%);
+              padding: 20px 30px;
+              background: rgba(0, 200, 100, 0.95);
+              color: white;
+              border-radius: 12px;
+              font-size: 16px;
+              font-weight: 600;
+              box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+              z-index: 10000;
+              pointer-events: none;
+            `
+            dragFeedback.textContent = `Dragging: ${filename}`
+            document.body.appendChild(dragFeedback)
+
+            setTimeout(() => {
+              dragFeedback.remove()
+              btn.style.opacity = '1'
+            }, 2000)
+          } else {
+            console.error('Native drag failed:', result.error)
+            alert(`Failed to start drag operation: ${result.error}`)
+            btn.style.opacity = '1'
+          }
+        } catch (err) {
+          console.error('Electron drag error:', err)
+          alert(`Drag operation failed: ${err.message}`)
+          btn.style.opacity = '1'
+        }
+
+        return
+      }
+
+      // Fallback to browser-based drag (limited DAW compatibility)
+      // This works for drag-to-desktop in Chromium, but most DAWs won't accept it directly
       const wavFile = new File([wavBlob], filename, {
         type: 'audio/wav',
         lastModified: Date.now()
@@ -4055,8 +4107,7 @@ function setupEventListeners() {
       const url = URL.createObjectURL(wavFile)
       stemBlobUrls[st] = url
 
-      // Try to add file using DataTransferItem API (best for DAWs)
-      // This provides native file handling that DAWs can properly import
+      // Try to add file using DataTransferItem API
       let addedViaItems = false
       if (e.dataTransfer.items && typeof e.dataTransfer.items.add === 'function') {
         try {
@@ -4069,15 +4120,13 @@ function setupEventListeners() {
       }
 
       // Set drag data in multiple formats for maximum compatibility
-      // Provide both an inline data URI (for DAWs that cannot follow blob: URLs)
-      // and the object URL fallback for OS-level drops.
       const uriList = [dataUri, url].filter(Boolean).join('\n')
       e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${dataUri}`)
       e.dataTransfer.setData('text/uri-list', uriList)
       e.dataTransfer.setData('text/plain', dataUri)
       e.dataTransfer.effectAllowed = 'copy'
 
-      console.log(`Drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'} - ${filename}`)
+      console.log(`Browser drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'} - ${filename}`)
 
       // Create custom drag image with filename display
       try {
@@ -4100,13 +4149,11 @@ function setupEventListeners() {
 
         e.dataTransfer.setDragImage(dragImg, 0, 0)
 
-        // Clean up drag image after a short delay
         setTimeout(() => dragImg.remove(), 100)
       } catch (imgErr) {
         console.warn('Failed to set custom drag image:', imgErr)
       }
 
-      // Add visual feedback
       if (btn) {
         btn.style.opacity = '0.7'
       }
