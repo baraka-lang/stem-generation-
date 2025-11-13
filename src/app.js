@@ -696,8 +696,48 @@ const stemHistory = {}
 const stemActiveIndex = {}
 // Store WAV blobs for reuse in drag operations to avoid regeneration
 const stemWavCache = {}
+// Cache data URLs so DownloadURL payloads contain the full file for DAWs
+const stemWavDataUrlCache = {}
 // Store blob URLs with lifecycle management for drag-to-DAW
 const stemBlobUrls = {}
+
+/**
+ * Convert a Blob into a data: URI and cache it per stem so external
+ * applications (Ableton/Logic/etc.) can receive the entire file via
+ * DownloadURL even if they cannot dereference blob: URLs.
+ * @param {string} st - Stem identifier
+ * @param {Blob} wavBlob - WAV blob for the stem
+ * @returns {Promise<string>} data URI representing the WAV file
+ */
+async function getStemDataUri(st, wavBlob) {
+  if (stemWavDataUrlCache[st]) return stemWavDataUrlCache[st]
+  if (!(wavBlob instanceof Blob)) {
+    throw new Error('Invalid WAV blob for data URI conversion')
+  }
+  const dataUri = await blobToDataURL(wavBlob)
+  stemWavDataUrlCache[st] = dataUri
+  return dataUri
+}
+
+/**
+ * Promise wrapper around FileReader for converting blobs to data URLs.
+ * @param {Blob} blob
+ * @returns {Promise<string>}
+ */
+function blobToDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result)
+      } else {
+        reject(new Error('Failed to read blob as data URL'))
+      }
+    }
+    reader.onerror = () => reject(reader.error || new Error('Blob read failed'))
+    reader.readAsDataURL(blob)
+  })
+}
 
 /**
  * Invalidate the cached WAV blob for a stem.
@@ -708,6 +748,9 @@ function invalidateStemCache(st) {
   if (stemWavCache[st]) {
     delete stemWavCache[st]
     console.log(`Invalidated WAV cache for ${st}`)
+  }
+  if (stemWavDataUrlCache[st]) {
+    delete stemWavDataUrlCache[st]
   }
   if (stemBlobUrls[st]) {
     URL.revokeObjectURL(stemBlobUrls[st])
@@ -3917,7 +3960,7 @@ function setupEventListeners() {
 
   // Dragstart handler for drag-to-DAW functionality (Chromium only)
   // Enhanced with File object and DataTransferItem for DAW compatibility
-  document.addEventListener('dragstart', e => {
+  document.addEventListener('dragstart', async e => {
     const btn = e.target.closest('[data-action="drag-stem"]')
     if (!btn) return
 
@@ -3953,6 +3996,8 @@ function setupEventListeners() {
           wavBlob = encodeWAV(buf)
           // Cache the blob for reuse
           stemWavCache[st] = wavBlob
+          // Ensure old data URIs are cleared when regenerating
+          delete stemWavDataUrlCache[st]
         } catch (encodeErr) {
           console.error('WAV encoding failed during drag:', encodeErr)
           e.preventDefault()
@@ -3975,6 +4020,8 @@ function setupEventListeners() {
       console.log(`WAV blob ready: ${(wavBlob.size / 1024).toFixed(1)}KB ${isCached ? '(cached)' : '(new)'}`)
 
       const filename = generateWavFilename(st)
+      const dataUri = await getStemDataUri(st, wavBlob)
+      console.log(`Data URI prepared for ${filename}`)
 
       // Create a File object from the Blob for better DAW compatibility
       // File objects provide proper metadata that DAWs expect
@@ -4009,10 +4056,12 @@ function setupEventListeners() {
       }
 
       // Set drag data in multiple formats for maximum compatibility
-      // These serve as fallbacks when DataTransferItem isn't available or supported
-      e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${url}`)
-      e.dataTransfer.setData('text/uri-list', url)
-      e.dataTransfer.setData('text/plain', url)
+      // Provide both an inline data URI (for DAWs that cannot follow blob: URLs)
+      // and the object URL fallback for OS-level drops.
+      const uriList = [dataUri, url].filter(Boolean).join('\n')
+      e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${dataUri}`)
+      e.dataTransfer.setData('text/uri-list', uriList)
+      e.dataTransfer.setData('text/plain', dataUri)
       e.dataTransfer.effectAllowed = 'copy'
 
       console.log(`Drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'} - ${filename}`)
