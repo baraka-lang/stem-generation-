@@ -3,6 +3,8 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { initWavEncoder, encodeWAVAsync, encodeWAVSync, preComputeDataURI, terminateWavEncoder, manageCacheSize } from './audioEncoder.js'
+import { isFileSystemAccessSupported, saveWavFile, saveMultipleWavFiles, smartSaveWav, legacyDownload } from './Utilities/fileSaver.js'
+import { createDawIntegrationModal, openDawIntegrationModal, closeDawIntegrationModal, setupDawModalEventListeners } from './UI/dawIntegrationModal.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -2952,6 +2954,87 @@ function downloadAllActiveStems(){
   })
 }
 
+/**
+ * Save all active stems to a user-selected folder using File System Access API
+ * Shows progress and provides feedback on success/failure
+ */
+async function saveAllStemsToFolder() {
+  try {
+    const files = []
+
+    Object.keys(stemConfigs).forEach(st => {
+      const hasActive = (stemActiveIndex[st] ?? -1) >= 0
+      const buf = stemLoop[st]
+      if (hasActive && buf && buf.length > 0) {
+        try {
+          const wavBlob = encodeWAV(buf)
+          const filename = generateWavFilename(st)
+          files.push({ blob: wavBlob, filename })
+        } catch (err) {
+          console.error(`Failed to encode ${st}:`, err)
+        }
+      }
+    })
+
+    if (files.length === 0) {
+      alert('No active stems to save. Generate some audio first!')
+      return
+    }
+
+    console.log(`Preparing to save ${files.length} stems to folder...`)
+
+    const result = await saveMultipleWavFiles(files, (current, total) => {
+      console.log(`Saved ${current}/${total} stems`)
+    })
+
+    if (result.saved > 0) {
+      const msg = result.failed === 0
+        ? `Successfully saved ${result.saved} stems to "${result.folderPath}"`
+        : `Saved ${result.saved} stems to "${result.folderPath}". ${result.failed} failed.`
+      alert(msg)
+      console.log('✓ Save complete:', result)
+    } else if (result.folderPath === null) {
+      console.log('Folder selection cancelled')
+    } else {
+      alert('Failed to save stems. Check console for details.')
+    }
+  } catch (err) {
+    console.error('Save to folder error:', err)
+    if (err.message.includes('not supported')) {
+      alert('Save to Folder is only available in Chrome and Edge browsers. Use the Download button instead.')
+    } else {
+      alert('Failed to save stems. Check console for details.')
+    }
+  }
+}
+
+/**
+ * Save a single stem to a user-specified location
+ * @param {string} st - Stem identifier
+ */
+async function saveStemToFile(st) {
+  try {
+    const buf = stemLoop[st]
+
+    if (!buf || buf.length === 0) {
+      alert(`No audio for ${stemConfigs[st]?.name || st}. Generate audio first.`)
+      return
+    }
+
+    const wavBlob = encodeWAV(buf)
+    const filename = generateWavFilename(st)
+
+    const success = await smartSaveWav(wavBlob, filename)
+
+    if (success) {
+      console.log(`✓ Saved ${st} as ${filename}`)
+    }
+  } catch (err) {
+    console.error(`Failed to save ${st}:`, err)
+    alert(`Failed to save ${stemConfigs[st]?.name || st}. Check console for details.`)
+  }
+}
+
 /* =========================================================
    UI rendering (per card) — with black generate btn, wider sliders, click‑overlay for toggles
    ========================================================= */
@@ -3085,10 +3168,10 @@ function createBuilderStemCard(st, cfg){
   // Define a generate button fragment.  The sliders and toggles are shown in a popup instead of on the card.
   const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
 
-  // Define a drag button for desktop browsers (Chromium only).  This button appears above
-  // the Create button and allows users to drag the active sample directly to their DAW or desktop.
+  // Define a drag button for desktop browsers (Chromium only).  This button allows users to drag
+  // the active sample to their desktop or a folder. For DAW use, files must be saved to disk first.
   // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag & Drop\n            </span>\n          </button>\n        </div>\n      `;
+  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to Folder (Chrome/Edge). For DAWs: Use 'Save to Folder' button instead">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag to Folder\n            </span>\n          </button>\n          <p class="text-[10px] text-white/50 text-center mt-1.5">For DAW use: Click Download button below → Save to Folder</p>\n        </div>\n      `;
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
@@ -3457,9 +3540,9 @@ function updateDragButtonState(st) {
 
   // Update tooltip with detailed information
   if (!isChromium) {
-    dragBtn.title = 'Drag & Drop feature requires Chrome or Edge browser'
+    dragBtn.title = 'Drag to Folder requires Chrome or Edge browser'
   } else if (!hasActiveSample) {
-    dragBtn.title = 'Create a sample first to enable Drag & Drop'
+    dragBtn.title = 'Create a sample first to enable drag'
   } else if (!hasValidData) {
     dragBtn.title = 'Audio buffer is empty - please regenerate'
   } else if (!isDragReady) {
@@ -3469,7 +3552,7 @@ function updateDragButtonState(st) {
     // Calculate approximate WAV file size (16-bit stereo)
     const estimatedSize = (buf.length * buf.numberOfChannels * 2 + 44)
     const sizeKB = (estimatedSize / 1024).toFixed(1)
-    dragBtn.title = `Drag & Drop: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
+    dragBtn.title = `Drag to Folder: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)\n\nIMPORTANT: To use in Ableton/Logic/FL Studio:\n1. Click Download button (bottom right)\n2. Choose "Save to Folder"\n3. Then drag from your DAW's browser or Finder/Explorer`
   }
 
   // Hide the entire drag container on non-Chromium browsers
@@ -3548,6 +3631,24 @@ function setupEventListeners() {
   if (downloadAllBtn) {
     downloadAllBtn.addEventListener('click', () => {
       openDownloadConfirmModal()
+    })
+  }
+
+  // Save to Folder button
+  const saveToFolderBtn = document.getElementById('saveToFolderBtn')
+  if (saveToFolderBtn) {
+    saveToFolderBtn.addEventListener('click', async () => {
+      await saveAllStemsToFolder()
+      closeDownloadConfirmModal()
+    })
+  }
+
+  // DAW Integration Help button
+  const dawHelpBtn = document.getElementById('dawIntegrationHelpBtn')
+  if (dawHelpBtn) {
+    dawHelpBtn.addEventListener('click', () => {
+      closeDownloadConfirmModal()
+      setTimeout(() => openDawIntegrationModal(), 250)
     })
   }
 
@@ -4575,6 +4676,12 @@ export async function initApp(){
   setupHelpModal()
   // Initialise the user menu in the header
   setupUserMenu()
+
+  // Inject DAW Integration modal into the DOM
+  const dawModal = createDawIntegrationModal()
+  document.body.appendChild(dawModal)
+  setupDawModalEventListeners()
+
   console.log('✅ Navigation system ready')
 
   // Cleanup on page unload
