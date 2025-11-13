@@ -1177,6 +1177,10 @@ Deno.serve(async (req)=>{
     let musicLengthMs = 0;
     // We'll attempt up to 3 tiers for hihat, snare (perc) and kick.  Other
     // stems do not vary strictness and will exit after the first pass.
+    const preferredFormats = ['pcm_44100', 'pcm_24000', 'pcm_22050', 'pcm_16000'];
+    let usedFormat = 'pcm_24000';
+    let formatSampleRate = 24000;
+
     for(strictness = 0; strictness < 3; strictness++){
       usedPrompt = buildStemPrompt(stem, controls, masterForPrompt, strictness);
       // Compute length in milliseconds
@@ -1185,36 +1189,86 @@ Deno.serve(async (req)=>{
       musicLengthMs = Math.round(seconds * 1000) + 200 // pad tail
       ;
       musicLengthMs = Math.max(10000, Math.min(300000, musicLengthMs));
-      // Build request to ElevenLabs
-      const upstream = new URL('https://api.elevenlabs.io/v1/music');
-      upstream.searchParams.set('output_format', 'pcm_24000');
-      const upstreamBody = {
-        prompt: usedPrompt,
-        music_length_ms: musicLengthMs,
-        model_id: 'music_v1'
-      };
-      const resp = await fetch(upstream.toString(), {
-        method: 'POST',
-        headers: {
-          'xi-api-key': xiKey,
-          'Content-Type': 'application/json',
-          'Accept': 'audio/*,application/octet-stream'
-        },
-        body: JSON.stringify(upstreamBody)
-      });
-      if (!resp.ok) {
-        const txt = await resp.text().catch(()=>'');
+
+      let resp = null;
+      let formatError = false;
+
+      for (const outputFormat of preferredFormats) {
+        const upstream = new URL('https://api.elevenlabs.io/v1/music');
+        upstream.searchParams.set('output_format', outputFormat);
+        const upstreamBody = {
+          prompt: usedPrompt,
+          music_length_ms: musicLengthMs,
+          model_id: 'music_v1'
+        };
+
+        try {
+          resp = await fetch(upstream.toString(), {
+            method: 'POST',
+            headers: {
+              'xi-api-key': xiKey,
+              'Content-Type': 'application/json',
+              'Accept': 'audio/*,application/octet-stream'
+            },
+            body: JSON.stringify(upstreamBody)
+          });
+
+          if (resp.ok) {
+            usedFormat = outputFormat;
+            formatSampleRate = parseInt(outputFormat.split('_')[1]) || 24000;
+            console.log(`Successfully using format: ${usedFormat} (${formatSampleRate}Hz)`);
+            break;
+          } else if (resp.status === 400 || resp.status === 403) {
+            const txt = await resp.text().catch(() => '');
+            if (txt.includes('output_format') || txt.includes('plan') || txt.includes('tier')) {
+              console.log(`Format ${outputFormat} not available, trying fallback...`);
+              formatError = true;
+              continue;
+            } else {
+              return new Response(JSON.stringify({
+                error: `Upstream error ${resp.status}`,
+                upstream: txt
+              }), {
+                status: resp.status,
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...corsHeaders
+                }
+              });
+            }
+          } else {
+            const txt = await resp.text().catch(() => '');
+            return new Response(JSON.stringify({
+              error: `Upstream error ${resp.status}`,
+              upstream: txt
+            }), {
+              status: resp.status,
+              headers: {
+                'Content-Type': 'application/json',
+                ...corsHeaders
+              }
+            });
+          }
+        } catch (fetchErr) {
+          console.error(`Error trying format ${outputFormat}:`, fetchErr);
+          continue;
+        }
+      }
+
+      if (!resp || !resp.ok) {
         return new Response(JSON.stringify({
-          error: `Upstream error ${resp.status}`,
-          upstream: txt
+          error: 'No supported PCM format available for this account',
+          triedFormats: preferredFormats
         }), {
-          status: resp.status,
+          status: 400,
           headers: {
             'Content-Type': 'application/json',
             ...corsHeaders
           }
         });
       }
+
+      sampleRate = formatSampleRate;
       // ElevenLabs returns raw PCM16
       const rawBytes = new Uint8Array(await resp.arrayBuffer());
       // Guess channels and convert to channel arrays
@@ -1330,7 +1384,10 @@ Deno.serve(async (req)=>{
       audio_b64,
       usedPrompt,
       tier,
-      validated
+      validated,
+      format: usedFormat,
+      sampleRate: sampleRate,
+      channels: channels
     };
     return new Response(JSON.stringify(responseBody), {
       status: 200,

@@ -3,6 +3,8 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { initWavEncoder, encodeWAVAsync, encodeWAVSync, preComputeDataURI, terminateWavEncoder, manageCacheSize } from './audioEncoder.js'
+import { storeStemPCM, getStemPCM, getStemFormat, isPCMReadyForDrag, extractPCMFromWAV, clearStemPCM, getPCMCacheStats } from './stemDataManager.js'
+import { pcm16leToWav, pcm16leToWavBlob, validatePcmData, parseElevenLabsFormat, generateWavFilename as generateWavFilenameFromFormat } from './pcmToWav.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -2502,12 +2504,27 @@ async function generateStem(st) {
       if (error || !data) {
         throw new Error(error?.message || 'Supabase invocation failed')
       }
-      // data should contain audio_b64, usedPrompt, tier, validated
-      const { audio_b64, usedPrompt: up, tier: tt, validated: val } = data
+      // data should contain audio_b64, usedPrompt, tier, validated, format, sampleRate, channels
+      const { audio_b64, usedPrompt: up, tier: tt, validated: val, format, sampleRate: sr, channels: ch } = data
       usedPrompt = up || ''
       tier = typeof tt === 'number' ? tt : 0
       validated = val !== false
-      // Decode the base64 audio string
+      const receivedFormat = format || 'pcm_24000'
+      const receivedSampleRate = sr || 24000
+      const receivedChannels = ch || 2
+
+      console.log(`[Gen] Received ${st}: ${receivedFormat} (${receivedSampleRate}Hz, ${receivedChannels}ch)`)
+
+      // Extract raw PCM data from the WAV file for drag-to-DAW
+      try {
+        const pcmInfo = extractPCMFromWAV(audio_b64)
+        storeStemPCM(st, pcmInfo.pcmData, pcmInfo.sampleRate, pcmInfo.numChannels, pcmInfo.format)
+        console.log(`[Gen] Stored PCM for ${st}: ${(pcmInfo.dataSize / 1024).toFixed(1)}KB`)
+      } catch (pcmErr) {
+        console.warn(`[Gen] Failed to extract PCM for ${st}:`, pcmErr.message)
+      }
+
+      // Decode the base64 audio string for playback
       const commaIdx = (audio_b64 || '').indexOf(',')
       const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
       const binaryStr = atob(b64 || '')
@@ -2525,8 +2542,6 @@ async function generateStem(st) {
       failedValidation = !validated
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
-      // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
-      prepareStemmForDrag(st, audioBuffer)
     } catch (supErr) {
       // Supabase call failed or returned error; fallback to local generation
       console.error('Supabase request failed', supErr)
@@ -4005,7 +4020,7 @@ function setupEventListeners() {
   })
 
   // Dragstart handler for drag-to-DAW functionality
-  // Supports both Electron native drag (for proper DAW compatibility) and browser-based drag
+  // Uses raw PCM data from ElevenLabs for native OS drag
   document.addEventListener('dragstart', e => {
     const btn = e.target.closest('[data-action="drag-stem"]')
     if (!btn) return
@@ -4014,34 +4029,25 @@ function setupEventListeners() {
     if (!st) return
 
     try {
-      // Check if drag data is ready (pre-computed)
-      if (!stemDragReady[st]) {
-        console.warn(`Drag data not ready for ${st}`)
+      // Check if PCM data is ready for drag
+      if (!isPCMReadyForDrag(st)) {
+        console.warn(`[Drag] PCM data not ready for ${st}`)
         e.preventDefault()
         alert('Audio is still being prepared. Please wait a moment and try again.')
         return
       }
 
-      // Get pre-computed WAV blob and data URI
-      const wavBlob = stemWavCache[st]
-      const dataUri = getStemDataUri(st)
-      const arrayBuffer = stemArrayBufferCache[st]
-
-      if (!wavBlob || wavBlob.size === 0) {
-        console.error(`No WAV blob cached for ${st}`)
+      // Get stored PCM data and format info
+      const pcmCache = getStemPCM(st)
+      if (!pcmCache) {
+        console.error(`[Drag] No PCM data cached for ${st}`)
         e.preventDefault()
         alert('Audio data is not available. Please regenerate the audio.')
         return
       }
 
-      if (!dataUri) {
-        console.error(`No data URI cached for ${st}`)
-        e.preventDefault()
-        alert('Audio data is not fully prepared. Please wait a moment and try again.')
-        return
-      }
-
-      console.log(`Drag initiated for ${st}: ${(wavBlob.size / 1024).toFixed(1)}KB (pre-cached)`)
+      const { pcmData, sampleRate, numChannels, format } = pcmCache
+      console.log(`[Drag] Initiating drag for ${st}: ${format} (${sampleRate}Hz, ${numChannels}ch, ${(pcmData.byteLength / 1024).toFixed(1)}KB)`)
 
       const filename = generateWavFilename(st)
 
@@ -4049,19 +4055,12 @@ function setupEventListeners() {
       const isElectron = typeof window.electronAPI !== 'undefined'
 
       if (isElectron) {
-        // Use Electron native drag for proper DAW compatibility
-        // This creates a real file on disk that DAWs can recognize and import
+        // Use Electron native drag with raw PCM data
+        // The Electron main process will wrap PCM to WAV during drag fulfillment
         e.preventDefault()
 
-        if (!arrayBuffer) {
-          console.error(`No ArrayBuffer cached for ${st}`)
-          alert('Audio data is not fully prepared. Please wait a moment and try again.')
-          return
-        }
-
-        // Call Electron API synchronously (it returns a promise but we don't await it)
-        // The IPC call happens asynchronously in the background
-        window.electronAPI.startNativeDrag(st, arrayBuffer, filename)
+        // Call Electron API with raw PCM data
+        window.electronAPI.startNativeDrag(st, pcmData, sampleRate, numChannels, filename)
           .then(result => {
             if (result.success) {
               console.log(`✓ Native drag started for ${st}: ${result.filePath}`)
@@ -4107,13 +4106,19 @@ function setupEventListeners() {
       }
 
       // Fallback to browser-based drag (limited DAW compatibility)
-      // This works for drag-to-desktop in Chromium, but most DAWs won't accept it directly
+      // WARNING: This works for drag-to-desktop in Chromium, but most DAWs won't accept it
+      // For proper DAW drag support, use the Electron desktop app
+      console.warn(`[Drag] Using browser fallback mode - DAW compatibility limited`)
+      console.warn(`[Drag] For Ableton/Logic/FL support, use the Electron desktop app`)
+
+      // Wrap PCM to WAV for browser drag
+      const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
       const wavFile = new File([wavBlob], filename, {
         type: 'audio/wav',
         lastModified: Date.now()
       })
 
-      console.log(`File object created: ${filename} (${(wavFile.size / 1024).toFixed(1)}KB)`)
+      console.log(`[Drag] Created WAV file: ${filename} (${(wavFile.size / 1024).toFixed(1)}KB)`)
 
       // Clean up any existing blob URL for this stem
       if (stemBlobUrls[st]) {
@@ -4121,7 +4126,7 @@ function setupEventListeners() {
         delete stemBlobUrls[st]
       }
 
-      // Create new blob URL for fallback compatibility
+      // Create blob URL for browser drag
       const url = URL.createObjectURL(wavFile)
       stemBlobUrls[st] = url
 
@@ -4131,20 +4136,18 @@ function setupEventListeners() {
         try {
           e.dataTransfer.items.add(wavFile)
           addedViaItems = true
-          console.log(`Added file via DataTransferItem API for ${st}`)
+          console.log(`[Drag] Added file via DataTransferItem API`)
         } catch (itemErr) {
-          console.warn('DataTransferItem.add() failed, falling back to legacy methods:', itemErr)
+          console.warn('[Drag] DataTransferItem.add() failed:', itemErr)
         }
       }
 
-      // Set drag data in multiple formats for maximum compatibility
-      const uriList = [dataUri, url].filter(Boolean).join('\n')
-      e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${dataUri}`)
-      e.dataTransfer.setData('text/uri-list', uriList)
-      e.dataTransfer.setData('text/plain', dataUri)
+      // Set drag data formats (browser fallback)
+      e.dataTransfer.setData('text/uri-list', url)
+      e.dataTransfer.setData('text/plain', url)
       e.dataTransfer.effectAllowed = 'copy'
 
-      console.log(`Browser drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'} - ${filename}`)
+      console.log(`[Drag] Browser drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'}`)
 
       // Create custom drag image with filename display
       try {
