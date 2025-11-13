@@ -3088,7 +3088,7 @@ function createBuilderStemCard(st, cfg){
   // Define a drag button for desktop browsers (Chromium only).  This button appears above
   // the Create button and allows users to drag the active sample directly to their DAW or desktop.
   // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag to DAW\n            </span>\n          </button>\n        </div>\n      `;
+  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag & Drop\n            </span>\n          </button>\n        </div>\n      `;
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
@@ -3457,9 +3457,9 @@ function updateDragButtonState(st) {
 
   // Update tooltip with detailed information
   if (!isChromium) {
-    dragBtn.title = 'Drag to DAW feature requires Chrome or Edge browser'
+    dragBtn.title = 'Drag & Drop feature requires Chrome or Edge browser'
   } else if (!hasActiveSample) {
-    dragBtn.title = 'Create a sample first to enable drag-to-DAW'
+    dragBtn.title = 'Create a sample first to enable Drag & Drop'
   } else if (!hasValidData) {
     dragBtn.title = 'Audio buffer is empty - please regenerate'
   } else if (!isDragReady) {
@@ -3469,7 +3469,7 @@ function updateDragButtonState(st) {
     // Calculate approximate WAV file size (16-bit stereo)
     const estimatedSize = (buf.length * buf.numberOfChannels * 2 + 44)
     const sizeKB = (estimatedSize / 1024).toFixed(1)
-    dragBtn.title = `Drag to DAW: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
+    dragBtn.title = `Drag & Drop: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
   }
 
   // Hide the entire drag container on non-Chromium browsers
