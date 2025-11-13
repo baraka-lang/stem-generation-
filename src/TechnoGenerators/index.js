@@ -21,24 +21,162 @@ export function buildCompositionPlan({ tempo, bars }, descriptor){
  * Generate fallback audio when Supabase Edge Functions are not available
  * Creates a simple audio buffer with basic patterns for demonstration
  */
+const NOTE_FREQUENCIES = {
+  C: 261.63,
+  'C#': 277.18,
+  Db: 277.18,
+  D: 293.66,
+  'D#': 311.13,
+  Eb: 311.13,
+  E: 329.63,
+  F: 349.23,
+  'F#': 369.99,
+  Gb: 369.99,
+  G: 392.0,
+  'G#': 415.3,
+  Ab: 415.3,
+  A: 440.0,
+  'A#': 466.16,
+  Bb: 466.16,
+  B: 493.88
+}
+
+function normaliseRoot(master) {
+  if (!master) return 'A'
+  if (master.root) {
+    return master.root.replace('♯', '#').replace('♭', 'b')
+  }
+  const base = master.rootBase || 'A'
+  const accidental = master.accidental || 'natural'
+  if (accidental === 'sharp') return `${base}#`
+  if (accidental === 'flat') return `${base}b`
+  return base
+}
+
+function getRootFrequency(master) {
+  const note = normaliseRoot(master)
+  return (NOTE_FREQUENCIES[note] || 440) / 2 // push roots into a comfortable lower register
+}
+
+function getScale(mode) {
+  const m = (mode || '').toLowerCase()
+  if (m.includes('major')) return [0, 2, 4, 5, 7, 9, 11]
+  if (m.includes('dorian')) return [0, 2, 3, 5, 7, 9, 10]
+  return [0, 2, 3, 5, 7, 8, 10] // natural minor by default
+}
+
+function pseudoRandom(index, seed) {
+  const x = Math.sin((index + 1 + seed) * 12.9898) * 43758.5453
+  return x - Math.floor(x)
+}
+
+function clampSample(v) {
+  if (v > 1) return 1
+  if (v < -1) return -1
+  return v
+}
+
+function generateKick(ctx) {
+  if (ctx.beatPhase > 0.4) return 0
+  const env = Math.exp(-ctx.beatPhase * 28)
+  const pitch = 60 + 140 * (1 - ctx.beatPhase)
+  return Math.sin(2 * Math.PI * pitch * ctx.t) * env * 0.85
+}
+
+function generateBass(ctx) {
+  const step = ctx.beatIndex
+  const interval = ctx.scale[step % ctx.scale.length] - 12
+  const freq = ctx.baseFreq * Math.pow(2, interval / 12)
+  const env = Math.exp(-ctx.beatPhase * 6)
+  const fundamental = Math.sin(2 * Math.PI * freq * ctx.t)
+  const harmonic = Math.sin(2 * Math.PI * freq * 2 * ctx.t) * 0.35
+  return (fundamental + harmonic) * env * 0.55
+}
+
+function generateLead(ctx) {
+  const step = Math.floor(ctx.t / (ctx.secondsPerBeat / 2))
+  const intervals = ctx.scale.map(n => n + 12)
+  const interval = intervals[step % intervals.length]
+  const freq = ctx.baseFreq * Math.pow(2, interval / 12)
+  const env = Math.exp(-ctx.eighthPhase * 8)
+  const vibrato = 1 + 0.015 * Math.sin(ctx.t * 6)
+  return (Math.sin(2 * Math.PI * freq * vibrato * ctx.t) * 0.6 + Math.sin(2 * Math.PI * freq * 2 * ctx.t) * 0.25) * env * 0.5
+}
+
+function generatePad(ctx) {
+  const chord = ctx.mode === 'major' ? [0, 4, 7, 11] : [0, 3, 7, 10]
+  const spread = chord.map(i => ctx.baseFreq * Math.pow(2, (i + 12) / 12))
+  const slowEnv = 0.6 + 0.35 * Math.sin(ctx.barPhase * Math.PI * 2)
+  let sum = 0
+  for (const freq of spread) {
+    sum += Math.sin(2 * Math.PI * freq * ctx.t) * 0.4
+    sum += Math.sin(2 * Math.PI * freq * 2 * ctx.t) * 0.2
+  }
+  return (sum / spread.length) * slowEnv * 0.6
+}
+
+function generateHihat(ctx) {
+  if (ctx.sixteenthPhase > 0.2) return 0
+  const env = Math.exp(-ctx.sixteenthPhase * 45)
+  const noise = pseudoRandom(ctx.sampleIndex, ctx.seed) * 2 - 1
+  return noise * env * 0.45
+}
+
+function generatePerc(ctx) {
+  if (ctx.beatInBar !== 1 && ctx.beatInBar !== 3) return 0
+  if (ctx.beatPhase > 0.45) return 0
+  const env = Math.exp(-ctx.beatPhase * 28)
+  const noise = (pseudoRandom(ctx.sampleIndex, ctx.seed) * 2 - 1) * 0.7
+  const tone = Math.sin(2 * Math.PI * 180 * ctx.t) * 0.3
+  return (noise + tone) * env * 0.6
+}
+
+function generatePerc2(ctx) {
+  const offsetPhase = (ctx.eighthPhase + (ctx.beatInBar % 2) * 0.5) % 1
+  if (offsetPhase > 0.3) return 0
+  const env = Math.exp(-offsetPhase * 24)
+  const freq = 600 + 200 * Math.sin(ctx.barIndex * 0.5)
+  return (Math.sin(2 * Math.PI * freq * ctx.t) * 0.4) * env * 0.45
+}
+
+function generateArp(ctx) {
+  const step = Math.floor(ctx.t / (ctx.secondsPerBeat / 4))
+  const interval = ctx.scale[(step * 2) % ctx.scale.length] + 12
+  const freq = ctx.baseFreq * Math.pow(2, interval / 12)
+  const env = Math.exp(-ctx.sixteenthPhase * 16)
+  return (Math.sin(2 * Math.PI * freq * ctx.t) * 0.5 + Math.sin(2 * Math.PI * freq * 2 * ctx.t) * 0.25) * env * 0.45
+}
+
+function generateFx(ctx) {
+  const sweep = Math.sin(ctx.barPhase * Math.PI * 2)
+  const noise = (pseudoRandom(ctx.sampleIndex, ctx.seed) * 2 - 1) * (0.4 + 0.3 * sweep)
+  const tone = Math.sin(2 * Math.PI * (ctx.baseFreq / 4 + sweep * 60) * ctx.t) * 0.25
+  return (noise + tone) * (0.5 + 0.3 * sweep)
+}
+
+function generateGeneric(ctx) {
+  const freq = ctx.baseFreq * 2
+  return (Math.sin(2 * Math.PI * freq * ctx.t) * 0.4 + Math.sin(2 * Math.PI * freq * 2 * ctx.t) * 0.2) * 0.4
+}
+
 function generateFallbackAudio(payload) {
-  const { prompt, music_length_ms, composition_plan } = payload
-  
+  const { music_length_ms, stem, master: masterFromPayload, tempo: tempoOverride } = payload
+
   // Calculate audio parameters
   const sampleRate = 44100
   const length = Math.floor((music_length_ms || 10000) * sampleRate / 1000)
-  
+
   // Create a simple audio buffer
   const buffer = new ArrayBuffer(44 + length * 2) // WAV header + 16-bit samples
   const view = new DataView(buffer)
-  
+
   // Write WAV header
   const writeString = (offset, string) => {
     for (let i = 0; i < string.length; i++) {
       view.setUint8(offset + i, string.charCodeAt(i))
     }
   }
-  
+
   writeString(0, 'RIFF')
   view.setUint32(4, 36 + length * 2, true)
   writeString(8, 'WAVE')
@@ -52,56 +190,88 @@ function generateFallbackAudio(payload) {
   view.setUint16(34, 16, true)
   writeString(36, 'data')
   view.setUint32(40, length * 2, true)
-  
-  // Generate more realistic audio pattern based on prompt
+
   const data = new Int16Array(buffer, 44)
-  const promptText = prompt || ''
-  const isTechno = promptText.toLowerCase().includes('techno') || promptText.toLowerCase().includes('electronic')
-  
+  const master = masterFromPayload || {}
+  const tempo = tempoOverride || master.tempo || 128
+  const secondsPerBeat = 60 / tempo
+  const secondsPerBar = secondsPerBeat * 4
+  const baseFreq = getRootFrequency(master)
+  const scale = getScale(master.mode)
+  const mode = (master.mode || '').toLowerCase().includes('major') ? 'major' : 'minor'
+  const seed = (stem || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+  const stemType = (stem || '').toLowerCase()
+
   for (let i = 0; i < length; i++) {
     const t = i / sampleRate
-    let amplitude = 0
-    
-    if (isTechno) {
-      // Generate techno-style pattern with kick, snare, and hi-hat elements
-      const beat = (t * 120 / 60) % 4 // 120 BPM
-      const bar = Math.floor(t * 120 / 60 / 4)
-      
-      // Kick drum on beats 1 and 3
-      if (beat < 0.1 || (beat > 2 && beat < 2.1)) {
-        const kickFreq = 60 + Math.sin(t * 20) * 10
-        amplitude += Math.sin(2 * Math.PI * kickFreq * t) * Math.exp(-t * 5) * 0.3
-      }
-      
-      // Snare on beats 2 and 4
-      if ((beat > 1.9 && beat < 2.1) || (beat > 3.9)) {
-        amplitude += (Math.random() * 2 - 1) * Math.exp(-(t - Math.floor(t)) * 20) * 0.2
-      }
-      
-      // Hi-hat pattern
-      if (beat % 0.5 < 0.1) {
-        amplitude += Math.sin(2 * Math.PI * 8000 * t) * 0.05
-      }
-      
-      // Bass line
-      const bassFreq = 55 + Math.sin(t * 0.5) * 20
-      amplitude += Math.sin(2 * Math.PI * bassFreq * t) * 0.1
-      
-    } else {
-      // Generate melodic pattern
-      const freq = 220 + Math.sin(t * 0.2) * 200
-      amplitude = Math.sin(2 * Math.PI * freq * t) * 0.15
-      
-      // Add some harmonics
-      amplitude += Math.sin(2 * Math.PI * freq * 2 * t) * 0.05
-      amplitude += Math.sin(2 * Math.PI * freq * 3 * t) * 0.03
+    const beatFloat = t / secondsPerBeat
+    const beatIndex = Math.floor(beatFloat)
+    const beatPhase = beatFloat - beatIndex
+    const beatInBar = beatIndex % 4
+    const barFloat = t / secondsPerBar
+    const barIndex = Math.floor(barFloat)
+    const barPhase = barFloat - barIndex
+    const eighthPhase = (t / (secondsPerBeat / 2)) % 1
+    const sixteenthPhase = (t / (secondsPerBeat / 4)) % 1
+
+    const ctx = {
+      t,
+      sampleRate,
+      beatPhase,
+      beatIndex,
+      beatInBar,
+      barPhase,
+      barIndex,
+      eighthPhase,
+      sixteenthPhase,
+      baseFreq,
+      scale,
+      secondsPerBeat,
+      secondsPerBar,
+      mode,
+      seed,
+      sampleIndex: i
     }
-    
-    // Apply envelope to avoid clicks
+
+    let amplitude = 0
+    switch (stemType) {
+      case 'kick':
+        amplitude = generateKick(ctx)
+        break
+      case 'bass':
+        amplitude = generateBass(ctx)
+        break
+      case 'lead':
+        amplitude = generateLead(ctx)
+        break
+      case 'pad':
+        amplitude = generatePad(ctx)
+        break
+      case 'hihat':
+        amplitude = generateHihat(ctx)
+        break
+      case 'perc':
+        amplitude = generatePerc(ctx)
+        break
+      case 'perc2':
+        amplitude = generatePerc2(ctx)
+        break
+      case 'arp':
+        amplitude = generateArp(ctx)
+        break
+      case 'fx':
+        amplitude = generateFx(ctx)
+        break
+      default:
+        amplitude = generateGeneric(ctx)
+        break
+    }
+
+    // Apply envelope to avoid clicks and clamp
     const envelope = Math.min(1, Math.min(t * 100, (length / sampleRate - t) * 100))
-    data[i] = Math.round(amplitude * envelope * 32767)
+    data[i] = Math.round(clampSample(amplitude) * envelope * 32767)
   }
-  
+
   return buffer
 }
 
@@ -178,7 +348,14 @@ export async function composeWithRetries(st, tempo, bars, signal, deps){
     const body = deps.usePlan
       ? { composition_plan: buildCompositionPlan(master, deps.stemConfigs?.[st]?.basePrompt), prompt: null }
       : { prompt, music_length_ms }
-    const ab = await composeOnce(body, signal)
+    const enrichedBody = {
+      ...body,
+      stem: st,
+      master,
+      tempo,
+      bars
+    }
+    const ab = await composeOnce(enrichedBody, signal)
     const buf = await deps.decodeAudio(ab)
     const ok = deps.validateBuffer(st, buf, tempo, bars)
     if (ok) return { buffer: buf, usedPrompt: prompt, tier }
@@ -188,7 +365,14 @@ export async function composeWithRetries(st, tempo, bars, signal, deps){
   const body = deps.usePlan
     ? { composition_plan: buildCompositionPlan(master, deps.stemConfigs?.[st]?.basePrompt), prompt: null }
     : { prompt: finalPrompt, music_length_ms }
-  const ab = await composeOnce(body, signal)
+  const enrichedBody = {
+    ...body,
+    stem: st,
+    master,
+    tempo,
+    bars
+  }
+  const ab = await composeOnce(enrichedBody, signal)
   const buf = await deps.decodeAudio(ab)
   return { buffer: buf, usedPrompt: finalPrompt, tier: 2, failedValidation: true }
 }
