@@ -791,6 +791,8 @@ async function prepareStemmForDrag(st, audioBuffer) {
 /**
  * Invalidate the cached WAV blob for a stem.
  * Call this whenever the stem's audio buffer is updated.
+ * NOTE: Does NOT clear PCM cache - PCM is managed separately and should be
+ * explicitly cleared only when new PCM data is about to be stored.
  * @param {string} st - Stem identifier
  */
 function invalidateStemCache(st) {
@@ -811,8 +813,6 @@ function invalidateStemCache(st) {
     console.log(`Cleaned up blob URL for ${st}`)
   }
   stemDragReady[st] = false
-  // Also clear PCM cache when invalidating stem cache
-  clearStemPCM(st)
 }
 const HISTORY_LIMIT = 50
 function ensureStemHistory(st) {
@@ -1861,6 +1861,7 @@ function adjustEndpoint(st, factor) {
 
   // Extract PCM from the adjusted AudioBuffer for drag-and-drop
   try {
+    clearStemPCM(st) // Clear any existing PCM data before storing new
     const pcmData = extractPCMFromAudioBuffer(out)
     storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
     console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
@@ -2204,6 +2205,7 @@ async function separateCurrentStem(st) {
     // Extract PCM from the separated audio for drag-and-drop
     if (loopBuffer) {
       try {
+        clearStemPCM(st) // Clear any existing PCM data before storing new
         const pcmData = extractPCMFromAudioBuffer(loopBuffer)
         storeStemPCM(st, pcmData, loopBuffer.sampleRate, loopBuffer.numberOfChannels, `pcm_${loopBuffer.sampleRate}`)
         console.log(`[Separation] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
@@ -2564,6 +2566,7 @@ async function generateStem(st) {
 
       // Extract raw PCM data from the WAV file for drag-to-DAW
       try {
+        clearStemPCM(st) // Clear any existing PCM data before storing new
         const pcmInfo = extractPCMFromWAV(audio_b64)
         storeStemPCM(st, pcmInfo.pcmData, pcmInfo.sampleRate, pcmInfo.numChannels, pcmInfo.format)
         console.log(`[Gen] Stored PCM for ${st}: ${(pcmInfo.dataSize / 1024).toFixed(1)}KB`)
@@ -2634,6 +2637,7 @@ async function generateStem(st) {
 
       // Extract PCM from AudioBuffer for drag-and-drop (fallback path)
       try {
+        clearStemPCM(st) // Clear any existing PCM data before storing new
         const pcmData = extractPCMFromAudioBuffer(strictLoop)
         storeStemPCM(st, pcmData, strictLoop.sampleRate, strictLoop.numberOfChannels, `pcm_${strictLoop.sampleRate}`)
         console.log(`[Gen] Extracted PCM from AudioBuffer for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
@@ -3537,8 +3541,9 @@ function updateDragButtonState(st) {
   dragBtn.disabled = !hasValidData || !isChromium || !isPCMReady
 
   // Log PCM cache status for debugging
+  console.log(`[DragButton] ${st} - hasValidData: ${hasValidData}, isPCMReady: ${isPCMReady}, isChromium: ${isChromium}, pcmCache: ${pcmCache ? 'exists' : 'missing'}`)
   if (hasValidData && !isPCMReady) {
-    console.log(`[DragButton] ${st} has audio buffer but PCM not ready. PCM cache:`, pcmCache ? 'exists' : 'missing')
+    console.warn(`[DragButton] ${st} has audio buffer but PCM not ready. PCM cache:`, pcmCache)
   }
 
   // Update tooltip with detailed information
@@ -4582,6 +4587,7 @@ function selectStemVersion(st, index){
 
   // Extract PCM from the selected version for drag-and-drop
   try {
+    clearStemPCM(st) // Clear any existing PCM data before storing new
     const pcmData = extractPCMFromAudioBuffer(take.raw)
     storeStemPCM(st, pcmData, take.raw.sampleRate, take.raw.numberOfChannels, `pcm_${take.raw.sampleRate}`)
     console.log(`[Version] Extracted PCM for ${st} v${index+1}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
