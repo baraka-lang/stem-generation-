@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const fsPromises = require('fs').promises
 const os = require('os')
 
 let mainWindow
@@ -46,14 +47,17 @@ app.on('window-all-closed', () => {
 ipcMain.handle('start-native-drag', async (event, { stemId, wavBlob, filename }) => {
   try {
     const tempDir = path.join(os.tmpdir(), '343labs-stems')
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true })
+
+    try {
+      await fsPromises.mkdir(tempDir, { recursive: true })
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err
     }
 
     const tempFilePath = path.join(tempDir, filename)
 
     const buffer = Buffer.from(wavBlob.data)
-    fs.writeFileSync(tempFilePath, buffer)
+    await fsPromises.writeFile(tempFilePath, buffer)
 
     const win = BrowserWindow.fromWebContents(event.sender)
 
@@ -69,11 +73,9 @@ ipcMain.handle('start-native-drag', async (event, { stemId, wavBlob, filename })
       })
     }
 
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
-        if (fs.existsSync(tempFilePath)) {
-          fs.unlinkSync(tempFilePath)
-        }
+        await fsPromises.unlink(tempFilePath)
       } catch (err) {
         console.error('Failed to cleanup temp file:', err)
       }

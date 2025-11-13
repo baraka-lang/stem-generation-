@@ -699,6 +699,8 @@ const stemActiveIndex = {}
 const stemWavCache = {}
 // Cache data URLs so DownloadURL payloads contain the full file for DAWs
 const stemWavDataUrlCache = {}
+// Cache ArrayBuffer for synchronous Electron IPC calls (prevents blocking during dragstart)
+const stemArrayBufferCache = {}
 // Store blob URLs with lifecycle management for drag-to-DAW
 const stemBlobUrls = {}
 // Track preparation state for drag operations (prevents blocking during dragstart)
@@ -714,7 +716,7 @@ function getStemDataUri(st) {
 }
 
 /**
- * Pre-compute WAV blob and data URI for a stem asynchronously
+ * Pre-compute WAV blob, data URI, and ArrayBuffer for a stem asynchronously
  * This should be called immediately after audio generation to avoid blocking during drag
  * @param {string} st - Stem identifier
  * @param {AudioBuffer} audioBuffer - The audio buffer to encode
@@ -737,6 +739,9 @@ async function prepareStemmForDrag(st, audioBuffer) {
 
     const dataUri = await preComputeDataURI(wavBlob)
     stemWavDataUrlCache[st] = dataUri
+
+    const arrayBuffer = await wavBlob.arrayBuffer()
+    stemArrayBufferCache[st] = arrayBuffer
 
     stemDragReady[st] = true
     updateDragButtonState(st)
@@ -761,6 +766,10 @@ function invalidateStemCache(st) {
   }
   if (stemWavDataUrlCache[st]) {
     delete stemWavDataUrlCache[st]
+  }
+  if (stemArrayBufferCache[st]) {
+    delete stemArrayBufferCache[st]
+    console.log(`Cleared ArrayBuffer cache for ${st}`)
   }
   if (stemBlobUrls[st]) {
     URL.revokeObjectURL(stemBlobUrls[st])
@@ -3997,7 +4006,7 @@ function setupEventListeners() {
 
   // Dragstart handler for drag-to-DAW functionality
   // Supports both Electron native drag (for proper DAW compatibility) and browser-based drag
-  document.addEventListener('dragstart', async e => {
+  document.addEventListener('dragstart', e => {
     const btn = e.target.closest('[data-action="drag-stem"]')
     if (!btn) return
 
@@ -4016,6 +4025,7 @@ function setupEventListeners() {
       // Get pre-computed WAV blob and data URI
       const wavBlob = stemWavCache[st]
       const dataUri = getStemDataUri(st)
+      const arrayBuffer = stemArrayBufferCache[st]
 
       if (!wavBlob || wavBlob.size === 0) {
         console.error(`No WAV blob cached for ${st}`)
@@ -4043,47 +4053,55 @@ function setupEventListeners() {
         // This creates a real file on disk that DAWs can recognize and import
         e.preventDefault()
 
-        try {
-          const result = await window.electronAPI.startNativeDrag(st, wavBlob, filename)
-
-          if (result.success) {
-            console.log(`✓ Native drag started for ${st}: ${result.filePath}`)
-            btn.style.opacity = '0.7'
-
-            // Visual feedback
-            const dragFeedback = document.createElement('div')
-            dragFeedback.style.cssText = `
-              position: fixed;
-              top: 50%;
-              left: 50%;
-              transform: translate(-50%, -50%);
-              padding: 20px 30px;
-              background: rgba(0, 200, 100, 0.95);
-              color: white;
-              border-radius: 12px;
-              font-size: 16px;
-              font-weight: 600;
-              box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-              z-index: 10000;
-              pointer-events: none;
-            `
-            dragFeedback.textContent = `Dragging: ${filename}`
-            document.body.appendChild(dragFeedback)
-
-            setTimeout(() => {
-              dragFeedback.remove()
-              btn.style.opacity = '1'
-            }, 2000)
-          } else {
-            console.error('Native drag failed:', result.error)
-            alert(`Failed to start drag operation: ${result.error}`)
-            btn.style.opacity = '1'
-          }
-        } catch (err) {
-          console.error('Electron drag error:', err)
-          alert(`Drag operation failed: ${err.message}`)
-          btn.style.opacity = '1'
+        if (!arrayBuffer) {
+          console.error(`No ArrayBuffer cached for ${st}`)
+          alert('Audio data is not fully prepared. Please wait a moment and try again.')
+          return
         }
+
+        // Call Electron API synchronously (it returns a promise but we don't await it)
+        // The IPC call happens asynchronously in the background
+        window.electronAPI.startNativeDrag(st, arrayBuffer, filename)
+          .then(result => {
+            if (result.success) {
+              console.log(`✓ Native drag started for ${st}: ${result.filePath}`)
+              btn.style.opacity = '0.7'
+
+              // Visual feedback
+              const dragFeedback = document.createElement('div')
+              dragFeedback.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                padding: 20px 30px;
+                background: rgba(0, 200, 100, 0.95);
+                color: white;
+                border-radius: 12px;
+                font-size: 16px;
+                font-weight: 600;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+                z-index: 10000;
+                pointer-events: none;
+              `
+              dragFeedback.textContent = `Dragging: ${filename}`
+              document.body.appendChild(dragFeedback)
+
+              setTimeout(() => {
+                dragFeedback.remove()
+                btn.style.opacity = '1'
+              }, 2000)
+            } else {
+              console.error('Native drag failed:', result.error)
+              alert(`Failed to start drag operation: ${result.error}`)
+              btn.style.opacity = '1'
+            }
+          })
+          .catch(err => {
+            console.error('Electron drag error:', err)
+            alert(`Drag operation failed: ${err.message}`)
+            btn.style.opacity = '1'
+          })
 
         return
       }

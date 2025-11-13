@@ -1,8 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  startNativeDrag: async (stemId, wavBlob, filename) => {
-    const arrayBuffer = await wavBlob.arrayBuffer()
+  startNativeDrag: (stemId, arrayBuffer, filename) => {
     const uint8Array = new Uint8Array(arrayBuffer)
 
     return ipcRenderer.invoke('start-native-drag', {
