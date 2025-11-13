@@ -1,214 +1,175 @@
-# Web → DAW Drag & Drop: Implementation Guide (Ableton Live, Logic Pro, FL Studio)
-Focused strictly on **drag-and-drop** behavior and making it work with DAWs. No links or download-button recommendations included.
+# Web → DAW Drag & Drop: Definitive Implementation Guide (Ableton Live, Logic Pro, FL Studio)
+> Focus: **drag-and-drop only** (no download-button workflows). Based on DAW + OS drag APIs. Includes Ableton-specific fixes and a ready-to-test plan.
 
 ---
 
-## 1) Reality of Drag & Drop into DAWs
-- DAWs generally accept **OS-native file drops**—that is, drops that resolve to **real file paths** on disk (Windows: CF_HDROP or virtual-file formats; macOS: file URLs or **file promises**).
-- Browsers **cannot** expose real filesystem paths to other apps for security reasons. So, to enable “drag directly into DAWs,” you need either:
-  - A **native bridge** (desktop helper app) that performs an OS-native drag with file paths or file promises.
-  - Or a **two-step drag**: drag from the web page **to an OS folder** (Chromium-only feature), then drag from that folder into the DAW. (Still drag-based; no buttons required.)
-
-**Implication:** For one-step “web → DAW” drops, plan to use a **native helper** (Electron/Tauri/native) or a **DAW plug‑in**. For two-step “drag only,” rely on **drag-to-OS** followed by **drag into DAW**.
+## 0) Why Ableton/Logic/FL sometimes ignore your drag
+- **DAWs accept OS-native file drops** (real file paths or **file promises**). Browser drags don’t carry a file path; they carry strings/Blobs.
+- **Chromium’s `DownloadURL`** enables drag from a web page **to folders/desktop** (browser persists the file), but most DAWs won’t treat this as a drop of an audio file.
+- **Therefore:** “Web page → DAW track” needs a **native helper** that starts an **OS-level drag** with paths or file promises.
 
 ---
 
-## 2) Browser-side Drag Payloads (what the DAW will see)
-- **Standard drag types** (`text/plain`, `text/uri-list`, custom MIME) are **not** recognized by DAWs as audio content drops.
-- Chromium supports a non-standard drag type **`DownloadURL`** with payload format:  
-  `"<MIME type>:<filename>:<file-url>"`  
-  This enables **dragging from the page to a desktop/folder**; the browser handles persistence. **Most DAWs won’t accept this payload directly**, but it’s useful for a *drag-only* path to disk before dragging into the DAW.
-- **Firefox/Safari** do not support `DownloadURL` for drag-out. Plan fallbacks.
+## 1) DAW drop expectations (quick facts)
+- **Ableton Live:** Accepts mono/stereo **WAV/AIFF/FLAC/OGG** and common compressed types when dropped **as local files** onto Session/Arrangement or the Live Browser.
+- **Logic Pro:** Creating tracks by **dragging audio files** into the Tracks area is a first-class path.
+- **FL Studio:** Drag from the **Browser** (OS-backed folders) to **Playlist/Channel**. It consumes OS file paths.
 
-**Takeaway:** Browser-only drags rarely land in DAWs. Use **`DownloadURL`** for drag-to-OS (Chromium), or use a **native bridge** for DAW‑target drops.
+**Takeaway:** A working drop must expose a **real file** to the OS drop target (or promise one).
 
 ---
 
-## 3) Native Bridge Patterns (to make DAW drops work)
-### 3A) Windows (Explorer/DAW targets)
-- **Existing files:** Provide **`CF_HDROP`** (a list of absolute paths). DAWs read the paths and import.
-- **Virtual/streamed files:** Provide **`CFSTR_FILEDESCRIPTOR` + `CFSTR_FILECONTENTS`** to present files that don’t exist yet. Each descriptor names a file; the contents stream via `IStream` on demand. This avoids temp files while still presenting as files to the drop target.
-- **Drop effects:** Prefer `DROPEFFECT_COPY`. Avoid `MOVE` semantics for media import UX.
+## 2) What to implement (the reliable path)
+### 2A) macOS (AppKit) — **File Promise** drag
+- Use **`NSFilePromiseProvider`** for each stem to advertise a promised file.
+- Provide the correct **UTType** (e.g., WAV `com.microsoft.waveform-audio` or AIFF `public.aiff-audio`).
+- Fulfill the promise in the delegate method by **writing the file** to the destination URL after the drop completes.
 
-**Minimal flow (pseudo-code):**
-```
-onDragStart() {
-  if (haveRealFiles) {
-    dataObject.addFormat(CF_HDROP, arrayOfAbsolutePaths);  // e.g., C:\Users\...\stem.wav
-  } else {
-    for (each virtualItem i) {
-      dataObject.addFormat(CFSTR_FILEDESCRIPTOR, descriptorFor(i)); // name, size if known
-      dataObject.addFormat(CFSTR_FILECONTENTS, streamProviderFor(i)); // IStream, lazy
-    }
-  }
-  DoDragDrop(dataObject, DROPEFFECT_COPY);
-}
-```
-
-**Quality tips (Win):**
-- Populate correct filenames and extensions (`.wav`, `.aiff`).
-- If using virtual files, support multiple items (one `FILECONTENTS` per file, indexed by the descriptor).
-- Ensure thread apartments and COM initialization are correct; render contents **only** after drop for performance.
-
-### 3B) macOS (Finder/DAW targets)
-- **Existing files:** Expose **file URLs** on the pasteboard (NSPasteboardTypeFileURL).
-- **Virtual/streamed files:** Use **`NSFilePromiseProvider`** (a “file promise”) so the drop target can request the file; your app writes it to the provided destination on demand.
-- **Drop operations:** Prefer `.copy`. Ensure your promise provider writes valid files *quickly* on fulfillment.
-
-**Minimal flow (Swift-ish pseudo-code):**
-```
-func draggingSession(for items: [DragItem]) -> NSDraggingSession {
-  let pb = NSPasteboard.general
-  pb.clearContents()
-  for item in items {
-    if item.isRealFile {
-      pb.write(FileURL(item.absolutePath))
-    } else {
-      let promise = NSFilePromiseProvider(fileType: "wav", delegate: self)
-      promise.userInfo = item // to render later
-      pb.writeObjects([promise])
-    }
-  }
-  return beginDraggingSession(with: pb.readObjects(), event: event, source: self)
-}
-
-// Delegate: called after drop; write the file to requested URL
-func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
-  renderAndWrite(item: provider.userInfo, to: url) // write .wav contents
-  completionHandler(nil)
-}
-```
-
-**Quality tips (macOS):**
-- Use the correct UTI/UTType (“wav”/“aiff”).  
-- Make sure the promise is fulfilled **fast**; DAWs may time out on slow providers.
-- If you materialize temp files, clean them up after import completes.
-
-### 3C) Electron/Tauri helpers (cross‑platform shell)
-- **Electron:** Use `webContents.startDrag({ file, icon })` for **existing** files. For **virtual** files, materialize into a cache first or implement OS‑native bridges (Windows: CF_HDROP or FILEDESCRIPTOR/FILECONTENTS; macOS: file promises).
-- **Tauri/Native:** Expose OS‑level drags via a plugin/sidecar that creates paths or promises and starts the drag from native code.
-
-**Note:** DAWs expect **file-like** drops. If your helper only sets web drag data (e.g., `text/uri-list`), drops will fail.
-
----
-
-## 4) DAW Expectations (drag targets)
-- **Ableton Live:** Accepts drops of **local audio files** (WAV, AIFF, FLAC, OGG; mono/stereo; common bit depths/rates) onto Session/Arrangement.
-- **Logic Pro:** Supports creating tracks by **dragging audio files** into the Tracks area.
-- **FL Studio:** Drag from its **Browser** (which reflects OS folders) into Playlist/Channel Rack. It consumes **file paths** from the OS.
-
-**Practical read:** DAWs act like standard OS drag targets expecting **file paths or file promises**, not browser-only MIME payloads.
-
----
-
-## 5) Cross‑Browser Drag‑Out Support (sender behavior)
-- **Chromium (Chrome/Edge):** Supports non‑standard **`DownloadURL`** for **drag to OS folder/desktop**. Useful for a drag‑only path to disk; most DAWs won’t accept it directly.
-- **Safari/Firefox:** Do not support `DownloadURL` for drag‑out. Browser‑only drag into DAWs is typically not viable.
-
-**Payload hygiene (web):**
-```
-el.draggable = true;
-el.addEventListener('dragstart', (e) => {
-  // Use only if targeting a desktop/folder drop in Chromium:
-  e.dataTransfer.setData('DownloadURL', `audio/wav:my_stem.wav:${makeHrefForThisStem()}`);
-  e.dataTransfer.effectAllowed = 'copy';
-});
-```
-(Use a stable href; avoid enormous data URIs. Do not expect DAWs to accept this payload.)
-
----
-
-## 6) Failure Modes & Drag‑Specific Fixes
-1) **Drop into DAW does nothing**  
-   - Cause: DAW expects OS file paths/promises; browser sent web-only payload.  
-   - Fix: Use a **native bridge** to emit file paths (Win: `CF_HDROP` or file promises; macOS: file promises or file URLs).
-
-2) **Windows: drag works between some apps but not to DAW**  
-   - Cause: App privilege mismatch (DAW “Run as administrator”) or wrong formats.  
-   - Fix: Run at the same privilege level; provide `CF_HDROP` (existing) or FILEDESCRIPTOR/FILECONTENTS (virtual).
-
-3) **macOS: drop cursor shows “not allowed” over DAW**  
-   - Cause: Pasteboard items don’t include file URLs or file promises for supported types.  
-   - Fix: Provide `NSFilePromiseProvider` with correct UTI (“wav”, “aiff”) or write temporary files and expose file URLs.
-
-4) **Drop starts but import fails with “file unreadable/corrupt”**  
-   - Cause: The payload delivered a file path, but the file contents are invalid or incomplete.  
-   - Fix: Ensure your encoder writes valid **WAV/AIFF** (PCM 16/24‑bit or 32‑bit float; correct RIFF chunk order and sizes).
-
-5) **Large/virtual files cause stalls**  
-   - Cause: Rendering contents during the drag loop.  
-   - Fix: Defer heavy work until **after drop** (Win: stream via `IStream` when `CFSTR_FILECONTENTS` is requested; macOS: fulfill file promise on callback).
-
-6) **Multiple items dropped but only one appears**  
-   - Cause: Not providing one `FILECONTENTS` per descriptor (Win) or not writing each promised file (macOS).  
-   - Fix: Index descriptors and fulfill each file separately.
-
-7) **DAW imports with wrong pitch/tempo after drop**  
-   - Cause: Sample rate mismatch or DAW time‑stretching.  
-   - Fix: Export stems at **44.1 kHz or 48 kHz**, set correct headers; remind users to check warp/time‑stretch settings.
-
-8) **Path/filename edge cases**  
-   - Cause: Unsupported characters or extreme path length (especially on Windows).  
-   - Fix: Use ASCII‑friendly names, short paths, and proper extensions (`.wav`, `.aiff`).
-
----
-
-## 7) Minimal Test Plan (drag-only)
-- **Matrix:** {Windows, macOS} × {Chrome, Edge, Safari, Firefox} × {Ableton Live, Logic Pro, FL Studio}
-- **Senders:** Web page (Chromium `DownloadURL`), Native helper (Electron/Tauri), Pure native (Win/macOS test host).
-- **Targets:** DAW track views, DAW browsers, OS desktop/folder.
-- **Cases:** Single file, multiple files, real files, virtual files (streamed), long filenames, large files (>500 MB), odd sample rates.
-- **Pass if:** Drop accepted and clip appears; audio decodes and plays; no orphan temp files; no stalls/timeouts.
-
----
-
-## 8) Reference Snippets (drag-focused)
-**Electron (existing files):**
-```ts
-// In renderer
-tile.addEventListener('dragstart', () => window.electron.startDrag('/absolute/path/stem.wav'));
-
-// In main
-ipcMain.handle('startDrag', (e, filePath) => {
-  const win = BrowserWindow.fromWebContents(e.sender);
-  win.webContents.startDrag({ file: filePath, icon: '/path/to/icon.png' });
-});
-```
-
-**Windows (virtual files, conceptual):**
-```cpp
-// Build IDataObject with both formats for N files:
-AddFormat(CFSTR_FILEDESCRIPTOR, descriptors[N]); // names, sizes, attributes
-for (i in files) {
-  AddFormatIndexed(CFSTR_FILECONTENTS, i, IStreamProvider(files[i])); // stream on request
-}
-DoDragDrop(dataObject, DROPEFFECT_COPY);
-```
-
-**macOS (file promises, conceptual):**
+**Sketch (Swift-like):**
 ```swift
-let promise = NSFilePromiseProvider(fileType: "wav", delegate: self)
-promise.userInfo = model   // info to render on fulfillment
-pasteboard.writeObjects([promise])
+func beginDrag(stems: [Stem]) {
+  let draggingItems: [NSDraggingItem] = stems.map { stem in
+    let prov = NSFilePromiseProvider(fileType: "com.microsoft.waveform-audio", delegate: self)
+    prov.userInfo = stem // carry metadata to writer
+    let item = NSDraggingItem(pasteboardWriter: prov)
+    item.setDraggingFrame(CGRect(x:0,y:0,width:1,height:1), contents: nil)
+    return item
+  }
+  view.beginDraggingSession(with: draggingItems, event: currentEvent, source: self)
+}
 
-// On fulfillment after drop:
+// Promise fulfillment after drop
 func filePromiseProvider(_ provider: NSFilePromiseProvider,
-                         writePromiseTo dst: URL,
+                         writePromiseTo url: URL,
                          completionHandler: @escaping (Error?) -> Void) {
-  try writeWav(model: provider.userInfo, to: dst)
+  let stem = provider.userInfo as! Stem
+  try writePCMtoWAV(stem, to: url) // write valid WAV/AIFF bytes
   completionHandler(nil)
 }
 ```
 
+**Gotchas (macOS):**
+- Use the **correct UTI/UTType** so the DAW recognizes the extension (`.wav`/`.aif`).
+- Promise **one file per stem**; fulfill fast to avoid target timeouts.
+- If using prewritten temp files, you may expose **file URLs** instead of promises.
+
 ---
 
-## 9) Final Checklist (drag-only readiness)
-- [ ] Ableton/Logic/FL accept the drop of your stems from **OS-level paths or file promises**.
-- [ ] **Windows:** CF_HDROP for existing files; FILEDESCRIPTOR/FILECONTENTS for virtual files; `DROPEFFECT_COPY` set.
-- [ ] **macOS:** File URLs or `NSFilePromiseProvider` provided with correct UTTypes; fulfillment is fast and reliable.
-- [ ] **Chromium drag-to-OS:** `DownloadURL` payload works to folders/desktop (for a drag-only path to disk).
-- [ ] **Firefox/Safari:** Verified behavior and communicated limitations; alternative drag route available.
-- [ ] **RIFF/AIFF correctness:** Headers valid; mono/stereo; PCM 16/24‑bit or 32‑bit float; typical rates 44.1/48 kHz.
-- [ ] **Multiple files:** All items materialize/import; indices match; names/extensions correct.
-- [ ] **No privilege mismatches:** Drag works when DAWs are not elevated differently than the sender.
-- [ ] **Cleanup:** Temp/cache files cleaned after successful import.
+### 2B) Windows — **Paths or Virtual Files**
+- **Prewritten files:** expose **`CF_HDROP`** (absolute paths) in the data object.
+- **Virtual files (stream-on-drop):** expose **`CFSTR_FILEDESCRIPTORW` + `CFSTR_FILECONTENTS`**. Provide one `IStream` per file index; the DAW reads bytes after the drop.
+
+**Sketch (conceptual C++):**
+```cpp
+// IDataObject: include CFSTR_FILEDESCRIPTORW (names, sizes) and CFSTR_FILECONTENTS (per-file stream)
+FORMATETC fetDesc = { RegisterClipboardFormat(CFSTR_FILEDESCRIPTORW), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+FORMATETC fetCont = { RegisterClipboardFormat(CFSTR_FILECONTENTS),   nullptr, DVASPECT_CONTENT, -1, TYMED_ISTREAM };
+
+// On request for CFSTR_FILECONTENTS with lindex = i:
+STGMEDIUM med = { TYMED_ISTREAM };
+med.pstm = CreateStreamForStem(i); // stream WAV/AIFF bytes on demand
+// Return S_OK
+```
+
+**Gotchas (Windows):**
+- **Integrity level must match** the DAW (don’t run one as Administrator and the other not).
+- Provide **accurate filenames/extensions** (`.wav`/`.aiff`) and sizes when known.
+- For multiple stems: one descriptor + one contents stream **per file**.
+
+---
+
+### 2C) Electron/Tauri helper (if you embed a web UI)
+- **Electron:** use `webContents.startDrag({ files, icon })` for **prewritten** files. For **virtual** files, call into native modules that implement the Windows/macOS behaviors above (file promises on macOS or virtual-file streams on Windows).
+- **Tauri/Native:** start the drag from native code and advertise OS formats as above.
+
+**Renderer→native IPC sketch:**
+```js
+// renderer (on draggable tile mousedown)
+window.api.startNativeDrag({ stemIds: ['kick','bass'] });
+
+// main/native
+onStartNativeDrag(({ stemIds }) => {
+  const files = materializeToCache(stemIds); // or set up file promises/streams
+  win.webContents.startDrag({ files, icon: iconPath });
+});
+```
+
+---
+
+## 3) Ableton‑specific failures you reported & precise fixes
+
+1) **“Ableton is not receiving the drop at all”**  
+   - *Likely cause:* The drag payload is **web-only** (e.g., `DownloadURL`, `text/uri-list`, Blob), not an OS file path/promise.  
+   - *Fix:* Start a **native OS drag** (macOS file promise or Windows path/virtual-file formats).
+
+2) **Windows only: drop works into folders, not into Live**  
+   - *Likely cause:* Live is running as **Administrator** or helper elevation differs → OS blocks cross‑integrity drag.  
+   - *Fix:* Run Live and your helper at the **same privilege level** (prefer **not** elevated).
+
+3) **Drop is accepted but clip shows “file unreadable or corrupt”**  
+   - *Likely cause:* WAV/AIFF header invalid (wrong sizes/order, wrong endian), or unsupported channel/layout.  
+   - *Fix:* Emit **WAV/AIFF**, mono/stereo, PCM **16/24‑bit** or **32‑float**, with correct RIFF/AIFF chunking. Validate header bytes before you advertise the drag.
+
+4) **Multiple stems: only one appears**  
+   - *Likely cause:* Exposed only a single path/descriptor.  
+   - *Fix:* Advertise **one item per stem** (one file promise per stem on macOS; one FILEDESCRIPTOR/FILECONTENTS pair per stem on Windows).
+
+5) **Import plays at wrong speed/pitch**  
+   - *Likely cause:* Uncommon sample rate (e.g., 24 kHz) triggers auto‑stretch or confusion.  
+   - *Fix:* Prefer **44.1 kHz or 48 kHz** for drag targets; ensure headers declare the true sample rate.
+
+6) **Electron helper: drag does nothing**  
+   - *Likely cause:* Browser’s own DnD intercepted; or `startDrag` invoked without a valid file path/image.  
+   - *Fix:* Call `startDrag` from the **main** process in response to renderer’s `ondragstart`, and provide a valid icon + absolute paths. For virtual files, bridge to native.
+
+---
+
+## 4) Minimal “Always‑Work” Audio Constraints (for drag targets)
+- **Container:** WAV or AIFF.
+- **Channels:** Mono or stereo (avoid multi‑channel interleaves).
+- **Encoding:** PCM **24‑bit** preferred; PCM 16‑bit or 32‑bit float acceptable.
+- **Sample rate:** **44.1 kHz or 48 kHz** are the safest defaults.
+- **Headers:** Correct `RIFF/WAVE` or AIFF chunk order and sizes; little‑endian for WAV; write data after `fmt ` (WAV).
+
+---
+
+## 5) Tight test plan (to confirm Ableton receives it)
+**Platforms:** macOS (latest), Windows (10/11).  
+**DAWs:** Ableton Live 11/12, Logic Pro (macOS), FL Studio (Win/macOS).  
+**Matrix:** {prewritten paths, macOS file promises, Windows virtual files} × {single, multi} × {short, long} × {44.1/48 kHz}.
+
+**Pass if:**  
+- Cursor shows “copy” over DAW target.  
+- On drop, the DAW creates a clip/track and reads full audio.  
+- No UAC prompt or integrity error (Windows).  
+- No stalls/timeouts on virtual streams.  
+
+**Failure triage:**  
+- **No drop?** → Ensure OS formats (mac: promise; win: CF_HDROP or virtual).  
+- **Rejected/Unreadable?** → Validate headers/bit depth/channels.  
+- **Windows only?** → Verify elevation parity.  
+- **Multi fails?** → Verify per‑file descriptor/stream or per‑promise item.  
+
+---
+
+## 6) Quick reference (what to Google in your codebase; no links here)
+- **macOS:** NSFilePromiseProvider, NSFilePromiseProviderDelegate, UTTypeWAV (`com.microsoft.waveform-audio`), UTTypeAIFF (`public.aiff-audio`).  
+- **Windows:** CF_HDROP, CFSTR_FILEDESCRIPTORW, CFSTR_FILECONTENTS, IDataObject, IStream.  
+- **Electron:** webContents.startDrag (prewritten files only).  
+- **DAW targets:** Ableton Live Session/Arrangement drop, Logic Pro Tracks area drop, FL Studio Playlist/Channel from Browser.
+
+---
+
+## 7) PRD note (format): 
+Your current pipeline outputs **24 kHz PCM** before WAV packaging. DAWs can import unusual rates, but for drag‑in reliability and expected pitch/tempo, favor **44.1/48 kHz** at export or in the writer that fulfills file promises.
+
+---
+
+## 8) Final checklist (copy/paste)
+- [ ] Ableton receives drag directly (macOS: file promises; Windows: CF_HDROP/virtual).  
+- [ ] Windows UAC parity verified (no Admin mismatch).  
+- [ ] WAV/AIFF headers validated; mono/stereo; PCM 24‑bit.  
+- [ ] Multiple items handled (one promise/descriptor per stem).  
+- [ ] Electron/Tauri helper bridges web UI → native drag.  
+- [ ] Sample rate typical (44.1/48 kHz).  
+- [ ] No download-button workflows used anywhere in this flow.
