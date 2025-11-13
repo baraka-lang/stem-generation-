@@ -1,278 +1,214 @@
-# Drag & Drop Stems from a Web App into DAWs (Ableton Live, Logic Pro, FL Studio)
-Production-grade guide with patterns, failure modes, fixes, and checklists. No URLs included.
+# Web → DAW Drag & Drop: Implementation Guide (Ableton Live, Logic Pro, FL Studio)
+Focused strictly on **drag-and-drop** behavior and making it work with DAWs. No links or download-button recommendations included.
 
 ---
 
-## 0) TL;DR (reality check)
-- Most DAWs accept **drops that resolve to local files** (real file paths or OS-level “file promises”). A browser tab **cannot** hand out a real file path.
-- Cross-browser reliable flow today:
-  1) **Save stems locally** (one click).  
-  2) **Drag from Finder/File Explorer or the DAW’s own browser** into a track.
-- Chrome/Edge-only enhancement: use the non-standard **DownloadURL** drag payload to allow **drag-to-desktop/folder**. Many DAWs won’t import directly from this drag; it’s best for “drag to OS”, then drag into the DAW.
-- For true “drag directly into DAW” UX, ship a **desktop helper** (Electron/Tauri) and/or a **DAW plug-in (VST3/AU)** that exposes local files or file promises.
-- Make files DAW-friendly: **WAV/AIFF, mono or stereo, PCM 16/24-bit (or 32-bit float), 44.1 kHz or 48 kHz**, with clean RIFF headers.
+## 1) Reality of Drag & Drop into DAWs
+- DAWs generally accept **OS-native file drops**—that is, drops that resolve to **real file paths** on disk (Windows: CF_HDROP or virtual-file formats; macOS: file URLs or **file promises**).
+- Browsers **cannot** expose real filesystem paths to other apps for security reasons. So, to enable “drag directly into DAWs,” you need either:
+  - A **native bridge** (desktop helper app) that performs an OS-native drag with file paths or file promises.
+  - Or a **two-step drag**: drag from the web page **to an OS folder** (Chromium-only feature), then drag from that folder into the DAW. (Still drag-based; no buttons required.)
+
+**Implication:** For one-step “web → DAW” drops, plan to use a **native helper** (Electron/Tauri/native) or a **DAW plug‑in**. For two-step “drag only,” rely on **drag-to-OS** followed by **drag into DAW**.
 
 ---
 
-## 1) What DAWs actually accept on drop
-- **Ableton Live**: Dragging **local audio files** (WAV/AIFF/FLAC/OGG; 8/16/24-bit int or 32-bit float; sample rates up to 192 kHz) into Session/Arrangement is supported. Files must be locally readable.
-- **Logic Pro**: Drag **local audio files** from Finder into the Tracks area. Logic creates audio or sampler tracks on drop.
-- **FL Studio**: Add your **stems folder** to the **Browser**; then drag from the Browser into Playlist/Channel Rack.
+## 2) Browser-side Drag Payloads (what the DAW will see)
+- **Standard drag types** (`text/plain`, `text/uri-list`, custom MIME) are **not** recognized by DAWs as audio content drops.
+- Chromium supports a non-standard drag type **`DownloadURL`** with payload format:  
+  `"<MIME type>:<filename>:<file-url>"`  
+  This enables **dragging from the page to a desktop/folder**; the browser handles persistence. **Most DAWs won’t accept this payload directly**, but it’s useful for a *drag-only* path to disk before dragging into the DAW.
+- **Firefox/Safari** do not support `DownloadURL` for drag-out. Plan fallbacks.
 
-**Implication:** Your web app must create or place a **real file on disk** (or use a native bridge).
-
----
-
-## 2) Browser constraints to design around
-- The HTML drag-and-drop data store primarily carries **text/URIs**. A web page cannot hand another native app a **real filesystem path**.
-- Chromium implements a non-standard drag type **DownloadURL** with payload `"<mime>:<filename>:<href>"`. This enables **drag to OS folders/desktop** where the browser initiates a download. Many DAWs don’t consume this type directly.
-- Programmatically generated “file” drops aren’t a reliable way to deliver files to native apps; native apps expect **OS-level file paths** or **file promises**.
-
-**Takeaway:** Build a **save-to-disk** path; treat **DownloadURL** only as a convenience for **drag-to-OS**.
+**Takeaway:** Browser-only drags rarely land in DAWs. Use **`DownloadURL`** for drag-to-OS (Chromium), or use a **native bridge** for DAW‑target drops.
 
 ---
 
-## 3) Three production patterns (choose 1 or combine)
-### Pattern A — Save, then drag from OS (simplest & robust)
-1) Offer **Download** and **Save to folder** actions.  
-2) Encourage users to **add the folder** to the DAW’s browser (Ableton “Places”, FL “Browser extra search folders”).  
-3) Drag from Finder/Explorer/DAW browser to tracks.
+## 3) Native Bridge Patterns (to make DAW drops work)
+### 3A) Windows (Explorer/DAW targets)
+- **Existing files:** Provide **`CF_HDROP`** (a list of absolute paths). DAWs read the paths and import.
+- **Virtual/streamed files:** Provide **`CFSTR_FILEDESCRIPTOR` + `CFSTR_FILECONTENTS`** to present files that don’t exist yet. Each descriptor names a file; the contents stream via `IStream` on demand. This avoids temp files while still presenting as files to the drop target.
+- **Drop effects:** Prefer `DROPEFFECT_COPY`. Avoid `MOVE` semantics for media import UX.
 
-**Save to disk (File System Access API; Chromium):**
-```js
-async function saveWav(blob, suggestedName = 'stem.wav') {
-  const handle = await window.showSaveFilePicker({
-    suggestedName,
-    types: [{ description: 'WAV file', accept: { 'audio/wav': ['.wav'] } }],
-  });
-  const stream = await handle.createWritable();
-  await stream.write(blob);
-  await stream.close();
-}
+**Minimal flow (pseudo-code):**
 ```
-
-**HTTP headers for direct downloads:**
-```http
-Content-Type: audio/wav
-Content-Disposition: attachment; filename="kick_120bpm.wav"
-Cache-Control: private, max-age=31536000
-```
-
-### Pattern B — Drag to desktop/folder (Chromium’s DownloadURL)
-```js
-function makeDraggableDownload(el, { href, filename, mime = 'audio/wav' }) {
-  el.setAttribute('draggable', 'true');
-  el.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('DownloadURL', `${mime}:${filename}:${href}`);
-    e.dataTransfer.effectAllowed = 'copy';
-  });
-}
-```
-
-**Notes:**
-- Works well to drag onto **OS folders/desktop**.  
-- **Do not** expect DAWs to accept this drag directly; it is not a local file path.
-
-### Pattern C — Native bridge (best UX for true drag-into-DAW)
-- **Desktop helper** (Electron/Tauri): mirrors your UI, **downloads stems to a local cache**, and provides OS-native drag types.  
-  - Windows: expose **CF_HDROP** or file-descriptor/contents formats.  
-  - macOS: use **file promises** on the pasteboard.
-- **DAW plug-in (VST3/AU)**: pulls stems via API, writes them locally, exposes drag/export from inside the DAW.
-
----
-
-## 4) Make stems maximally DAW-compatible
-- **Container:** WAV (RIFF/WAVE) or AIFF.  
-- **Channels:** Mono or stereo (avoid multi-channel interleaves).  
-- **Encoding:** PCM **16-bit or 24-bit** (widest compatibility) or **32-bit float**.  
-- **Sample rate:** Prefer **44.1 kHz or 48 kHz**.  
-- **RIFF integrity:** `RIFF` → `WAVE` → `fmt ` (PCM) before `data`; correct little-endian sizes; optional BWF `bext` chunk ok; keep headers clean and sizes accurate.
-
-**Client-side WAV encoder (Float32 → 16-bit PCM):**
-```js
-export function encodeWavFromFloat32(float32, { sampleRate, numChannels = 1 }) {
-  const bytesPerSample = 2; // 16-bit
-  const blockAlign = numChannels * bytesPerSample;
-  const byteRate  = sampleRate * blockAlign;
-  const dataSize  = float32.length * bytesPerSample;
-  const buffer    = new ArrayBuffer(44 + dataSize);
-  const view      = new DataView(buffer);
-
-  // RIFF header
-  writeStr(view, 0, 'RIFF');           view.setUint32(4, 36 + dataSize, true);
-  writeStr(view, 8, 'WAVE');
-  // fmt  chunk
-  writeStr(view, 12, 'fmt ');          view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);         // PCM
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);        // bits per sample
-  // data chunk
-  writeStr(view, 36, 'data');          view.setUint32(40, dataSize, true);
-
-  // PCM convert
-  let offset = 44;
-  for (let i = 0; i < float32.length; i++, offset += 2) {
-    const s = Math.max(-1, Math.min(1, float32[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+onDragStart() {
+  if (haveRealFiles) {
+    dataObject.addFormat(CF_HDROP, arrayOfAbsolutePaths);  // e.g., C:\Users\...\stem.wav
+  } else {
+    for (each virtualItem i) {
+      dataObject.addFormat(CFSTR_FILEDESCRIPTOR, descriptorFor(i)); // name, size if known
+      dataObject.addFormat(CFSTR_FILECONTENTS, streamProviderFor(i)); // IStream, lazy
+    }
   }
-  return new Blob([buffer], { type: 'audio/wav' });
-
-  function writeStr(dv, pos, str) { for (let i=0;i<str.length;i++) dv.setUint8(pos+i, str.charCodeAt(i)); }
+  DoDragDrop(dataObject, DROPEFFECT_COPY);
 }
 ```
 
-**Optional resample (e.g., 24 kHz → 48 kHz) using Web Audio:**
-```js
-async function resample(float32, srcRate, dstRate) {
-  const frames = Math.ceil(float32.length * dstRate / srcRate);
-  const ctx = new OfflineAudioContext(1, frames, dstRate);
-  const buf = ctx.createBuffer(1, float32.length, srcRate);
-  buf.getChannelData(0).set(float32);
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.connect(ctx.destination);
-  src.start();
-  const rendered = await ctx.startRendering();
-  return rendered.getChannelData(0); // Float32Array at dstRate
+**Quality tips (Win):**
+- Populate correct filenames and extensions (`.wav`, `.aiff`).
+- If using virtual files, support multiple items (one `FILECONTENTS` per file, indexed by the descriptor).
+- Ensure thread apartments and COM initialization are correct; render contents **only** after drop for performance.
+
+### 3B) macOS (Finder/DAW targets)
+- **Existing files:** Expose **file URLs** on the pasteboard (NSPasteboardTypeFileURL).
+- **Virtual/streamed files:** Use **`NSFilePromiseProvider`** (a “file promise”) so the drop target can request the file; your app writes it to the provided destination on demand.
+- **Drop operations:** Prefer `.copy`. Ensure your promise provider writes valid files *quickly* on fulfillment.
+
+**Minimal flow (Swift-ish pseudo-code):**
+```
+func draggingSession(for items: [DragItem]) -> NSDraggingSession {
+  let pb = NSPasteboard.general
+  pb.clearContents()
+  for item in items {
+    if item.isRealFile {
+      pb.write(FileURL(item.absolutePath))
+    } else {
+      let promise = NSFilePromiseProvider(fileType: "wav", delegate: self)
+      promise.userInfo = item // to render later
+      pb.writeObjects([promise])
+    }
+  }
+  return beginDraggingSession(with: pb.readObjects(), event: event, source: self)
+}
+
+// Delegate: called after drop; write the file to requested URL
+func filePromiseProvider(_ provider: NSFilePromiseProvider, writePromiseTo url: URL, completionHandler: @escaping (Error?) -> Void) {
+  renderAndWrite(item: provider.userInfo, to: url) // write .wav contents
+  completionHandler(nil)
+}
+```
+
+**Quality tips (macOS):**
+- Use the correct UTI/UTType (“wav”/“aiff”).  
+- Make sure the promise is fulfilled **fast**; DAWs may time out on slow providers.
+- If you materialize temp files, clean them up after import completes.
+
+### 3C) Electron/Tauri helpers (cross‑platform shell)
+- **Electron:** Use `webContents.startDrag({ file, icon })` for **existing** files. For **virtual** files, materialize into a cache first or implement OS‑native bridges (Windows: CF_HDROP or FILEDESCRIPTOR/FILECONTENTS; macOS: file promises).
+- **Tauri/Native:** Expose OS‑level drags via a plugin/sidecar that creates paths or promises and starts the drag from native code.
+
+**Note:** DAWs expect **file-like** drops. If your helper only sets web drag data (e.g., `text/uri-list`), drops will fail.
+
+---
+
+## 4) DAW Expectations (drag targets)
+- **Ableton Live:** Accepts drops of **local audio files** (WAV, AIFF, FLAC, OGG; mono/stereo; common bit depths/rates) onto Session/Arrangement.
+- **Logic Pro:** Supports creating tracks by **dragging audio files** into the Tracks area.
+- **FL Studio:** Drag from its **Browser** (which reflects OS folders) into Playlist/Channel Rack. It consumes **file paths** from the OS.
+
+**Practical read:** DAWs act like standard OS drag targets expecting **file paths or file promises**, not browser-only MIME payloads.
+
+---
+
+## 5) Cross‑Browser Drag‑Out Support (sender behavior)
+- **Chromium (Chrome/Edge):** Supports non‑standard **`DownloadURL`** for **drag to OS folder/desktop**. Useful for a drag‑only path to disk; most DAWs won’t accept it directly.
+- **Safari/Firefox:** Do not support `DownloadURL` for drag‑out. Browser‑only drag into DAWs is typically not viable.
+
+**Payload hygiene (web):**
+```
+el.draggable = true;
+el.addEventListener('dragstart', (e) => {
+  // Use only if targeting a desktop/folder drop in Chromium:
+  e.dataTransfer.setData('DownloadURL', `audio/wav:my_stem.wav:${makeHrefForThisStem()}`);
+  e.dataTransfer.effectAllowed = 'copy';
+});
+```
+(Use a stable href; avoid enormous data URIs. Do not expect DAWs to accept this payload.)
+
+---
+
+## 6) Failure Modes & Drag‑Specific Fixes
+1) **Drop into DAW does nothing**  
+   - Cause: DAW expects OS file paths/promises; browser sent web-only payload.  
+   - Fix: Use a **native bridge** to emit file paths (Win: `CF_HDROP` or file promises; macOS: file promises or file URLs).
+
+2) **Windows: drag works between some apps but not to DAW**  
+   - Cause: App privilege mismatch (DAW “Run as administrator”) or wrong formats.  
+   - Fix: Run at the same privilege level; provide `CF_HDROP` (existing) or FILEDESCRIPTOR/FILECONTENTS (virtual).
+
+3) **macOS: drop cursor shows “not allowed” over DAW**  
+   - Cause: Pasteboard items don’t include file URLs or file promises for supported types.  
+   - Fix: Provide `NSFilePromiseProvider` with correct UTI (“wav”, “aiff”) or write temporary files and expose file URLs.
+
+4) **Drop starts but import fails with “file unreadable/corrupt”**  
+   - Cause: The payload delivered a file path, but the file contents are invalid or incomplete.  
+   - Fix: Ensure your encoder writes valid **WAV/AIFF** (PCM 16/24‑bit or 32‑bit float; correct RIFF chunk order and sizes).
+
+5) **Large/virtual files cause stalls**  
+   - Cause: Rendering contents during the drag loop.  
+   - Fix: Defer heavy work until **after drop** (Win: stream via `IStream` when `CFSTR_FILECONTENTS` is requested; macOS: fulfill file promise on callback).
+
+6) **Multiple items dropped but only one appears**  
+   - Cause: Not providing one `FILECONTENTS` per descriptor (Win) or not writing each promised file (macOS).  
+   - Fix: Index descriptors and fulfill each file separately.
+
+7) **DAW imports with wrong pitch/tempo after drop**  
+   - Cause: Sample rate mismatch or DAW time‑stretching.  
+   - Fix: Export stems at **44.1 kHz or 48 kHz**, set correct headers; remind users to check warp/time‑stretch settings.
+
+8) **Path/filename edge cases**  
+   - Cause: Unsupported characters or extreme path length (especially on Windows).  
+   - Fix: Use ASCII‑friendly names, short paths, and proper extensions (`.wav`, `.aiff`).
+
+---
+
+## 7) Minimal Test Plan (drag-only)
+- **Matrix:** {Windows, macOS} × {Chrome, Edge, Safari, Firefox} × {Ableton Live, Logic Pro, FL Studio}
+- **Senders:** Web page (Chromium `DownloadURL`), Native helper (Electron/Tauri), Pure native (Win/macOS test host).
+- **Targets:** DAW track views, DAW browsers, OS desktop/folder.
+- **Cases:** Single file, multiple files, real files, virtual files (streamed), long filenames, large files (>500 MB), odd sample rates.
+- **Pass if:** Drop accepted and clip appears; audio decodes and plays; no orphan temp files; no stalls/timeouts.
+
+---
+
+## 8) Reference Snippets (drag-focused)
+**Electron (existing files):**
+```ts
+// In renderer
+tile.addEventListener('dragstart', () => window.electron.startDrag('/absolute/path/stem.wav'));
+
+// In main
+ipcMain.handle('startDrag', (e, filePath) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  win.webContents.startDrag({ file: filePath, icon: '/path/to/icon.png' });
+});
+```
+
+**Windows (virtual files, conceptual):**
+```cpp
+// Build IDataObject with both formats for N files:
+AddFormat(CFSTR_FILEDESCRIPTOR, descriptors[N]); // names, sizes, attributes
+for (i in files) {
+  AddFormatIndexed(CFSTR_FILECONTENTS, i, IStreamProvider(files[i])); // stream on request
+}
+DoDragDrop(dataObject, DROPEFFECT_COPY);
+```
+
+**macOS (file promises, conceptual):**
+```swift
+let promise = NSFilePromiseProvider(fileType: "wav", delegate: self)
+promise.userInfo = model   // info to render on fulfillment
+pasteboard.writeObjects([promise])
+
+// On fulfillment after drop:
+func filePromiseProvider(_ provider: NSFilePromiseProvider,
+                         writePromiseTo dst: URL,
+                         completionHandler: @escaping (Error?) -> Void) {
+  try writeWav(model: provider.userInfo, to: dst)
+  completionHandler(nil)
 }
 ```
 
 ---
 
-## 5) Cross-browser support matrix (practical)
-- **Chrome/Edge:** Save to disk (File System Access) + **DownloadURL** drag-to-desktop/folder.  
-- **Safari:** No File System Access API; use standard downloads; drag-to-desktop may behave differently and is less reliable.  
-- **Firefox:** No File System Access API; **DownloadURL** not supported. Provide clear “Save” + folder workflow.
-
----
-
-## 6) DAW setup tips (end-user docs you can paste)
-- **Ableton Live:** Use **Add Folder in Places** to pin your stems folder, then drag from Live’s Browser to tracks.
-- **Logic Pro:** Drag from Finder into the **Tracks area** to create audio or sampler tracks.
-- **FL Studio:** Add your stems folder under **Browser → Extra search folders**, then drag from the Browser to Playlist/Channel Rack.
-
----
-
-## 7) Failure modes & fixes (field-tested)
-1) **Dropping into the DAW does nothing.**  
-   - Cause: DAW expects a **local file path**, not a browser-only drag payload.  
-   - Fix: Save to disk first, then drag from Finder/Explorer or the DAW’s own browser. For true one-step drag, use a **desktop helper** or **plug-in**.
-
-2) **“File could not be read” / “file corrupt.”**  
-   - Cause: Damaged or non-standard WAV header (bad chunk sizes/order, wrong endian).  
-   - Fix: Ensure `RIFF`/`WAVE`/`fmt ` precede `data`, little-endian sizes are correct, and encoding is PCM or float with valid bit depth. Validate with a quick header parser before offering the download.
-
-3) **Wrong pitch/tempo after import.**  
-   - Cause: **Sample rate mismatch** with the DAW project, or automatic time-stretching.  
-   - Fix: Export at **44.1 kHz or 48 kHz**; consider auto-resampling on export. Remind users to check warp/time-stretch settings in their DAW.
-
-4) **Drag works to desktop/folders but not into DAW.**  
-   - Cause: The **DownloadURL** drag type is for OS file managers, not content drops in DAWs.  
-   - Fix: Use it only to get the file onto disk quickly; then drag from there to the DAW, or ship a native bridge.
-
-5) **Windows: drag-and-drop intermittently fails.**  
-   - Cause: Privilege level mismatch (DAW run as Administrator, browser not).  
-   - Fix: Avoid running the DAW as Administrator or run both apps at the same level.
-
-6) **Users can’t find the saved files.**  
-   - Cause: Browser prompts saved to Downloads or another default path.  
-   - Fix: Offer **Save to folder** with a suggested name, plus an in-app “Open folder” affordance. Encourage pinning that folder inside the DAW Browser.
-
-7) **Filename or path issues.**  
-   - Cause: Deep nesting or special characters.  
-   - Fix: Keep filenames ASCII-friendly with clear stem roles (e.g., `artist_title_120bpm_kick.wav`) and avoid very long paths.
-
-8) **Safari/Firefox users can’t drag to desktop.**  
-   - Cause: Lack of **DownloadURL** support.  
-   - Fix: Provide a prominent **Save** button and explain the two-step flow.
-
-9) **Multi-channel exports won’t import cleanly.**  
-   - Cause: Some DAWs expect mono or stereo for samples.  
-   - Fix: Export stems as mono or stereo only.
-
-10) **Very large files fail to download/drag.**  
-    - Cause: Network interruptions or memory pressure.  
-    - Fix: Stream downloads, enable resume where possible, and keep per-stem durations reasonable.
-
----
-
-## 8) Reference implementation snippets
-**A) Create a downloadable Anchor for broad compatibility**
-```js
-function downloadBlob(blob, filename='stem.wav') {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 3_000);
-}
-```
-
-**B) Make a tile draggable to folders (Chromium)**
-```js
-function enableDragToFolder(tile, href, filename) {
-  tile.draggable = true;
-  tile.addEventListener('dragstart', (e) => {
-    e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${href}`);
-    e.dataTransfer.effectAllowed = 'copy';
-  });
-}
-```
-
-**C) WAV header quick validator (minimum sanity)**
-```js
-function isLikelyValidWav(arrayBuffer) {
-  const v = new DataView(arrayBuffer);
-  const sig = (o,s) => String.fromCharCode(...Array.from({length:s}, (_,i)=>v.getUint8(o+i)));
-  if (sig(0,4) !== 'RIFF') return false;
-  if (sig(8,4) !== 'WAVE') return false;
-  if (sig(12,4) !== 'fmt ') return false;
-  if (sig(36,4) !== 'data') return false; // simplistic; robust parsers walk chunks
-  return true;
-}
-```
-
----
-
-## 9) QA plan (copy/paste to your issue tracker)
-- [ ] **Export format**: WAV or AIFF; mono/stereo; PCM 16/24-bit or 32-bit float; 44.1 kHz or 48 kHz.
-- [ ] **RIFF health**: Chunk order/size verified; header parser passes.
-- [ ] **HTTP headers**: `Content-Type: audio/wav`, `Content-Disposition` with filename.
-- [ ] **Save flow**: One-click **Save** (File System Access API where available) + anchor fallback.
-- [ ] **Drag-to-OS**: Tiles carry **DownloadURL** (Chromium) for drag-to-desktop/folder.
-- [ ] **Docs**: In-app tip for adding the stems folder to Ableton Places / FL Browser / Logic.
-- [ ] **Windows privilege**: Troubleshooting note about not running the DAW as Administrator.
-- [ ] **Cross-browser**: Chrome, Edge, Safari, Firefox tested; fallbacks verified.
-- [ ] **Edge cases**: Odd sample rates re-encoded; filenames short; ASCII-safe; extension `.wav` or `.aiff` set.
-- [ ] **Performance**: Large file streaming tested; memory use acceptable.
-
----
-
-## 10) Shipping recommendations
-- Provide both **Download** and **Save to folder**.  
-- Add a **“Where did my files go?”** helper that opens the target folder.  
-- Include a **Getting Started** card that shows the two-step drag flow and DAW-specific folder pinning.
-- If “one-step drag into DAW” is a must-have, prioritize a **desktop helper** or **plug-in** implementation.
-
----
-
-## 11) Appendix — WAV format essentials (quick reference)
-- **RIFF header (little-endian)**  
-  - Chunk 0: `RIFF` + overall size.  
-  - Format: `WAVE`.  
-  - `fmt ` chunk (PCM): size `16`, audioFormat `1` (or `3` for float), channels `1 or 2`, sampleRate, byteRate, blockAlign, bitsPerSample.  
-  - `data` chunk: size `numFrames * channels * bytesPerSample` followed by PCM.  
-- **Recommended defaults**: stereo when meaningful; 24-bit PCM at 44.1 kHz or 48 kHz; or 32-bit float if your pipeline already uses float.
-- **Keep it simple**: avoid exotic chunks; keep sizes consistent; verify with a quick header check before offering the file.
-
----
-
-## 12) Troubleshooting decision tree (operator runbook)
-- **Does dropping into the DAW do nothing?** → Save to disk → Drag from folder → Works? If yes, you need native bridge for one-step drag.  
-- **DAW reports corrupt/unsupported?** → Run header validator → Re-encode PCM 16/24-bit → Retry.  
-- **Audio sounds wrong speed/pitch?** → Resample to 44.1/48 kHz → Ensure DAW warp/time-stretch settings are appropriate.  
-- **Windows only fails?** → Check if DAW runs as Administrator → Run both apps at same privilege level.  
-- **Firefox/Safari users can’t drag to desktop?** → Provide Save/Download path; inform that drag-to-folder is Chromium-only.
+## 9) Final Checklist (drag-only readiness)
+- [ ] Ableton/Logic/FL accept the drop of your stems from **OS-level paths or file promises**.
+- [ ] **Windows:** CF_HDROP for existing files; FILEDESCRIPTOR/FILECONTENTS for virtual files; `DROPEFFECT_COPY` set.
+- [ ] **macOS:** File URLs or `NSFilePromiseProvider` provided with correct UTTypes; fulfillment is fast and reliable.
+- [ ] **Chromium drag-to-OS:** `DownloadURL` payload works to folders/desktop (for a drag-only path to disk).
+- [ ] **Firefox/Safari:** Verified behavior and communicated limitations; alternative drag route available.
+- [ ] **RIFF/AIFF correctness:** Headers valid; mono/stereo; PCM 16/24‑bit or 32‑bit float; typical rates 44.1/48 kHz.
+- [ ] **Multiple files:** All items materialize/import; indices match; names/extensions correct.
+- [ ] **No privilege mismatches:** Drag works when DAWs are not elevated differently than the sender.
+- [ ] **Cleanup:** Temp/cache files cleaned after successful import.
