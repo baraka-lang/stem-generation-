@@ -2,6 +2,7 @@
 // Modified to add card numbering, waveform navigation buttons, help modal and red borders on mute.
 
 import { createClient } from '@supabase/supabase-js'
+import { initWavEncoder, encodeWAVAsync, encodeWAVSync, preComputeDataURI, terminateWavEncoder, manageCacheSize } from './audioEncoder.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -700,43 +701,52 @@ const stemWavCache = {}
 const stemWavDataUrlCache = {}
 // Store blob URLs with lifecycle management for drag-to-DAW
 const stemBlobUrls = {}
+// Track preparation state for drag operations (prevents blocking during dragstart)
+const stemDragReady = {}
 
 /**
- * Convert a Blob into a data: URI and cache it per stem so external
- * applications (Ableton/Logic/etc.) can receive the entire file via
- * DownloadURL even if they cannot dereference blob: URLs.
+ * Get cached data URI for a stem (synchronous - must be pre-computed)
  * @param {string} st - Stem identifier
- * @param {Blob} wavBlob - WAV blob for the stem
- * @returns {Promise<string>} data URI representing the WAV file
+ * @returns {string|null} data URI or null if not cached
  */
-async function getStemDataUri(st, wavBlob) {
-  if (stemWavDataUrlCache[st]) return stemWavDataUrlCache[st]
-  if (!(wavBlob instanceof Blob)) {
-    throw new Error('Invalid WAV blob for data URI conversion')
-  }
-  const dataUri = await blobToDataURL(wavBlob)
-  stemWavDataUrlCache[st] = dataUri
-  return dataUri
+function getStemDataUri(st) {
+  return stemWavDataUrlCache[st] || null
 }
 
 /**
- * Promise wrapper around FileReader for converting blobs to data URLs.
- * @param {Blob} blob
- * @returns {Promise<string>}
+ * Pre-compute WAV blob and data URI for a stem asynchronously
+ * This should be called immediately after audio generation to avoid blocking during drag
+ * @param {string} st - Stem identifier
+ * @param {AudioBuffer} audioBuffer - The audio buffer to encode
+ * @returns {Promise<void>}
  */
-function blobToDataURL(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onloadend = () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result)
-      } else {
-        reject(new Error('Failed to read blob as data URL'))
-      }
-    }
-    reader.onerror = () => reject(reader.error || new Error('Blob read failed'))
-    reader.readAsDataURL(blob)
-  })
+async function prepareStemmForDrag(st, audioBuffer) {
+  if (!audioBuffer) {
+    stemDragReady[st] = false
+    return
+  }
+
+  try {
+    stemDragReady[st] = false
+    console.log(`Preparing ${st} for drag...`)
+
+    const wavBlob = await encodeWAVAsync(audioBuffer)
+
+    stemWavCache[st] = wavBlob
+    manageCacheSize(stemWavCache, wavBlob.size)
+
+    const dataUri = await preComputeDataURI(wavBlob)
+    stemWavDataUrlCache[st] = dataUri
+
+    stemDragReady[st] = true
+    updateDragButtonState(st)
+
+    console.log(`✓ ${st} ready for drag: ${(wavBlob.size / 1024).toFixed(1)}KB`)
+  } catch (err) {
+    console.error(`Failed to prepare ${st} for drag:`, err)
+    stemDragReady[st] = false
+    updateDragButtonState(st)
+  }
 }
 
 /**
@@ -757,6 +767,7 @@ function invalidateStemCache(st) {
     delete stemBlobUrls[st]
     console.log(`Cleaned up blob URL for ${st}`)
   }
+  stemDragReady[st] = false
 }
 const HISTORY_LIMIT = 50
 function ensureStemHistory(st) {
@@ -1802,6 +1813,8 @@ function adjustEndpoint(st, factor) {
   stemLoopDuration[st] = out.duration
   // Invalidate cached WAV since loop has been adjusted
   invalidateStemCache(st)
+  // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
+  prepareStemmForDrag(st, out)
   // Redraw waveform
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
@@ -2135,6 +2148,11 @@ async function separateCurrentStem(st) {
 
     // Invalidate cached WAV since we have new separated audio
     invalidateStemCache(st)
+
+    // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
+    if (loopBuffer) {
+      prepareStemmForDrag(st, loopBuffer)
+    }
 
     // Update waveform visualization
     drawWaveform(st)
@@ -2498,6 +2516,8 @@ async function generateStem(st) {
       failedValidation = !validated
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
+      // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
+      prepareStemmForDrag(st, audioBuffer)
     } catch (supErr) {
       // Supabase call failed or returned error; fallback to local generation
       console.error('Supabase request failed', supErr)
@@ -2540,6 +2560,8 @@ async function generateStem(st) {
       endpointFactors[st] = 1
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
+      // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
+      prepareStemmForDrag(st, strictLoop)
     }
 
     // Push the new version into history
@@ -2706,12 +2728,24 @@ function generateWavFilename(st) {
    Downloads with validation and error handling
    ========================================================= */
 /**
- * Encode an AudioBuffer to WAV format with comprehensive validation.
+ * Encode an AudioBuffer to WAV format (uses synchronous fallback)
+ * For non-blocking encoding, use encodeWAVAsync from audioEncoder.js
  * @param {AudioBuffer} audioBuffer - The audio buffer to encode
  * @returns {Blob} WAV file blob
  * @throws {Error} If buffer is invalid or encoding fails
  */
 function encodeWAV(audioBuffer){
+  return encodeWAVSync(audioBuffer)
+}
+
+/**
+ * Legacy synchronous WAV encoder implementation
+ * @param {AudioBuffer} audioBuffer - The audio buffer to encode
+ * @returns {Blob} WAV file blob
+ * @throws {Error} If buffer is invalid or encoding fails
+ * @deprecated Kept for backward compatibility
+ */
+function encodeWAVLegacy(audioBuffer){
   // Comprehensive validation
   if (!audioBuffer) {
     throw new Error('Audio buffer is null or undefined')
@@ -3403,7 +3437,7 @@ function updateTempoIndicator(st) {
 }
 /**
  * Update the drag button state with validation and file size information.
- * The button is disabled when no sample is available or on non-Chromium browsers.
+ * The button is disabled when no sample is available, data isn't ready, or on non-Chromium browsers.
  * @param {string} st - Stem identifier
  */
 function updateDragButtonState(st) {
@@ -3413,12 +3447,13 @@ function updateDragButtonState(st) {
   const buf = stemLoop[st]
   const hasActiveSample = (stemActiveIndex[st] ?? -1) >= 0 && buf
   const isChromium = isChromiumBrowser()
+  const isDragReady = stemDragReady[st] === true
 
   // Validate buffer has actual data
   const hasValidData = hasActiveSample && buf.length > 0 && buf.duration > 0
 
-  // Enable button only if valid data exists and browser is Chromium
-  dragBtn.disabled = !hasValidData || !isChromium
+  // Enable button only if valid data exists, is ready for drag, and browser is Chromium
+  dragBtn.disabled = !hasValidData || !isChromium || !isDragReady
 
   // Update tooltip with detailed information
   if (!isChromium) {
@@ -3427,6 +3462,8 @@ function updateDragButtonState(st) {
     dragBtn.title = 'Create a sample first to enable drag-to-DAW'
   } else if (!hasValidData) {
     dragBtn.title = 'Audio buffer is empty - please regenerate'
+  } else if (!isDragReady) {
+    dragBtn.title = 'Preparing audio file... Please wait'
   } else {
     const filename = generateWavFilename(st)
     // Calculate approximate WAV file size (16-bit stereo)
@@ -3439,8 +3476,8 @@ function updateDragButtonState(st) {
   const container = document.querySelector(`[data-drag-container="${st}"]`)
   if (container && !isChromium) {
     container.style.display = 'none'
-  } else if (container && !hasValidData) {
-    // Visual feedback for empty buffer
+  } else if (container && (!hasValidData || !isDragReady)) {
+    // Visual feedback for empty buffer or not ready
     dragBtn.style.opacity = '0.5'
   } else if (container) {
     dragBtn.style.opacity = '1'
@@ -3959,8 +3996,8 @@ function setupEventListeners() {
   })
 
   // Dragstart handler for drag-to-DAW functionality (Chromium only)
-  // Enhanced with File object and DataTransferItem for DAW compatibility
-  document.addEventListener('dragstart', async e => {
+  // NOW SYNCHRONOUS - all data is pre-computed to prevent UI freezing
+  document.addEventListener('dragstart', e => {
     const btn = e.target.closest('[data-action="drag-stem"]')
     if (!btn) return
 
@@ -3968,63 +4005,39 @@ function setupEventListeners() {
     if (!st) return
 
     try {
-      // Check if stem has an active buffer
-      const buf = stemLoop[st]
-      if (!buf) {
-        console.warn(`No audio buffer for drag: ${st}`)
+      // Check if drag data is ready (pre-computed)
+      if (!stemDragReady[st]) {
+        console.warn(`Drag data not ready for ${st}`)
         e.preventDefault()
+        alert('Audio is still being prepared. Please wait a moment and try again.')
         return
       }
 
-      // Validate buffer has actual data
-      if (buf.length === 0 || buf.duration === 0) {
-        console.error(`Empty buffer for drag: ${st}`)
-        e.preventDefault()
-        alert('Audio buffer is empty. Please regenerate the audio.')
-        return
-      }
-
-      console.log(`Preparing drag for ${st}: ${buf.length} samples, ${buf.duration.toFixed(2)}s`)
-
-      // Try to reuse cached WAV blob, or generate new one
-      let wavBlob = stemWavCache[st]
-      let isCached = false
+      // Get pre-computed WAV blob and data URI
+      const wavBlob = stemWavCache[st]
+      const dataUri = getStemDataUri(st)
 
       if (!wavBlob || wavBlob.size === 0) {
-        // Generate new WAV blob with error handling
-        try {
-          wavBlob = encodeWAV(buf)
-          // Cache the blob for reuse
-          stemWavCache[st] = wavBlob
-          // Ensure old data URIs are cleared when regenerating
-          delete stemWavDataUrlCache[st]
-        } catch (encodeErr) {
-          console.error('WAV encoding failed during drag:', encodeErr)
-          e.preventDefault()
-          alert(`Failed to prepare audio for drag: ${encodeErr.message}`)
-          return
-        }
-      } else {
-        isCached = true
-        console.log(`Using cached WAV blob for ${st}`)
-      }
-
-      // Verify blob has data
-      if (!wavBlob || wavBlob.size === 0) {
-        console.error('Generated WAV blob is empty')
+        console.error(`No WAV blob cached for ${st}`)
         e.preventDefault()
-        alert('Failed to generate audio file. The file is empty.')
+        alert('Audio data is not available. Please regenerate the audio.')
         return
       }
 
-      console.log(`WAV blob ready: ${(wavBlob.size / 1024).toFixed(1)}KB ${isCached ? '(cached)' : '(new)'}`)
+      if (!dataUri) {
+        console.error(`No data URI cached for ${st}`)
+        e.preventDefault()
+        alert('Audio data is not fully prepared. Please wait a moment and try again.')
+        return
+      }
+
+      console.log(`Drag initiated for ${st}: ${(wavBlob.size / 1024).toFixed(1)}KB (pre-cached)`)
 
       const filename = generateWavFilename(st)
-      const dataUri = await getStemDataUri(st, wavBlob)
-      console.log(`Data URI prepared for ${filename}`)
 
       // Create a File object from the Blob for better DAW compatibility
-      // File objects provide proper metadata that DAWs expect
+      // File objects provide proper metadata (MIME type, filename, timestamp) that DAWs expect
+      // WAV format: 16-bit PCM, little-endian, standard RIFF headers
       const wavFile = new File([wavBlob], filename, {
         type: 'audio/wav',
         lastModified: Date.now()
@@ -4116,16 +4129,15 @@ function setupEventListeners() {
     // Restore button appearance
     btn.style.opacity = '1'
 
-    // Clean up blob URL after 5 minutes to ensure drag operation completes
-    // Extended timeout ensures DAWs have time to read the file data
-    // Some DAWs may delay file access during complex drag operations
+    // Clean up blob URL immediately after drag completes (DAWs should have read the data by now)
+    // Reduced from 5 minutes to 1 second for better memory management
     setTimeout(() => {
       if (stemBlobUrls[st]) {
         URL.revokeObjectURL(stemBlobUrls[st])
         delete stemBlobUrls[st]
-        console.log(`Cleaned up blob URL for ${st} after 5 minutes`)
+        console.log(`Cleaned up blob URL for ${st}`)
       }
-    }, 300000) // 5 minutes = 300,000ms
+    }, 1000) // 1 second - enough time for the drag operation to complete
 
     console.log(`Drag operation completed for ${st}`)
   })
@@ -4437,6 +4449,8 @@ function selectStemVersion(st, index){
   stemLoopDuration[st] = take.raw.duration
   // Invalidate cached WAV since we've switched to different audio
   invalidateStemCache(st)
+  // Pre-compute WAV and data URI for drag-and-drop (non-blocking)
+  prepareStemmForDrag(st, take.raw)
   const canvas=document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
     const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
@@ -4550,6 +4564,10 @@ function initTechnoGenerator(){
 
 export async function initApp(){
   console.log('🎬 Initializing App Navigation System…')
+
+  // Initialize WAV encoder worker for non-blocking audio encoding
+  initWavEncoder()
+
   setupNavigationListeners()
   // Start directly on the genre selection page instead of the login page
   showPage('selection-page')
@@ -4558,6 +4576,11 @@ export async function initApp(){
   // Initialise the user menu in the header
   setupUserMenu()
   console.log('✅ Navigation system ready')
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    terminateWavEncoder()
+  })
 }
 
 // -----------------------------------------------------------------------------
