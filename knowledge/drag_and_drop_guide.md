@@ -158,6 +158,9 @@ DoDragDrop(dataObject, DROPEFFECT_COPY)
 - Keep filenames short, ASCII-safe, with stem roles (`song_120bpm_kick.wav`).
 - If you cache files, clean up after successful drops.
 - If you must offer multiple rates for user choice, label them clearly by **source rate** (e.g., “WAV 24 kHz (source)”, “WAV 44.1 kHz (Pro)”). For drag reliability, **do not resample** on the fly unless required by your pipeline.
+- **Browser bridge:** When you cannot access OS drag APIs (plain Chrome), ask the user for a destination folder via the File System Access API and pre-write every new stem there. When Chrome/Edge expose the File System Access drag-out API, attach the saved `FileSystemFileHandle` to the drag payload so Ableton/Logic treat it like a Finder/Explorer file.
+- **Consent flow:** Cache the directory handle in IndexedDB after the first approval so the “DAW Drop Helper” toggle comes back automatically on reload.
+- **Deduplicate writes:** Track the PCM timestamp per stem so you only write each stem once per version instead of hammering the disk while the user experiments with drag.
 
 ---
 

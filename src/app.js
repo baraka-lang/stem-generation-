@@ -5,6 +5,7 @@ import { createClient } from '@supabase/supabase-js'
 import { initWavEncoder, encodeWAVAsync, encodeWAVSync, preComputeDataURI, terminateWavEncoder, manageCacheSize } from './audioEncoder.js'
 import { storeStemPCM, getStemPCM, getStemFormat, isPCMReadyForDrag, extractPCMFromWAV, clearStemPCM, getPCMCacheStats } from './stemDataManager.js'
 import { pcm16leToWav, pcm16leToWavBlob, validatePcmData, parseElevenLabsFormat, generateWavFilename as generateWavFilenameFromFormat } from './pcmToWav.js'
+import { initAutoDownloadManager, isAutoDownloadSupported, isAutoDownloadEnabled, requestAutoDownloadDirectory, disableAutoDownload, getAutoDownloadStatus, subscribeAutoDownloadEvents, queueAutoDownloadForStem, getStemAutoDownloadRecord } from './autoDownloadManager.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -94,6 +95,16 @@ const prevSoloMuteStates = {}
 
 const stemEqValues = {}
 const stemFilterValues = {}
+
+/* =========================================================
+   Auto-download / DAW helper state
+   ========================================================= */
+let autoDownloadSetupPromise = null
+let autoDownloadPanelEl = null
+let autoDownloadStatusEl = null
+let autoDownloadNoteEl = null
+let autoDownloadActionBtn = null
+let autoDownloadDisableBtn = null
 
 /* =========================================================
    Saved Sets (Player State Snapshots)
@@ -1865,6 +1876,7 @@ function adjustEndpoint(st, factor) {
     const pcmData = extractPCMFromAudioBuffer(out)
     storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
     console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    scheduleAutoDownloadForStem(st)
   } catch (pcmErr) {
     console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
@@ -2209,6 +2221,7 @@ async function separateCurrentStem(st) {
         const pcmData = extractPCMFromAudioBuffer(loopBuffer)
         storeStemPCM(st, pcmData, loopBuffer.sampleRate, loopBuffer.numberOfChannels, `pcm_${loopBuffer.sampleRate}`)
         console.log(`[Separation] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+        scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
         console.warn(`[Separation] Failed to extract PCM for ${st}:`, pcmErr.message)
       }
@@ -2570,6 +2583,7 @@ async function generateStem(st) {
         const pcmInfo = extractPCMFromWAV(audio_b64)
         storeStemPCM(st, pcmInfo.pcmData, pcmInfo.sampleRate, pcmInfo.numChannels, pcmInfo.format)
         console.log(`[Gen] Stored PCM for ${st}: ${(pcmInfo.dataSize / 1024).toFixed(1)}KB`)
+        scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
         console.warn(`[Gen] Failed to extract PCM for ${st}:`, pcmErr.message)
       }
@@ -2641,6 +2655,7 @@ async function generateStem(st) {
         const pcmData = extractPCMFromAudioBuffer(strictLoop)
         storeStemPCM(st, pcmData, strictLoop.sampleRate, strictLoop.numberOfChannels, `pcm_${strictLoop.sampleRate}`)
         console.log(`[Gen] Extracted PCM from AudioBuffer for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+        scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
         console.warn(`[Gen] Failed to extract PCM from AudioBuffer for ${st}:`, pcmErr.message)
       }
@@ -2783,6 +2798,24 @@ function isChromiumBrowser() {
 }
 
 /**
+ * Detect whether the browser can attach FileSystemHandles to drag payloads.
+ * Chrome/Edge expose this via the File System Access drag-out API.
+ */
+function supportsFileHandleDragOut() {
+  if (typeof window === 'undefined') return false
+  const itemListProto = window.DataTransferItemList?.prototype || DataTransfer.prototype?.items?.constructor?.prototype
+  const itemProto = window.DataTransferItem?.prototype
+  const hasFsHandle = 'FileSystemHandle' in window || 'FileSystemFileHandle' in window
+  return Boolean(
+    hasFsHandle &&
+    itemListProto &&
+    typeof itemListProto.add === 'function' &&
+    itemProto &&
+    ('getAsFileSystemHandle' in itemProto || 'webkitGetAsEntry' in itemProto)
+  )
+}
+
+/**
  * Generate a properly formatted WAV filename for drag-and-drop.
  * Format: ProjectName_InstrumentName_BPM_Key_Bars.wav
  * Example: Nexus_Kick_130_Am_4bars.wav
@@ -2804,6 +2837,212 @@ function generateWavFilename(st) {
   const safeName = instrumentName.replace(/\s+/g, '')
 
   return `Techno_${safeName}_${tempo}_${keyStr}_${bars}bars.wav`
+}
+
+function setDragImageForFilename(event, filename) {
+  try {
+    const dragImg = document.createElement('div')
+    dragImg.style.cssText = `
+      position: absolute;
+      top: -9999px;
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      white-space: nowrap;
+      pointer-events: none;
+    `
+    dragImg.textContent = `🎵 ${filename}`
+    document.body.appendChild(dragImg)
+
+    event.dataTransfer.setDragImage(dragImg, 0, 0)
+
+    setTimeout(() => dragImg.remove(), 100)
+  } catch (imgErr) {
+    console.warn('Failed to set custom drag image:', imgErr)
+  }
+}
+
+function tryAttachFileHandleDrag(e, st, btn) {
+  if (!supportsFileHandleDragOut()) return false
+  if (!isAutoDownloadSupported() || !isAutoDownloadEnabled()) return false
+  const record = getStemAutoDownloadRecord(st)
+  if (!record || record.status !== 'saved' || !record.fileHandle) return false
+
+  const list = e.dataTransfer?.items
+  if (!list || typeof list.add !== 'function') return false
+
+  try {
+    list.add(record.fileHandle)
+    const filename = record.filename || generateWavFilename(st)
+    e.dataTransfer.setData('text/plain', filename)
+    e.dataTransfer.effectAllowed = 'copy'
+    e.dataTransfer.dropEffect = 'copy'
+    setDragImageForFilename(e, filename)
+    if (btn) {
+      btn.style.opacity = '0.7'
+    }
+    console.log(`[Drag] Using saved FileSystemHandle for ${st}: ${filename}`)
+    return true
+  } catch (handleErr) {
+    console.warn(`[Drag] File handle drag failed for ${st}, falling back:`, handleErr)
+    return false
+  }
+}
+
+/* =========================================================
+   Auto-download helpers
+   ========================================================= */
+function scheduleAutoDownloadForStem(st) {
+  if (!isAutoDownloadSupported() || !isAutoDownloadEnabled()) return
+  const pcmCache = getStemPCM(st)
+  if (!pcmCache || !pcmCache.pcmData) return
+  const filename = generateWavFilename(st)
+  queueAutoDownloadForStem(st, {
+    pcmData: pcmCache.pcmData,
+    sampleRate: pcmCache.sampleRate,
+    numChannels: pcmCache.numChannels,
+    filename,
+    timestamp: pcmCache.timestamp
+  }).catch(err => {
+    console.warn(`[AutoDownload] Failed to save ${st}:`, err?.message || err)
+  })
+}
+
+function queueAutoDownloadsForAvailableStems() {
+  if (!isAutoDownloadSupported() || !isAutoDownloadEnabled()) return
+  STEM_ORDER.forEach(st => scheduleAutoDownloadForStem(st))
+}
+
+async function setupAutoDownloadPanel() {
+  if (!isAutoDownloadSupported() || autoDownloadPanelEl || !document?.body) return
+  autoDownloadPanelEl = document.createElement('div')
+  autoDownloadPanelEl.id = 'autoDownloadPanel'
+  autoDownloadPanelEl.className = 'fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 space-y-2'
+  autoDownloadPanelEl.innerHTML = `
+    <div class="text-[11px] uppercase tracking-[0.3em] text-white/60">DAW Drop Helper</div>
+    <div class="flex items-start gap-3">
+      <div class="flex-1">
+        <div class="text-sm font-semibold" data-auto-download-status>Auto-download unavailable</div>
+        <p class="text-[12px] text-white/70 mt-1" data-auto-download-note>
+          Enable Chrome's File System Access API to pre-save stems before you drag them into a DAW.
+        </p>
+      </div>
+      <div class="flex flex-col gap-2">
+        <button class="px-3 py-1.5 rounded-lg bg-white/90 text-black text-xs font-semibold hover:bg-white" data-action="auto-download-configure">Enable</button>
+        <button class="text-[11px] text-white/70 hover:text-white hidden" data-action="auto-download-disable">Disable</button>
+      </div>
+    </div>
+  `
+  document.body.appendChild(autoDownloadPanelEl)
+  autoDownloadStatusEl = autoDownloadPanelEl.querySelector('[data-auto-download-status]')
+  autoDownloadNoteEl = autoDownloadPanelEl.querySelector('[data-auto-download-note]')
+  autoDownloadActionBtn = autoDownloadPanelEl.querySelector('[data-action="auto-download-configure"]')
+  autoDownloadDisableBtn = autoDownloadPanelEl.querySelector('[data-action="auto-download-disable"]')
+
+  if (autoDownloadActionBtn) {
+    autoDownloadActionBtn.addEventListener('click', async () => {
+      try {
+        await requestAutoDownloadDirectory()
+        updateAutoDownloadPanel()
+        queueAutoDownloadsForAvailableStems()
+      } catch (err) {
+        alert(`Unable to enable auto-downloads: ${err?.message || err}`)
+      }
+    })
+  }
+
+  if (autoDownloadDisableBtn) {
+    autoDownloadDisableBtn.addEventListener('click', async () => {
+      try {
+        await disableAutoDownload()
+        updateAutoDownloadPanel()
+      } catch (err) {
+        console.warn('Failed to disable auto-download:', err)
+      }
+    })
+  }
+}
+
+function updateAutoDownloadPanel(status = getAutoDownloadStatus()) {
+  if (!autoDownloadPanelEl) return
+  if (!status?.supported) {
+    autoDownloadPanelEl.classList.add('hidden')
+    return
+  }
+  autoDownloadPanelEl.classList.remove('hidden')
+  if (autoDownloadStatusEl) {
+    autoDownloadStatusEl.textContent = status.enabled
+      ? `Auto-download ready${status.directoryName ? ` → ${status.directoryName}` : ''}`
+      : 'Auto-download disabled'
+  }
+  if (autoDownloadNoteEl) {
+    if (!status.enabled) {
+      autoDownloadNoteEl.textContent = 'Pick a folder once and stems will be saved there the moment they finish rendering.'
+    } else if (status.lastSavedStem) {
+      autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}`
+    } else {
+      autoDownloadNoteEl.textContent = 'Ready. Generate or drag a stem and it will be written into your chosen folder automatically.'
+    }
+  }
+  if (autoDownloadActionBtn) {
+    autoDownloadActionBtn.textContent = status.enabled ? 'Change folder' : 'Enable'
+  }
+  if (autoDownloadDisableBtn) {
+    autoDownloadDisableBtn.classList.toggle('hidden', !status.enabled)
+  }
+}
+
+function updateAutoDownloadChip(st) {
+  const chip = document.querySelector(`[data-auto-download-chip="${st}"]`)
+  if (!chip) return
+  const status = getAutoDownloadStatus()
+  if (!isAutoDownloadSupported()) {
+    chip.textContent = 'Desktop app required for native drag'
+    return
+  }
+  if (!status.enabled) {
+    chip.textContent = 'Optional: auto-save stems to a folder for DAW drops'
+    return
+  }
+  const record = getStemAutoDownloadRecord(st)
+  if (!record) {
+    chip.textContent = `Armed • ${status.directoryName || 'Folder'}`
+    return
+  }
+  if (record.status === 'pending') {
+    chip.textContent = `Saving ${record.filename || 'stem'}…`
+    return
+  }
+  if (record.status === 'error') {
+    chip.textContent = `Auto-save failed: ${record.error}`
+    return
+  }
+  chip.textContent = `Saved • ${status.directoryName || 'Folder'}`
+}
+
+async function initializeAutoDownloadSupport() {
+  if (autoDownloadSetupPromise) return autoDownloadSetupPromise
+  autoDownloadSetupPromise = (async () => {
+    const status = await initAutoDownloadManager()
+    if (!isAutoDownloadSupported()) return status
+    await setupAutoDownloadPanel()
+    updateAutoDownloadPanel(status)
+    STEM_ORDER.forEach(st => updateAutoDownloadChip(st))
+    subscribeAutoDownloadEvents((event, payload) => {
+      if (event === 'state') {
+        updateAutoDownloadPanel(payload)
+        STEM_ORDER.forEach(st => updateAutoDownloadChip(st))
+      } else if (event === 'progress' && payload?.stemId) {
+        updateAutoDownloadChip(payload.stemId)
+      }
+    })
+    return status
+  })()
+  return autoDownloadSetupPromise
 }
 
 /* =========================================================
@@ -3170,7 +3409,7 @@ function createBuilderStemCard(st, cfg){
   // Define a drag button for desktop browsers (Chromium only).  This button appears above
   // the Create button and allows users to drag the active sample directly to their DAW or desktop.
   // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag & Drop\n            </span>\n          </button>\n        </div>\n      `;
+  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag & Drop\n            </span>\n          </button>\n          <div class="mt-2 text-[11px] tracking-wide text-white/60" data-auto-download-chip="${st}"></div>\n        </div>\n      `;
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
@@ -3533,16 +3772,26 @@ function updateDragButtonState(st) {
   // Check if PCM data is ready for drag (new implementation using PCM cache)
   const isPCMReady = isPCMReadyForDrag(st)
   const pcmCache = getStemPCM(st)
+  const autoStatus = getAutoDownloadStatus()
+  const autoRecord = getStemAutoDownloadRecord(st)
+  const fileHandleReady = Boolean(
+    autoRecord?.status === 'saved' &&
+    autoRecord.fileHandle &&
+    supportsFileHandleDragOut() &&
+    isAutoDownloadSupported() &&
+    autoStatus.enabled
+  )
+  const dragPayloadReady = isPCMReady || fileHandleReady
 
   // Validate buffer has actual data
   const hasValidData = hasActiveSample && buf.length > 0 && buf.duration > 0
 
   // Enable button only if valid data exists, PCM is ready, and browser is Chromium
-  dragBtn.disabled = !hasValidData || !isChromium || !isPCMReady
+  dragBtn.disabled = !hasValidData || !isChromium || !dragPayloadReady
 
   // Log PCM cache status for debugging
-  console.log(`[DragButton] ${st} - hasValidData: ${hasValidData}, isPCMReady: ${isPCMReady}, isChromium: ${isChromium}, pcmCache: ${pcmCache ? 'exists' : 'missing'}`)
-  if (hasValidData && !isPCMReady) {
+  console.log(`[DragButton] ${st} - hasValidData: ${hasValidData}, isPCMReady: ${isPCMReady}, fileHandleReady: ${fileHandleReady}, isChromium: ${isChromium}, pcmCache: ${pcmCache ? 'exists' : 'missing'}`)
+  if (hasValidData && !isPCMReady && !fileHandleReady) {
     console.warn(`[DragButton] ${st} has audio buffer but PCM not ready. PCM cache:`, pcmCache)
   }
 
@@ -3560,7 +3809,18 @@ function updateDragButtonState(st) {
     // Calculate approximate WAV file size (16-bit stereo) from PCM data
     const estimatedSize = pcmCache ? (pcmCache.size + 44) : (buf.length * buf.numberOfChannels * 2 + 44)
     const sizeKB = (estimatedSize / 1024).toFixed(1)
-    dragBtn.title = `Drag & Drop: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
+    let tooltip = `Drag & Drop: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
+    if (isAutoDownloadSupported() && autoStatus.enabled) {
+      if (autoRecord?.status === 'pending') {
+        tooltip += `\nSaving to ${autoStatus.directoryName || 'selected folder'}…`
+      } else if (autoRecord?.status === 'saved') {
+        tooltip += `\nAuto-saved in ${autoStatus.directoryName || 'your folder'}`
+        if (fileHandleReady) {
+          tooltip += `\nDrag handoff will use the on-disk file`
+        }
+      }
+    }
+    dragBtn.title = tooltip
   }
 
   // Hide the entire drag container on non-Chromium browsers
@@ -3573,6 +3833,8 @@ function updateDragButtonState(st) {
   } else if (container) {
     dragBtn.style.opacity = '1'
   }
+
+  updateAutoDownloadChip(st)
 }
 
 function updateCardNumberColor(st){
@@ -4095,6 +4357,10 @@ function setupEventListeners() {
     const st = btn.dataset.stem
     if (!st) return
 
+    if (tryAttachFileHandleDrag(e, st, btn)) {
+      return
+    }
+
     try {
       // Check if PCM data is ready for drag
       if (!isPCMReadyForDrag(st)) {
@@ -4217,30 +4483,7 @@ function setupEventListeners() {
       console.log(`[Drag] Browser drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'}`)
 
       // Create custom drag image with filename display
-      try {
-        const dragImg = document.createElement('div')
-        dragImg.style.cssText = `
-          position: absolute;
-          top: -9999px;
-          padding: 12px 16px;
-          background: rgba(0, 0, 0, 0.9);
-          color: white;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-          white-space: nowrap;
-          pointer-events: none;
-        `
-        dragImg.textContent = `🎵 ${filename}`
-        document.body.appendChild(dragImg)
-
-        e.dataTransfer.setDragImage(dragImg, 0, 0)
-
-        setTimeout(() => dragImg.remove(), 100)
-      } catch (imgErr) {
-        console.warn('Failed to set custom drag image:', imgErr)
-      }
+      setDragImageForFilename(e, filename)
 
       if (btn) {
         btn.style.opacity = '0.7'
@@ -4591,6 +4834,7 @@ function selectStemVersion(st, index){
     const pcmData = extractPCMFromAudioBuffer(take.raw)
     storeStemPCM(st, pcmData, take.raw.sampleRate, take.raw.numberOfChannels, `pcm_${take.raw.sampleRate}`)
     console.log(`[Version] Extracted PCM for ${st} v${index+1}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    scheduleAutoDownloadForStem(st)
   } catch (pcmErr) {
     console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
@@ -4710,6 +4954,7 @@ export async function initApp(){
 
   // Initialize WAV encoder worker for non-blocking audio encoding
   initWavEncoder()
+  await initializeAutoDownloadSupport()
 
   setupNavigationListeners()
   // Start directly on the genre selection page instead of the login page

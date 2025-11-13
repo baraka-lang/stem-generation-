@@ -82,6 +82,21 @@ ElevenLabs API (PCM)
 - Instant drag preparation (no encoding needed)
 - Preserves exact format from ElevenLabs
 
+### 6. Browser Auto-Download Bridge
+
+**Files**: `src/autoDownloadManager.js`, `src/app.js`
+
+- Adds a “DAW Drop Helper” panel that appears in Chromium browsers. Users can opt in once, pick a destination folder via the File System Access API, and the handle is persisted in IndexedDB.
+- Every time a new PCM payload is cached we queue an on-disk WAV write so the stem already exists locally before the user drags anything.
+- Drag tooltips and the per-stem chips now surface whether the stem is saved, pending, or failed, so users know if it is safe to hop into Finder/Explorer/Live.
+- The helper also warns non-Chromium users that the feature is unavailable and nudges them toward the Electron build for true native drag.
+- On Chrome/Edge versions that expose the File System Access drag-out API we now attach the saved `FileSystemFileHandle` to the drag payload so the OS hands Ableton/Logic the actual on-disk file instead of a transient blob.
+
+**Benefits**:
+- Browser users get a deterministic workflow (file is already on disk) instead of trying to “drop” an in-memory blob straight into Ableton.
+- Consent persists between sessions, so there is no need to reselect the folder on every load.
+- Avoids redundant writes by tracking the PCM timestamp per stem; once a stem is saved it is not rewritten until a new version exists.
+
 ## Architecture
 
 ### Browser Mode (Limited DAW Support)
