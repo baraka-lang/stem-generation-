@@ -3094,7 +3094,7 @@ function createBuilderStemCard(st, cfg){
   // a modal for configuring generation settings when clicked.
   const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
   // Use our custom create button HTML with drag button above it.  Update status line text accordingly.
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + volumeDialHTML + dragButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + dragButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
   // The span within the create button becomes the label, and the icon gets a special class so
   // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
