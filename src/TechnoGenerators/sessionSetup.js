@@ -6,6 +6,7 @@
 
 import { DEFAULT_TEMPO, DEFAULT_BARS } from '../Config/constants.js'
 import { STEM_ORDER } from '../Config/stems.js'
+import { getPlaybackBars } from '../Utilities/barUtils.js'
 
 /**
  * Load session settings from localStorage if available
@@ -231,7 +232,8 @@ export function applySessionSettingsToUI(stemControlValues, updateTempoIndicator
     const base = master.rootBase || 'A'
     const acc = master.accidental || 'natural'
     const rootName = acc === 'sharp' ? `${base}#` : acc === 'flat' ? `${base}b` : base
-    return `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
+    const displayBars = getPlaybackBars(master.bars ?? DEFAULT_BARS, DEFAULT_BARS)
+    return `${master.tempo} BPM • ${displayBars} bars • ${rootName} ${master.mode}`
   })()
   if (infoEl) infoEl.textContent = infoString
   if (infoElMob) infoElMob.textContent = infoString

@@ -1,3 +1,5 @@
+import { formatBarsForDisplay, normalizeBarsValue } from '../Utilities/barUtils.js'
+
 /**
  * Stem Set Modal
  * UI component for managing stem sets
@@ -124,7 +126,11 @@ function populateModalWithSessionData(modal, sessionData) {
   const stemsEl = modal.querySelector('#sessionStems')
   
   if (tempoEl) tempoEl.textContent = sessionData.tempo || 130
-  if (barsEl) barsEl.textContent = sessionData.bars || 4
+  if (barsEl) {
+    const actualBars = normalizeBarsValue(sessionData.bars || 4)
+    barsEl.textContent = formatBarsForDisplay(actualBars)
+    barsEl.dataset.actualBars = String(actualBars)
+  }
   if (keyEl) keyEl.textContent = sessionData.keySignature || 'A Minor'
   
   // Count generated stems
@@ -206,7 +212,7 @@ function setupStemSetModalListeners(modal, onSave, onCancel) {
             name: setName,
             description: descInput?.value?.trim() || '',
             tempo: parseInt(modal.querySelector('#sessionTempo')?.textContent) || 130,
-            bars: parseInt(modal.querySelector('#sessionBars')?.textContent) || 4,
+            bars: parseInt(modal.querySelector('#sessionBars')?.dataset.actualBars || '4', 10) || 4,
             keySignature: modal.querySelector('#sessionKey')?.textContent || 'A Minor'
           })
         }
@@ -317,7 +323,7 @@ function populateLoadModalWithSets(modal, stemSets) {
         </div>
       </div>
       <div class="text-xs text-white/60 mt-2">
-        ${set.tempo} BPM • ${set.bars} bars • ${set.key_signature}
+        ${set.tempo} BPM • ${formatBarsForDisplay(set.bars)} bars • ${set.key_signature}
       </div>
     </div>
   `).join('')

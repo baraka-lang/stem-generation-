@@ -6,6 +6,7 @@
 import { STEM_ORDER } from '../Config/stems.js'
 import { DEFAULT_TEMPO, DEFAULT_BARS } from '../Config/constants.js'
 import {getSetsById } from '../Auth/stemApi.js'
+import { getPlaybackBars } from '../Utilities/barUtils.js'
 
 /**
  * Update play/pause button icon based on playback state
@@ -40,8 +41,9 @@ export function updateSessionInfoCard(stemControlValues, getRootText) {
   const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || '')
   const tempo = master.tempo ?? DEFAULT_TEMPO
   const bars = master.bars ?? DEFAULT_BARS
+  const displayBars = getPlaybackBars(bars, DEFAULT_BARS)
   const mode = master.mode ?? 'Minor'
-  const infoString = `${tempo} BPM • ${bars} bars • ${rootName} ${mode}`
+  const infoString = `${tempo} BPM • ${displayBars} bars • ${rootName} ${mode}`
   if (infoEl) infoEl.textContent = infoString
   if (infoElMob) infoElMob.textContent = infoString
 }

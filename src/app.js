@@ -3,9 +3,10 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { initWavEncoder, encodeWAVAsync, encodeWAVSync, preComputeDataURI, terminateWavEncoder, manageCacheSize } from './audioEncoder.js'
-import { storeStemPCM, getStemPCM, getStemFormat, isPCMReadyForDrag, extractPCMFromWAV, clearStemPCM, getPCMCacheStats } from './stemDataManager.js'
+import { storeStemPCM, getStemPCM, getStemFormat, isPCMReadyForDrag, clearStemPCM, getPCMCacheStats } from './stemDataManager.js'
 import { pcm16leToWav, pcm16leToWavBlob, validatePcmData, parseElevenLabsFormat, generateWavFilename as generateWavFilenameFromFormat } from './pcmToWav.js'
 import { initAutoDownloadManager, isAutoDownloadSupported, isAutoDownloadEnabled, requestAutoDownloadDirectory, disableAutoDownload, getAutoDownloadStatus, subscribeAutoDownloadEvents, queueAutoDownloadForStem, getStemAutoDownloadRecord } from './autoDownloadManager.js'
+import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Utilities/barUtils.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -37,8 +38,8 @@ const START_ENV_MS   = 5
 // boundaries.  A longer fade-in/out and crossfade smooths the transition
 // when the loop restarts, reducing the chance of hearing a click.
 const EDGE_RAMP_MS   = 8
-const LOOP_XFADE_MS  = 24
-const ALIGN_SEARCH_MS = 45
+const LOOP_XFADE_MS  = 28
+const ENVELOPE_HOP_SAMPLES = 96
 const ZERO_FALLBACK_SAMPLES = 384
 
 const BOUNDARY_LOOKAHEAD_MS = 120
@@ -75,6 +76,7 @@ const stemLoop  = {}
 // active nodes: { source, env, filter, eq:{low,mid,high}, gain }
 const stemNodes = {}
 const stemGains = {}
+const stemLoopIntent = {}
 
 // Each stem maintains its own loop duration.  When a loop is built from a raw
 // buffer (after generation or when selecting a take), its duration is stored
@@ -82,6 +84,23 @@ const stemGains = {}
 // restart offsets, ensuring each stem plays back at its own tempo without
 // reference to a shared master tempo.
 const stemLoopDuration = {}
+
+const STEM_ALIGNMENT_HINTS = {
+  kick: 'percussive',
+  perc: 'percussive',
+  perc2: 'percussive',
+  hihat: 'percussive',
+  bass: 'melodic',
+  pad: 'melodic',
+  lead: 'melodic',
+  arp: 'melodic',
+  fx: 'ambient'
+}
+
+function getStemAlignmentStrategy(st) {
+  if (!st) return 'melodic'
+  return STEM_ALIGNMENT_HINTS[st] || 'melodic'
+}
 
 let stemControlValues = {}
 let stemMuteStates = {}
@@ -171,8 +190,9 @@ function updateSessionInfoCard() {
   const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || '')
   const tempo = master.tempo ?? DEFAULT_TEMPO
   const bars = master.bars ?? DEFAULT_BARS
+  const displayBars = getPlaybackBars(bars, DEFAULT_BARS)
   const mode = master.mode ?? 'Minor'
-  const infoString = `${tempo} BPM • ${bars} bars • ${rootName} ${mode}`
+  const infoString = `${tempo} BPM • ${displayBars} bars • ${rootName} ${mode}`
   if (infoEl) infoEl.textContent = infoString
   if (infoElMob) infoElMob.textContent = infoString
 }
@@ -1155,9 +1175,11 @@ function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before
   )
   return common.join(' ')
 }
-function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before ... */ 
+function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before ... */
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
+  const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
+  const playbackLabel = playbackBars === 1 ? 'first bar' : `first ${playbackBars} bars`
   const varTxt     = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
   const intensity  = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
   const snap       = scaleKnob(controls.snap, 'soft', 'medium‑soft', 'balanced', 'sharp', 'cracking')
@@ -1171,10 +1193,13 @@ function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before
     g,
     'ROLE: isolated electronic snare.',
     'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
+    `LoopFocus: only the ${playbackLabel} plays back, so beats 2 & 4 there must be perfect every time.`,
     `Dynamics: ${intensity}; Snap: ${snap}; Tail: ${tail}.`,
     `Tone: ${toneDesc}. ${timbreTxt}`,
     `Variation: ${varTxt} but positions remain 2 & 4.`,
     space,
+    'ABSOLUTE: snare-only audio — no clap, rim, kick, tom, hat, shaker, crash, percussion layers or FX.',
+    'Center-panned single snare strike per hit; no stacks or additional drums.',
     'Exclude: clap/rim/kick/hat/shakers/toms/crashes; unpitched; no tails at seam.',
     'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
   ]
@@ -1183,9 +1208,11 @@ function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before
   return common.join(' ')
 }
 function mapArpRate(v){ const x=Number(v??55); return x<=33?'1/8 notes': x<=66?'1/16 notes':'1/32 notes' }
-function buildArpPrompt(controls, master){ /* ... same as before ... */ 
+function buildArpPrompt(controls, master){ /* ... same as before ... */
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
+  const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
+  const playbackNote = playbackBars === 1 ? 'first bar' : `first ${playbackBars} bars`
   const rate       = mapArpRate(controls.rate)
   const complexity = scaleKnob(controls.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')
   const rangeDesc  = scaleKnob(controls.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')
@@ -1199,12 +1226,13 @@ function buildArpPrompt(controls, master){ /* ... same as before ... */
     g,
     `ROLE: isolated arp; strictly diatonic in ${root} ${mode}; no chords.`,
     `Pattern: ${rate}; ${swingDesc}; fully quantized; phrase length must evenly divide ${bars} bars.`,
+    `LoopFocus: the ${playbackNote} is the exposed playback loop — start on bar 1 beat 1 and resolve before that boundary repeats.`,
     `Complexity: ${complexity}; consistent motif and octave moves.`,
     `Range: ${rangeDesc}; Tone: ${toneDesc}.`,
     `Envelope: ${gate}.`,
     delay,
     'Exclude: drums/percussion/bass/pads/leads/vocals.',
-    'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
+    'Deliver a bar‑perfect seamless loop aligned to bar boundaries; keep the first playback chunk identical each repeat.'
   ].join(' ')
 }
 function buildFXPrompt(controls, master){ /* ... same as before ... */ 
@@ -1254,7 +1282,9 @@ function buildPercLoopPrompt(controls, master){ /* ... same as before ... */
     'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
   ].join(' ')
 }
-function roleDirectives(st, c){ /* ... same as before ... */ 
+function roleDirectives(st, c){ /* ... same as before ... */
+  const playbackBars = getPlaybackBars(stemControlValues?.master?.bars ?? DEFAULT_BARS, DEFAULT_BARS)
+  const playbackLabel = playbackBars === 1 ? 'the first bar' : `the first ${playbackBars} bars`
   switch (st) {
     case 'kick': return [
       'ROLE: single isolated kick only',
@@ -1288,6 +1318,7 @@ function roleDirectives(st, c){ /* ... same as before ... */
       'ROLE: single isolated lead synth only',
       'Melody: strictly diatonic; avoid chromatic passing tones',
       `Phrase length evenly divides ${Math.max(1, stemControlValues?.master?.bars || DEFAULT_BARS)} bar(s)`,
+      `LoopFocus: ${playbackLabel} is what users hear — attack must start at sample 0 (bar 1 beat 1) and resolve before the seam.`,
       `Complexity: ${scaleKnob(c.complexity, 'simple','moderate','interesting','intricate','ornate')} (quantized)`,
       `Brightness: ${scaleKnob(c.brightness, 'dark','mellow','balanced','bright','very bright')}`,
       `Motion: ${scaleKnob(c.motion, 'static','gentle','flowing','evolving','chaotic')}`,
@@ -1556,37 +1587,35 @@ function computeTargetFrames(sr, bpm, bars){ const beats=bars*4; const seconds=b
 function removeDcOffset(buffer){ const ch=buffer.numberOfChannels; for(let c=0;c<ch;c++){ const d=buffer.getChannelData(c); let sum=0; for(let i=0;i<d.length;i++) sum+=d[i]; const mean=sum/d.length; if(Math.abs(mean)>1e-6){ for(let i=0;i<d.length;i++) d[i]-=mean } } }
 function nearestZeroCrossing(data, around, radius){ const n=data.length; let best=around,bestVal=Math.abs(data[around]||0); const a=Math.max(0,around-radius), b=Math.min(n-1,around+radius); for(let i=a;i<=b;i++){ const v=Math.abs(data[i]); if(v<bestVal){ bestVal=v; best=i } } return best }
 function detectHeadIndex(buffer){ const sr=buffer.sampleRate; const maxMs=1000; const maxN=Math.min(buffer.length, Math.round((maxMs/1000)*sr)); if(maxN<=0) return 0; const x=buffer.getChannelData(0); const env=new Float32Array(maxN); for(let i=0;i<maxN;i++) env[i]=Math.abs(x[i]); const win=Math.max(2, Math.round((8/1000)*sr)); let acc=0; for(let i=0;i<win && i<env.length;i++) acc+=env[i]; const sm=new Float32Array(maxN); for(let i=0;i<maxN;i++){ if(i>=win) acc+=env[i]-env[i-win]; sm[i]=acc/Math.min(win,i+1) } let peak=0; for(let i=0;i<maxN;i++) if(sm[i]>peak) peak=sm[i]; const th=Math.max(Math.pow(10,-45/20), peak*0.12); const backOff=Math.round(0.0035*sr); for(let i=0;i<maxN;i++) if(sm[i]>=th){ const z=nearestZeroCrossing(x, Math.max(0,i-backOff), ZERO_FALLBACK_SAMPLES); return Math.max(0,z) } return 0 }
-function sampleAt(data, idx){ const n=data.length; while(idx<0) idx+=n; while(idx>=n) idx-=n; return data[idx] }
-function findBestSeamOffset(raw, startIdx, targetLen, xfadeN){
-  const sr = raw.sampleRate
-  const d0 = raw.getChannelData(0)
-  const search = Math.max(0, Math.round((ALIGN_SEARCH_MS/1000)*sr))
-  const step = Math.max(1, Math.round(sr / 12000))
-  let bestOffset = 0, bestScore = Number.POSITIVE_INFINITY
-  for (let off = -search; off <= search; off += step) {
-    let score = 0
-    for (let i=0;i<xfadeN;i+=step) {
-      const a = sampleAt(d0, startIdx + i + off)
-      const b = sampleAt(d0, startIdx + targetLen - xfadeN + i + off)
-      const diff = a - b
-      score += diff*diff
-    }
-    if (score < bestScore) { bestScore = score; bestOffset = off }
-  }
-  return bestOffset
-}
 function applySeamCrossfade(buffer, xfadeMs=LOOP_XFADE_MS){
-  const sr=buffer.sampleRate, n=buffer.length
-  const xfadeN=Math.max(2, Math.round((xfadeMs/1000)*sr))
+  if(!buffer) return
+  const sr = buffer.sampleRate || 44100
+  const n = buffer.length || 0
+  if(n <= 2) return
+  const maxCross = Math.floor(n/2)
+  const xfadeN = Math.min(maxCross, Math.max(2, Math.round((xfadeMs/1000)*sr)))
+  if(xfadeN < 2) return
+  const fadeIn = new Float32Array(xfadeN)
+  const fadeOut = new Float32Array(xfadeN)
+  for(let i=0;i<xfadeN;i++){
+    const t = i/(xfadeN-1)
+    const sinT = Math.sin(0.5*Math.PI*t)
+    const cosT = Math.cos(0.5*Math.PI*t)
+    fadeIn[i] = sinT*sinT
+    fadeOut[i] = cosT*cosT
+  }
   for(let c=0;c<buffer.numberOfChannels;c++){
-    const d=buffer.getChannelData(c)
+    const d = buffer.getChannelData(c)
+    const blend = new Float32Array(xfadeN)
+    const tailStart = n - xfadeN
     for(let i=0;i<xfadeN;i++){
-      const t=i/(xfadeN-1)
-      const wa=Math.cos(0.5*Math.PI*t), wb=Math.sin(0.5*Math.PI*t)
-      const endIdx=n-xfadeN+i
-      d[endIdx]= (d[endIdx]*wa + d[i]*wb)
+      const headVal = d[i]
+      const tailVal = d[tailStart + i]
+      blend[i] = tailVal * fadeOut[i] + headVal * fadeIn[i]
     }
-    d[n-1]=d[0]
+    d.set(blend, 0)
+    d.set(blend, tailStart)
+    d[n-1] = d[0]
   }
 }
 function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
@@ -1598,20 +1627,415 @@ function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
     for(let i=0;i<ramp && i<n;i++) d[n-1-i]*=Math.sin(0.5*Math.PI*(1-(i/(ramp-1))))
   }
 }
+
+function smoothEnvelopeInPlace(arr, alpha=0.35){
+  if(!arr || arr.length===0) return
+  let prev=arr[0]
+  for(let i=0;i<arr.length;i++){
+    const current=arr[i]
+    prev = prev*(1-alpha) + current*alpha
+    arr[i]=prev
+  }
+}
+
+function wrapSampleIndex(idx, length){
+  if(length<=0) return 0
+  let r=idx%length
+  if(r<0) r+=length
+  return r
+}
+
+function quantizeHeadToBeat(sampleIndex, beatSamples, totalLength) {
+  if (!isFinite(beatSamples) || beatSamples <= 0 || !isFinite(sampleIndex)) {
+    return wrapSampleIndex(Math.round(sampleIndex || 0), totalLength)
+  }
+  const beats = Math.round(sampleIndex / beatSamples)
+  const snapped = beats * beatSamples
+  return wrapSampleIndex(snapped, totalLength)
+}
+
+function measureLocalPeak(data, totalLength, aroundIndex, windowSamples) {
+  if (!data || data.length === 0 || totalLength <= 0) return 1
+  const win = Math.max(1, windowSamples || 1)
+  let peak = 0
+  for (let i = 0; i < win; i++) {
+    const idx = wrapSampleIndex(Math.round(aroundIndex + i), totalLength)
+    const v = Math.abs(data[idx] || 0)
+    if (v > peak) peak = v
+  }
+  return Math.max(peak, 1e-5)
+}
+
+function snapHeadBackToSilence(data, totalLength, approxHead, opts={}) {
+  if (!data || !data.length || totalLength <= 0) return wrapSampleIndex(Math.round(approxHead || 0), totalLength)
+  const sr = opts.sampleRate || 44100
+  const searchSamples = Math.min(totalLength, Math.max(1, opts.searchSamples || Math.round((opts.searchMs || 0.05) * sr)))
+  const quietRunSamples = Math.max(2, opts.quietSamples || Math.round((opts.quietMs || 0.006) * sr))
+  const zeroSearch = Math.max(1, opts.zeroSearch || Math.round((opts.zeroSearchMs || 0.004) * sr))
+  const peakWindow = Math.max(quietRunSamples, opts.peakWindow || Math.round((opts.peakWindowMs || 0.04) * sr))
+  const baseIndex = wrapSampleIndex(Math.round(approxHead || 0), totalLength)
+  const peak = measureLocalPeak(data, totalLength, baseIndex, peakWindow)
+  const thresholdRatio = typeof opts.thresholdRatio === 'number' ? opts.thresholdRatio : 0.045
+  const minFloor = typeof opts.noiseFloor === 'number' ? opts.noiseFloor : 1e-5
+  const threshold = Math.max(minFloor, peak * thresholdRatio)
+  let quietRun = 0
+  for (let step = 0; step < searchSamples; step++) {
+    const idx = wrapSampleIndex(baseIndex - step, totalLength)
+    if (Math.abs(data[idx] || 0) <= threshold) {
+      quietRun++
+      if (quietRun >= quietRunSamples) {
+        const candidate = wrapSampleIndex(idx, totalLength)
+        return nearestZeroCrossing(data, candidate, zeroSearch)
+      }
+    } else {
+      quietRun = 0
+    }
+  }
+  return baseIndex
+}
+
+function computeWindowAbsEnergy(data, totalLength, startIndex, windowSamples) {
+  if (!data || !data.length || totalLength <= 0 || windowSamples <= 0) return 0
+  let sum = 0
+  for (let i = 0; i < windowSamples; i++) {
+    const idx = wrapSampleIndex(Math.round(startIndex + i), totalLength)
+    sum += Math.abs(data[idx] || 0)
+  }
+  return sum / windowSamples
+}
+
+function enforceQuietLoopStart(data, totalLength, approxHead, opts={}) {
+  if (!data || !data.length || totalLength <= 0) return wrapSampleIndex(Math.round(approxHead || 0), totalLength)
+  const sr = opts.sampleRate || 44100
+  const tempo = clampTempo(opts.tempo || DEFAULT_TEMPO)
+  const beatSamples = Math.max(1, Math.round((60 / tempo) * sr))
+  const searchBeats = typeof opts.searchBeats === 'number' ? opts.searchBeats : 0.75
+  const searchSamples = Math.min(totalLength, Math.max(Math.round(searchBeats * beatSamples), Math.round(0.05 * sr)))
+  const windowSamples = Math.max(4, opts.windowSamples || Math.round((opts.windowMs || 0.012) * sr))
+  const zeroSearch = Math.max(1, opts.zeroSearch || Math.round((opts.zeroMs || 0.007) * sr))
+  const attackWindow = Math.max(windowSamples * 2, opts.attackWindow || Math.round((opts.attackWindowMs || 0.045) * sr))
+  const head = wrapSampleIndex(Math.round(approxHead || 0), totalLength)
+  const attackPeak = measureLocalPeak(data, totalLength, head + windowSamples * 2, attackWindow)
+  const noiseFloor = typeof opts.noiseFloor === 'number' ? opts.noiseFloor : 0.00035
+  const ratio = typeof opts.thresholdRatio === 'number' ? opts.thresholdRatio : (opts.strategy === 'percussive' ? 0.018 : 0.028)
+  const quietThreshold = Math.max(noiseFloor, attackPeak * ratio)
+  const baseEnergy = computeWindowAbsEnergy(data, totalLength, head, windowSamples)
+  if (baseEnergy <= quietThreshold) return head
+  let bestHead = head
+  let bestEnergy = baseEnergy
+  for (let offset = 1; offset <= searchSamples; offset++) {
+    const candidate = wrapSampleIndex(head - offset, totalLength)
+    const energy = computeWindowAbsEnergy(data, totalLength, candidate, windowSamples)
+    if (energy < bestEnergy) {
+      bestEnergy = energy
+      bestHead = candidate
+      if (energy <= quietThreshold * 0.85) break
+    }
+  }
+  if (bestHead !== head) {
+    return nearestZeroCrossing(data, bestHead, zeroSearch)
+  }
+  return head
+}
+
+function refineLoopHead(raw, approxHead, opts={}) {
+  if (!raw || !isFinite(raw.length) || raw.length <= 0) return 0
+  const strategy = opts.strategy || 'melodic'
+  const sr = raw.sampleRate || 44100
+  const channelData = raw.numberOfChannels > 0 ? raw.getChannelData(0) : null
+  if (!channelData || channelData.length === 0) {
+    return wrapSampleIndex(Math.round(approxHead || 0), raw.length)
+  }
+  const tempo = clampTempo(opts.tempo || DEFAULT_TEMPO)
+  const beatSamples = Math.max(1, Math.round((60 / tempo) * sr))
+  const searchBeats = typeof opts.searchBeats === 'number'
+    ? opts.searchBeats
+    : (strategy === 'percussive' ? 0.85 : 0.65)
+  const searchSamples = Math.min(raw.length, Math.max(Math.round(searchBeats * beatSamples), Math.round(0.08 * sr)))
+  const quietMs = strategy === 'percussive' ? 0.009 : 0.011
+  const ratio = strategy === 'percussive' ? 0.028 : 0.024
+  const zeroMs = 0.007
+  const peakMs = strategy === 'percussive' ? 0.06 : 0.07
+  const snapped = snapHeadBackToSilence(channelData, raw.length, approxHead, {
+    sampleRate: sr,
+    searchSamples,
+    quietMs,
+    thresholdRatio: ratio,
+    zeroSearchMs: zeroMs,
+    peakWindowMs: peakMs,
+    noiseFloor: strategy === 'percussive' ? 0.00025 : 0.0004
+  })
+  return enforceQuietLoopStart(channelData, raw.length, snapped, {
+    sampleRate: sr,
+    tempo,
+    searchBeats,
+    zeroSearch: Math.max(1, Math.round(zeroMs * sr)),
+    windowSamples: Math.max(4, Math.round(0.012 * sr)),
+    strategy,
+    thresholdRatio: strategy === 'percussive' ? 0.02 : 0.03,
+    noiseFloor: strategy === 'percussive' ? 0.00025 : 0.0004
+  })
+}
+
+function buildRhythmProfiles(buffer, hop=ENVELOPE_HOP_SAMPLES){
+  if(!buffer) return { sampleRate: 44100, hop: hop||1, kickEnv: new Float32Array(0), snareEnv: new Float32Array(0), length: 0 }
+  const sr=buffer.sampleRate||44100
+  const hopSize=Math.max(1, hop||1)
+  const data=buffer.numberOfChannels>0 ? buffer.getChannelData(0) : new Float32Array(0)
+  const len=Math.ceil(data.length / hopSize)
+  const kickEnv=new Float32Array(len)
+  const snareEnv=new Float32Array(len)
+  let idx=0
+  let prevSample=0
+  for(let frame=0; frame<len; frame++){
+    let kickSum=0
+    let snareSum=0
+    let count=0
+    for(let j=0; j<hopSize && idx<data.length; j++, idx++){
+      const sample=data[idx]
+      kickSum+=Math.abs(sample)
+      snareSum+=Math.abs(sample - prevSample)
+      prevSample=sample
+      count++
+    }
+    const denom=count||1
+    kickEnv[frame]=kickSum/denom
+    snareEnv[frame]=snareSum/denom
+  }
+  smoothEnvelopeInPlace(kickEnv, 0.3)
+  smoothEnvelopeInPlace(snareEnv, 0.4)
+  return { sampleRate: sr, hop: hopSize, kickEnv, snareEnv, length: len }
+}
+
+function sampleEnvelopeAt(envArr, hop, sampleIdx, windowSamples=0){
+  if(!envArr || envArr.length===0) return 0
+  const hopSize=Math.max(1, hop||1)
+  const n=envArr.length
+  const envIndex=wrapSampleIndex(Math.round(sampleIdx / hopSize), n)
+  const radius=Math.max(0, Math.round((windowSamples||0)/hopSize))
+  if(radius===0) return envArr[envIndex]
+  let sum=0
+  let count=0
+  for(let i=-radius;i<=radius;i++){
+    const j=wrapSampleIndex(envIndex+i, n)
+    sum+=envArr[j]
+    count++
+  }
+  return sum/Math.max(1,count)
+}
+
+function scoreBeatAlignment(profiles, startSample, beatSamples, beatsToCheck){
+  if(!profiles || beatSamples<=0) return 0
+  const beats=Math.max(1, beatsToCheck)
+  const focusWin=Math.round(0.02 * profiles.sampleRate)
+  const snareWin=Math.round(0.025 * profiles.sampleRate)
+  const ghostWin=Math.round(0.03 * profiles.sampleRate)
+  let kickScore=0
+  let snareScore=0
+  let ghostScore=0
+  for(let beat=0; beat<beats; beat++){
+    const center=startSample + beat*beatSamples
+    kickScore += sampleEnvelopeAt(profiles.kickEnv, profiles.hop, center, focusWin)
+    if(beat % 4 === 1 || beat % 4 === 3){
+      snareScore += sampleEnvelopeAt(profiles.snareEnv, profiles.hop, center, snareWin)
+    }
+    ghostScore += sampleEnvelopeAt(profiles.kickEnv, profiles.hop, center + beatSamples/2, ghostWin)
+  }
+  return kickScore*1.05 + snareScore*0.85 - ghostScore*0.65
+}
+
+function alignHeadToBeatGrid(raw, bpm, bars, approxHeadIndex=0, opts={}){
+  if(!raw || !isFinite(raw.length) || raw.length<=0) return approxHeadIndex||0
+  const strategy=opts.strategy || 'percussive'
+  const tempo=Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, bpm || DEFAULT_TEMPO))
+  const sr=raw.sampleRate||44100
+  const beatSamples=Math.max(1, Math.round((60/tempo)*sr))
+  const approx=wrapSampleIndex(Math.round(approxHeadIndex||0), raw.length)
+  if(strategy==='melodic'){
+    return quantizeHeadToBeat(approx, beatSamples, raw.length)
+  }
+  if(strategy==='ambient'){
+    return approx
+  }
+  const beatsToCheck=Math.min(32, Math.max(8, Math.round((bars || DEFAULT_BARS)*4)))
+  const searchRadius=Math.min(raw.length, Math.round(beatSamples*2))
+  const profiles=buildRhythmProfiles(raw)
+  const step=Math.max(1, Math.round(beatSamples/64))
+  let bestIdx=approx
+  let bestScore=scoreBeatAlignment(profiles, bestIdx, beatSamples, beatsToCheck)
+  for(let offset=approxHeadIndex - searchRadius; offset<=approxHeadIndex + searchRadius; offset+=step){
+    const candidate=wrapSampleIndex(Math.round(offset), raw.length)
+    const s=scoreBeatAlignment(profiles, candidate, beatSamples, beatsToCheck)
+    if(s>bestScore){
+      bestScore=s
+      bestIdx=candidate
+    }
+  }
+  if(!Number.isFinite(bestScore) || bestScore<=0){
+    return quantizeHeadToBeat(approx, beatSamples, raw.length)
+  }
+  return bestIdx
+}
+
+function parsePromptTiming(promptText=''){
+  if(typeof promptText!=='string' || !promptText.trim()) return {}
+  const tempoMatch=promptText.match(/(\d+(?:\.\d+)?)\s*BPM/i)
+  const barsMatch=promptText.match(/(\d+(?:\.\d+)?)\s*(?:bars|bar\s*loop|bar-loop|bar\s*length|bar\s*phrase|bar\s*sequence)/i)
+    || promptText.match(/(\d+(?:\.\d+)?)\s*-\s*bar/i)
+  const parsed={}
+  if(tempoMatch) parsed.tempo=Number(tempoMatch[1])
+  if(barsMatch) parsed.bars=Number(barsMatch[1])
+  return parsed
+}
+
+function createLoopIntent(meta={}){
+  if(meta && meta.__isLoopIntent) return { ...meta }
+  const parsed=parsePromptTiming(meta.promptText || '')
+  const tempo=clampTempo(isFinite(parsed.tempo)?parsed.tempo:meta.tempo)
+  const promptBars=normalizeBarsValue(isFinite(parsed.bars)?parsed.bars:meta.promptBars)
+  const playbackCandidate = meta.playbackBars ?? getPlaybackBars(promptBars, DEFAULT_BARS)
+  const playbackBars=normalizeBarsValue(playbackCandidate)
+  const srCandidate = Number(meta.sampleRate)
+  const frameCandidate = Number(meta.sourceFrames)
+  const sourceFrames = Number.isFinite(frameCandidate) ? Math.max(1, Math.round(frameCandidate)) : null
+  const sampleRate = Number.isFinite(srCandidate) ? srCandidate : null
+  const sourceDurationSec = Number.isFinite(meta.sourceDurationSec)
+    ? meta.sourceDurationSec
+    : (sourceFrames && sampleRate ? sourceFrames / sampleRate : null)
+  return {
+    tempo,
+    promptBars,
+    playbackBars,
+    promptText: meta.promptText || '',
+    parsedFromPrompt: Boolean(parsed.tempo || parsed.bars),
+    sampleRate,
+    sourceFrames,
+    sourceDurationSec,
+    __isLoopIntent: true
+  }
+}
+
+function setStemLoopIntent(st, meta={}){
+  const intent=createLoopIntent(meta)
+  if(st) stemLoopIntent[st]=intent
+  return intent
+}
+
+function getStemLoopIntent(st, fallbackMeta={}){
+  if(st && stemLoopIntent[st]) return stemLoopIntent[st]
+  return createLoopIntent(fallbackMeta)
+}
+
+function copyCircularRange(raw, startSample, desiredLength){
+  if(!raw || !isFinite(raw.length) || raw.length<=0) return null
+  const total=Math.max(1, Math.round(desiredLength || raw.length))
+  const sr=raw.sampleRate||44100
+  const channels=raw.numberOfChannels||1
+  const out=new AudioBuffer({ length: total, numberOfChannels: channels, sampleRate: sr })
+  const start=wrapSampleIndex(Math.round(startSample||0), raw.length)
+  for(let c=0;c<channels;c++){
+    const src=raw.getChannelData(c)
+    const dst=out.getChannelData(c)
+    let read=start
+    let write=0
+    let remaining=total
+    while(remaining>0){
+      const available=Math.min(remaining, raw.length-read)
+      if(available<=0){
+        read=0
+        continue
+      }
+      dst.set(src.subarray(read, read+available), write)
+      write+=available
+      remaining-=available
+      read+=available
+      if(read>=raw.length) read=0
+    }
+  }
+  return out
+}
+
+function buildAlignedLoopFromIntent(raw, meta, approxHeadIndex=0, options={}){
+  if(!raw || !isFinite(raw.length) || raw.length<=0) return null
+  const intent = meta && meta.__isLoopIntent ? { ...meta } : createLoopIntent(meta || {})
+  const tempo=intent.tempo
+  const promptBars=intent.promptBars
+  const playbackBars=intent.playbackBars
+  const strategy=options.strategy || getStemAlignmentStrategy(options.stem)
+  const head=alignHeadToBeatGrid(raw, tempo, promptBars, approxHeadIndex, { strategy })
+  const refinedHead=refineLoopHead(raw, head, { strategy, tempo, promptBars })
+  const sr=raw.sampleRate || audioContext?.sampleRate || 44100
+  const playbackTarget=computeTargetFrames(sr, tempo, playbackBars)
+  const promptTarget=computeTargetFrames(sr, tempo, promptBars)
+  const intentSourceFrames = intent.sampleRate && intent.sampleRate === sr && Number.isFinite(intent.sourceFrames)
+    ? Math.max(1, Math.round(intent.sourceFrames))
+    : null
+  const expectedLength = intentSourceFrames || promptTarget || raw.length
+  const promptLength = Math.min(raw.length, expectedLength)
+  const copyLength=Math.max(playbackTarget, promptLength)
+  const normalizedRaw=copyCircularRange(raw, refinedHead, copyLength)
+  if(!normalizedRaw) return null
+  const playbackLoop=buildLoopBufferFromRawStrict(normalizedRaw, tempo, playbackBars, 0)
+  const updatedIntent = {
+    ...intent,
+    sampleRate: normalizedRaw.sampleRate,
+    sourceFrames: normalizedRaw.length,
+    sourceDurationSec: normalizedRaw.duration
+  }
+  return { normalizedRaw, loop: playbackLoop, detectedHead: refinedHead, intent: updatedIntent }
+}
+
+function ensureTakeLoopReady(st, take){
+  if(!take || !take.raw) return null
+  const fallbackTempo = take.tempo ?? stemControlValues.master?.tempo ?? DEFAULT_TEMPO
+  const fallbackBars  = take.bars  ?? stemControlValues.master?.bars  ?? DEFAULT_BARS
+  const approxHead = typeof take.detectedHeadIndex==='number'
+    ? take.detectedHeadIndex
+    : (typeof take.headIndex==='number' ? take.headIndex : 0)
+  const baseIntent = take.loopIntent && take.loopIntent.__isLoopIntent
+    ? take.loopIntent
+    : getStemLoopIntent(st, {
+        tempo: fallbackTempo,
+        promptBars: fallbackBars,
+        playbackBars: getPlaybackBars(fallbackBars, DEFAULT_BARS),
+        promptText: take.prompt || '',
+        sampleRate: take.raw?.sampleRate,
+        sourceFrames: take.raw?.length,
+        sourceDurationSec: take.raw?.duration
+      })
+  if(take.isHeadNormalized && baseIntent){
+    const playbackLoop=buildLoopBufferFromRawStrict(take.raw, baseIntent.tempo, baseIntent.playbackBars, take.headIndex || 0)
+    return { loop: playbackLoop, intent: baseIntent, detectedHead: take.detectedHeadIndex ?? approxHead }
+  }
+  const aligned=buildAlignedLoopFromIntent(take.raw, baseIntent, approxHead, { stem: st, strategy: getStemAlignmentStrategy(st) })
+  if(!aligned) return null
+  take.raw=aligned.normalizedRaw
+  take.headIndex=0
+  take.detectedHeadIndex=aligned.detectedHead
+  take.loopIntent=aligned.intent
+  take.isHeadNormalized=true
+  return aligned
+}
+
 function buildLoopBufferFromRawStrict(raw, bpm, bars, headIndex){
   removeDcOffset(raw)
   const sr=raw.sampleRate
   const target=computeTargetFrames(sr,bpm,bars)
   const ch=raw.numberOfChannels
   const out=new AudioBuffer({ length: target, numberOfChannels: ch, sampleRate: sr })
-  const xfadeN=Math.max(2, Math.round((LOOP_XFADE_MS/1000)*sr))
-  const bestOff=findBestSeamOffset(raw, headIndex, target, xfadeN)
-  const start=((headIndex+bestOff)%raw.length + raw.length)%raw.length
-  const end=start+target
+  const start=wrapSampleIndex(Math.round(headIndex||0), raw.length)
   for(let c=0;c<ch;c++){
-    const src=raw.getChannelData(c), dst=out.getChannelData(c)
-    if(end<=raw.length) dst.set(src.subarray(start,end),0)
-    else { const first=raw.length-start; dst.set(src.subarray(start),0); dst.set(src.subarray(0, target-first), first) }
+    const src=raw.getChannelData(c)
+    const dst=out.getChannelData(c)
+    let writeIdx=0
+    let readIdx=start
+    while(writeIdx<target){
+      const remaining=target-writeIdx
+      const canCopy=Math.min(remaining, raw.length-readIdx)
+      dst.set(src.subarray(readIdx, readIdx+canCopy), writeIdx)
+      writeIdx+=canCopy
+      readIdx=(readIdx+canCopy)%raw.length
+    }
   }
   applyEdgeRamps(out, EDGE_RAMP_MS)
   applySeamCrossfade(out, LOOP_XFADE_MS)
@@ -1949,7 +2373,7 @@ function openWaveformEditModal(st) {
   if (gridContainer) {
     gridContainer.innerHTML = ''
     // Determine the number of bars from the master settings (default to 4)
-    const bars = stemControlValues.master?.bars || DEFAULT_BARS
+    const bars = getPlaybackBars(stemControlValues.master?.bars || DEFAULT_BARS, DEFAULT_BARS)
     for (let i = 0; i < bars; i++) {
       const seg = document.createElement('div')
       seg.style.flex = '1'
@@ -2169,29 +2593,44 @@ async function separateCurrentStem(st) {
     const master = stemControlValues.master || {}
     const tempo = master.tempo ?? DEFAULT_TEMPO
     const bars = master.bars ?? DEFAULT_BARS
+    const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
 
-    // Build a loop buffer from the separated audio
-    // We pass headIndex=0 since we want to use the full separated stem
-    console.log('[stem-separation] Building loop buffer with tempo:', tempo, 'bars:', bars);
-    const loopBuffer = buildLoopBufferFromRawStrict(decodedBuffer, tempo, bars, 0)
+    const parentIntent = currentTake.loopIntent && currentTake.loopIntent.__isLoopIntent
+      ? currentTake.loopIntent
+      : getStemLoopIntent(st, {
+          tempo,
+          promptBars: bars,
+          playbackBars,
+          promptText: currentTake.prompt || '',
+          sampleRate: decodedBuffer.sampleRate,
+          sourceFrames: decodedBuffer.length,
+          sourceDurationSec: decodedBuffer.duration
+        })
 
-    if (!loopBuffer) {
+    const aligned = buildAlignedLoopFromIntent(decodedBuffer, parentIntent, 0, { stem: st, strategy: getStemAlignmentStrategy(st) })
+    if (!aligned) {
       console.error('[stem-separation] Failed to build loop buffer');
       throw new Error('Failed to build loop from separated audio - audio may be too short or incompatible');
     }
 
-    console.log('[stem-separation] Loop buffer created - duration:', loopBuffer.duration, 'seconds');
+    console.log('[stem-separation] Loop buffer created - duration:', aligned.loop.duration, 'seconds');
 
     // Create a new history entry
     const newEntry = {
-      raw: decodedBuffer,
-      loop: loopBuffer,
+      raw: aligned.normalizedRaw,
+      loop: aligned.loop,
       prompt: `Separated ${data.stemType} stem from ${st}`,
       validationTier: 'separated',
       timestamp: Date.now(),
       isSeparated: true,
       separatedFrom: data.requestedInstrument,
-      originalStemType: data.stemType
+      originalStemType: data.stemType,
+      headIndex: 0,
+      detectedHeadIndex: aligned.detectedHead,
+      tempo,
+      bars,
+      loopIntent: aligned.intent,
+      isHeadNormalized: true
     }
 
     // Add to history and select it
@@ -2203,23 +2642,24 @@ async function separateCurrentStem(st) {
     stemActiveIndex[st] = newIndex
 
     // Load the new separated stem
-    stemRaw[st] = decodedBuffer
-    stemLoop[st] = loopBuffer
+    stemRaw[st] = aligned.normalizedRaw
+    stemLoop[st] = aligned.loop
+    setStemLoopIntent(st, aligned.intent)
 
     // Store loop duration
-    if (loopBuffer) {
-      stemLoopDuration[st] = loopBuffer.duration
+    if (aligned.loop) {
+      stemLoopDuration[st] = aligned.loop.duration
     }
 
     // Invalidate cached WAV since we have new separated audio
     invalidateStemCache(st)
 
     // Extract PCM from the separated audio for drag-and-drop
-    if (loopBuffer) {
+    if (aligned.loop) {
       try {
         clearStemPCM(st) // Clear any existing PCM data before storing new
-        const pcmData = extractPCMFromAudioBuffer(loopBuffer)
-        storeStemPCM(st, pcmData, loopBuffer.sampleRate, loopBuffer.numberOfChannels, `pcm_${loopBuffer.sampleRate}`)
+        const pcmData = extractPCMFromAudioBuffer(aligned.loop)
+        storeStemPCM(st, pcmData, aligned.loop.sampleRate, aligned.loop.numberOfChannels, `pcm_${aligned.loop.sampleRate}`)
         console.log(`[Separation] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
@@ -2235,7 +2675,7 @@ async function separateCurrentStem(st) {
     updateCardNumberColor(st)
 
     // Update the edit modal canvas with the new waveform
-    drawEditWaveform(st, loopBuffer)
+      drawEditWaveform(st, aligned.loop)
 
     // Show success message
     if (separateHint) {
@@ -2543,6 +2983,8 @@ async function generateStem(st) {
 
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
     const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
+    const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
+    let loopIntent = null
 
     // Attempt to generate the stem via the Supabase edge function
     // `generate-techno-stem`.  This function builds the prompt, calls
@@ -2577,17 +3019,6 @@ async function generateStem(st) {
 
       console.log(`[Gen] Received ${st}: ${receivedFormat} (${receivedSampleRate}Hz, ${receivedChannels}ch)`)
 
-      // Extract raw PCM data from the WAV file for drag-to-DAW
-      try {
-        clearStemPCM(st) // Clear any existing PCM data before storing new
-        const pcmInfo = extractPCMFromWAV(audio_b64)
-        storeStemPCM(st, pcmInfo.pcmData, pcmInfo.sampleRate, pcmInfo.numChannels, pcmInfo.format)
-        console.log(`[Gen] Stored PCM for ${st}: ${(pcmInfo.dataSize / 1024).toFixed(1)}KB`)
-        scheduleAutoDownloadForStem(st)
-      } catch (pcmErr) {
-        console.warn(`[Gen] Failed to extract PCM for ${st}:`, pcmErr.message)
-      }
-
       // Decode the base64 audio string for playback
       const commaIdx = (audio_b64 || '').indexOf(',')
       const b64 = commaIdx >= 0 ? audio_b64.slice(commaIdx + 1) : audio_b64
@@ -2599,13 +3030,35 @@ async function generateStem(st) {
       // Determine head index for record keeping
       referenceHeadIndex = detectHeadIndex(audioBuffer)
       referenceStemType = st
-      // Use the returned audio as the strict loop
-      stemRaw[st]  = audioBuffer
-      stemLoop[st] = audioBuffer
-      stemLoopDuration[st] = audioBuffer.duration
+      loopIntent = setStemLoopIntent(st, {
+        tempo,
+        promptBars: bars,
+        playbackBars,
+        promptText: usedPrompt || '',
+        sampleRate: audioBuffer.sampleRate,
+        sourceFrames: audioBuffer.length,
+        sourceDurationSec: audioBuffer.duration
+      })
+      const aligned = buildAlignedLoopFromIntent(audioBuffer, loopIntent, referenceHeadIndex, { stem: st, strategy: getStemAlignmentStrategy(st) })
+      if (!aligned) throw new Error('Failed to align generated audio')
+      referenceHeadIndex = aligned.detectedHead
+      stemRaw[st]  = aligned.normalizedRaw
+      stemLoop[st] = aligned.loop
+      stemLoopDuration[st] = aligned.loop.duration
+      endpointFactors[st] = 1
       failedValidation = !validated
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
+
+      try {
+        clearStemPCM(st)
+        const pcmData = extractPCMFromAudioBuffer(aligned.loop)
+        storeStemPCM(st, pcmData, aligned.loop.sampleRate, aligned.loop.numberOfChannels, `pcm_${aligned.loop.sampleRate}`)
+        console.log(`[Gen] Extracted PCM from playback loop for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+        scheduleAutoDownloadForStem(st)
+      } catch (pcmErr) {
+        console.warn(`[Gen] Failed to extract PCM from playback loop for ${st}:`, pcmErr.message)
+      }
     } catch (supErr) {
       // Supabase call failed or returned error; fallback to local generation
       console.error('Supabase request failed', supErr)
@@ -2635,16 +3088,21 @@ async function generateStem(st) {
       // Determine head index and build a strict loop from the raw buffer
       referenceHeadIndex = detectHeadIndex(audioBuffer)
       referenceStemType = st
-      const strictLoop = buildLoopBufferFromRawStrict(audioBuffer, tempo, bars, referenceHeadIndex)
-      // Store the newly generated raw buffer and strict loop.  We explicitly
-      // assign the raw to stemRaw so that endpoint adjustments can be
-      // constructed from the unmodified audio later.  The strict loop is
-      // stored in stemLoop to be used for playback.  Reset the
-      // endpoint stretch factor to its default (1.0) for a fresh take so
-      // that subsequent adjustments start from an unmodified loop.
-      stemRaw[st]  = audioBuffer
-      stemLoop[st] = strictLoop
-      stemLoopDuration[st] = strictLoop.duration
+      loopIntent = setStemLoopIntent(st, {
+        tempo,
+        promptBars: bars,
+        playbackBars,
+        promptText: usedPrompt || '',
+        sampleRate: audioBuffer.sampleRate,
+        sourceFrames: audioBuffer.length,
+        sourceDurationSec: audioBuffer.duration
+      })
+      const aligned = buildAlignedLoopFromIntent(audioBuffer, loopIntent, referenceHeadIndex, { stem: st, strategy: getStemAlignmentStrategy(st) })
+      if (!aligned) throw new Error('Failed to align locally generated audio')
+      referenceHeadIndex = aligned.detectedHead
+      stemRaw[st]  = aligned.normalizedRaw
+      stemLoop[st] = aligned.loop
+      stemLoopDuration[st] = aligned.loop.duration
       endpointFactors[st] = 1
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
@@ -2652,8 +3110,8 @@ async function generateStem(st) {
       // Extract PCM from AudioBuffer for drag-and-drop (fallback path)
       try {
         clearStemPCM(st) // Clear any existing PCM data before storing new
-        const pcmData = extractPCMFromAudioBuffer(strictLoop)
-        storeStemPCM(st, pcmData, strictLoop.sampleRate, strictLoop.numberOfChannels, `pcm_${strictLoop.sampleRate}`)
+        const pcmData = extractPCMFromAudioBuffer(aligned.loop)
+        storeStemPCM(st, pcmData, aligned.loop.sampleRate, aligned.loop.numberOfChannels, `pcm_${aligned.loop.sampleRate}`)
         console.log(`[Gen] Extracted PCM from AudioBuffer for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
@@ -2668,8 +3126,11 @@ async function generateStem(st) {
       prompt: usedPrompt,
       tempo, bars,
       sessionTag: SESSION_TAG,
-      headIndex: referenceHeadIndex,
+      headIndex: 0,
+      detectedHeadIndex: referenceHeadIndex,
       raw: stemRaw[st],
+      loopIntent,
+      isHeadNormalized: true,
       meta: { tier, validated: !failedValidation }
     })
     // Store the current endpoint factor on the newly created history entry so it can be restored when selecting the take.
@@ -4784,7 +5245,7 @@ function renderHistoryDrawer(st){
     item.className=`relative shrink-0 w-28 h-16 rounded-md border ${i===active?'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]':'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
     item.setAttribute('data-take-index', i)
     item.setAttribute('data-stem', st)
-    item.title=`v${i+1} • ${take.tempo} BPM • ${take.bars} bars${take.isSeparated ? ' • Separated' : ''}`
+    item.title=`v${i+1} • ${take.tempo} BPM • ${formatBarsForDisplay(take.bars, DEFAULT_BARS)} bars${take.isSeparated ? ' • Separated' : ''}`
 
     const c=document.createElement('canvas'); c.width=112; c.height=64; c.className='w-full h-full rounded-md'
     item.appendChild(c)
@@ -4799,7 +5260,7 @@ function renderHistoryDrawer(st){
 
     const meta=document.createElement('div')
     meta.className='absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
-    meta.textContent=`v${i+1} • ${take.tempo} • ${take.bars}b`
+    meta.textContent=`v${i+1} • ${take.tempo} • ${formatBarsForDisplay(take.bars, DEFAULT_BARS)}b`
     item.appendChild(meta)
 
     list.appendChild(item)
@@ -4821,18 +5282,37 @@ function selectStemVersion(st, index){
   const tempo  = take.tempo
   const bars   = take.bars
   stemRaw[st]  = take.raw
-  // Loop directly from the raw audio; do not rebuild loop based on tempo
-  stemLoop[st] = take.raw
-  // Record the loop duration for this stem
-  stemLoopDuration[st] = take.raw.duration
+  const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
+  const aligned = ensureTakeLoopReady(st, take)
+  let playbackLoop = aligned?.loop
+  let intentForStem = aligned?.intent
+  if (!playbackLoop) {
+    let headIndex = typeof take.headIndex === 'number' ? take.headIndex : detectHeadIndex(take.raw)
+    headIndex = alignHeadToBeatGrid(take.raw, tempo, bars, headIndex, { strategy: getStemAlignmentStrategy(st) })
+    take.headIndex = headIndex
+    playbackLoop = buildLoopBufferFromRawStrict(take.raw, tempo, playbackBars, headIndex)
+    intentForStem = setStemLoopIntent(st, {
+      tempo: tempo,
+      promptBars: bars,
+      playbackBars,
+      promptText: take.prompt || '',
+      sampleRate: take.raw?.sampleRate,
+      sourceFrames: take.raw?.length,
+      sourceDurationSec: take.raw?.duration
+    })
+  } else if (intentForStem) {
+    setStemLoopIntent(st, intentForStem)
+  }
+  stemLoop[st] = playbackLoop
+  stemLoopDuration[st] = playbackLoop.duration
   // Invalidate cached WAV since we've switched to different audio
   invalidateStemCache(st)
 
   // Extract PCM from the selected version for drag-and-drop
   try {
     clearStemPCM(st) // Clear any existing PCM data before storing new
-    const pcmData = extractPCMFromAudioBuffer(take.raw)
-    storeStemPCM(st, pcmData, take.raw.sampleRate, take.raw.numberOfChannels, `pcm_${take.raw.sampleRate}`)
+    const pcmData = extractPCMFromAudioBuffer(playbackLoop)
+    storeStemPCM(st, pcmData, playbackLoop.sampleRate, playbackLoop.numberOfChannels, `pcm_${playbackLoop.sampleRate}`)
     console.log(`[Version] Extracted PCM for ${st} v${index+1}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
     scheduleAutoDownloadForStem(st)
   } catch (pcmErr) {
@@ -4843,7 +5323,7 @@ function selectStemVersion(st, index){
     const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
   }
   const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
-  if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${bars} bars)`
+  if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${formatBarsForDisplay(bars, DEFAULT_BARS)} bars)`
   renderHistoryDrawer(st)
   // Restore the saved endpoint factor for this take (if present).  If not present, default to 1.
   {
@@ -5272,7 +5752,8 @@ function applySessionSettingsToUI() {
   const infoElMob = document.getElementById('sessionInfoTextMobile')
   const infoString = (() => {
     const rootName = getRootText()
-    return `${master.tempo} BPM • ${master.bars} bars • ${rootName} ${master.mode}`
+    const displayBars = getPlaybackBars(master.bars ?? DEFAULT_BARS, DEFAULT_BARS)
+    return `${master.tempo} BPM • ${displayBars} bars • ${rootName} ${master.mode}`
   })()
   if (infoEl) infoEl.textContent = infoString
   if (infoElMob) infoElMob.textContent = infoString
