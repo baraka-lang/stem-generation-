@@ -62,10 +62,28 @@ Deno.serve(async (req: Request) => {
       timestamp: new Date().toISOString(),
     });
 
-    // Parse request body
-    const body: SeparationRequest = await req.json();
+    // Parse request body with validation
+    let body: SeparationRequest;
+    try {
+      body = await req.json();
+    } catch (jsonError) {
+      console.error("[separate-stems] Invalid JSON in request body:", jsonError);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Invalid request body",
+          hint: "Request body must be valid JSON",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
     const { audioData, stemType, outputFormat = "mp3_44100_128" } = body;
 
+    // Validate required fields
     if (!audioData || !stemType) {
       console.error("[separate-stems] Missing required fields:", {
         hasAudioData: !!audioData,
@@ -83,10 +101,43 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Validate stem type
+    if (!STEM_TYPE_MAPPING[stemType]) {
+      console.error("[separate-stems] Invalid stem type:", stemType);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Invalid stem type: ${stemType}`,
+          hint: `Valid stem types are: ${Object.keys(STEM_TYPE_MAPPING).join(", ")}`,
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Validate base64 format
+    if (typeof audioData !== "string" || audioData.length === 0) {
+      console.error("[separate-stems] Invalid audioData format");
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Invalid audioData format",
+          hint: "audioData must be a non-empty base64 encoded string",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
     console.log("[separate-stems] Request params:", {
       stemType,
       outputFormat,
       audioDataLength: audioData.length,
+      audioDataSizeMB: (audioData.length / 1024 / 1024).toFixed(2),
     });
 
     // Get API key from environment
@@ -109,10 +160,45 @@ Deno.serve(async (req: Request) => {
 
     console.log("[separate-stems] API key configured:", apiKey.substring(0, 8) + "...");
 
-    // Convert base64 to binary
+    // Convert base64 to binary with validation
     console.log("[separate-stems] Decoding base64 audio data...");
-    const binaryAudio = Uint8Array.from(atob(audioData), (c) => c.charCodeAt(0));
-    console.log("[separate-stems] Binary audio size:", binaryAudio.length, "bytes");
+    let binaryAudio: Uint8Array;
+    try {
+      const binaryString = atob(audioData);
+      binaryAudio = Uint8Array.from(binaryString, (c) => c.charCodeAt(0));
+
+      if (binaryAudio.length === 0) {
+        throw new Error("Decoded audio data is empty");
+      }
+
+      console.log("[separate-stems] Binary audio size:", binaryAudio.length, "bytes", `(${(binaryAudio.length / 1024 / 1024).toFixed(2)} MB)`);
+
+      // Validate it looks like valid audio (check for WAV or other audio headers)
+      if (binaryAudio.length < 44) {
+        console.warn("[separate-stems] Audio data seems too small to be a valid audio file");
+      }
+
+      // Check for WAV header
+      const header = String.fromCharCode(binaryAudio[0], binaryAudio[1], binaryAudio[2], binaryAudio[3]);
+      if (header === "RIFF") {
+        console.log("[separate-stems] Detected WAV format");
+      } else {
+        console.log("[separate-stems] Audio format header:", header);
+      }
+    } catch (decodeError) {
+      console.error("[separate-stems] Failed to decode base64 audio:", decodeError);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Failed to decode audio data",
+          hint: "Audio data must be valid base64 encoded",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
 
     // Create multipart form data
     const formData = new FormData();
@@ -220,9 +306,37 @@ Deno.serve(async (req: Request) => {
 
       console.log("[separate-stems] Selected stem size:", selectedStem.length, "bytes");
 
-      // Convert to base64 for transmission
-      const base64Audio = btoa(String.fromCharCode(...selectedStem));
-      console.log("[separate-stems] Base64 audio length:", base64Audio.length, "characters");
+      // Convert to base64 for transmission (chunked for large files)
+      let base64Audio: string;
+      try {
+        if (selectedStem.length > 1024 * 1024) {
+          // For large files, chunk the conversion to avoid call stack overflow
+          console.log("[separate-stems] Using chunked base64 encoding for large file");
+          const chunkSize = 65536;
+          const chunks: string[] = [];
+          for (let i = 0; i < selectedStem.length; i += chunkSize) {
+            const chunk = selectedStem.slice(i, i + chunkSize);
+            chunks.push(String.fromCharCode(...chunk));
+          }
+          base64Audio = btoa(chunks.join(""));
+        } else {
+          base64Audio = btoa(String.fromCharCode(...selectedStem));
+        }
+        console.log("[separate-stems] Base64 audio length:", base64Audio.length, "characters");
+      } catch (encodeError) {
+        console.error("[separate-stems] Failed to encode audio to base64:", encodeError);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Failed to encode separated audio",
+            hint: "Audio data encoding failed. Try a shorter audio clip.",
+          }),
+          {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
 
       const duration = Date.now() - startTime;
       console.log("[separate-stems] Success! Total processing time:", duration, "ms");
@@ -289,6 +403,50 @@ Deno.serve(async (req: Request) => {
 });
 
 /**
+ * Decompress DEFLATE compressed data
+ */
+function decompressDEFLATE(compressedData: Uint8Array): Uint8Array {
+  try {
+    // Use Deno's built-in DecompressionStream
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(compressedData);
+        controller.close();
+      }
+    });
+
+    const decompressedStream = stream.pipeThrough(
+      new DecompressionStream("deflate-raw")
+    );
+
+    // Convert stream to Uint8Array
+    const reader = decompressedStream.getReader();
+    const chunks: Uint8Array[] = [];
+
+    return (async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+      }
+
+      // Combine all chunks
+      const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0);
+      const result = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const chunk of chunks) {
+        result.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return result;
+    })();
+  } catch (error) {
+    console.error("[zip-parser] DEFLATE decompression failed:", error);
+    throw new Error("Failed to decompress ZIP entry: " + error.message);
+  }
+}
+
+/**
  * Extract audio stems from a ZIP file
  * Returns an object with stem types as keys and Uint8Array audio data as values
  */
@@ -296,52 +454,127 @@ async function extractStemsFromZip(zipData: ArrayBuffer): Promise<Record<string,
   const stems: Record<string, Uint8Array> = {};
 
   try {
-    // Use JSZip-like approach with native Deno APIs
-    // For now, we'll use a simple ZIP parser
-    const view = new DataView(zipData);
-    let offset = 0;
+    console.log("[zip-parser] Starting ZIP extraction, size:", zipData.byteLength, "bytes");
 
-    // Simple ZIP parsing - looking for local file headers (signature: 0x04034b50)
+    // Validate ZIP file signature
+    const view = new DataView(zipData);
+    if (view.byteLength < 30) {
+      throw new Error("ZIP file too small to contain valid entries");
+    }
+
+    let offset = 0;
+    let filesFound = 0;
+
+    // Parse all local file headers (signature: 0x04034b50)
     while (offset < view.byteLength - 30) {
       const signature = view.getUint32(offset, true);
 
       if (signature === 0x04034b50) {
-        // Local file header found
+        filesFound++;
+
+        // Parse local file header
+        const versionNeeded = view.getUint16(offset + 4, true);
+        const flags = view.getUint16(offset + 6, true);
+        const compressionMethod = view.getUint16(offset + 8, true);
+        const compressedSize = view.getUint32(offset + 18, true);
+        const uncompressedSize = view.getUint32(offset + 22, true);
         const filenameLength = view.getUint16(offset + 26, true);
         const extraFieldLength = view.getUint16(offset + 28, true);
-        const compressedSize = view.getUint32(offset + 18, true);
-        const compressionMethod = view.getUint16(offset + 8, true);
+
+        // Bounds checking
+        const headerEnd = offset + 30 + filenameLength + extraFieldLength;
+        const dataEnd = headerEnd + compressedSize;
+
+        if (dataEnd > view.byteLength) {
+          console.error("[zip-parser] File extends beyond ZIP bounds:", {
+            offset,
+            headerEnd,
+            dataEnd,
+            zipSize: view.byteLength
+          });
+          throw new Error("Corrupted ZIP file: entry extends beyond file boundary");
+        }
 
         // Extract filename
         const filenameBytes = new Uint8Array(zipData, offset + 30, filenameLength);
         const filename = new TextDecoder().decode(filenameBytes);
 
-        console.log("[zip-parser] Found file:", filename, "size:", compressedSize);
+        console.log("[zip-parser] Found file:", {
+          filename,
+          compressionMethod: compressionMethod === 0 ? "STORED" : compressionMethod === 8 ? "DEFLATE" : `Unknown(${compressionMethod})`,
+          compressedSize,
+          uncompressedSize
+        });
 
-        // Get file data (skip header + filename + extra field)
-        const dataOffset = offset + 30 + filenameLength + extraFieldLength;
-        const fileData = new Uint8Array(zipData, dataOffset, compressedSize);
+        // Get compressed file data
+        const dataOffset = headerEnd;
+        const compressedData = new Uint8Array(zipData, dataOffset, compressedSize);
 
-        // Determine stem type from filename
+        // Decompress if needed
+        let fileData: Uint8Array;
+        if (compressionMethod === 0) {
+          // Stored (no compression)
+          fileData = compressedData;
+        } else if (compressionMethod === 8) {
+          // DEFLATE compression
+          console.log("[zip-parser] Decompressing DEFLATE data for:", filename);
+          fileData = await decompressDEFLATE(compressedData);
+          console.log("[zip-parser] Decompressed size:", fileData.length, "bytes");
+
+          // Validate decompressed size matches expected
+          if (uncompressedSize > 0 && fileData.length !== uncompressedSize) {
+            console.warn("[zip-parser] Size mismatch - expected:", uncompressedSize, "got:", fileData.length);
+          }
+        } else {
+          console.error("[zip-parser] Unsupported compression method:", compressionMethod);
+          throw new Error(`Unsupported compression method: ${compressionMethod}`);
+        }
+
+        // Validate we got actual audio data
+        if (fileData.length === 0) {
+          console.warn("[zip-parser] Empty file data for:", filename);
+          offset = dataEnd;
+          continue;
+        }
+
+        // Determine stem type from filename (case-insensitive matching)
         const lowerFilename = filename.toLowerCase();
+        let stemType: string | null = null;
+
         if (lowerFilename.includes("vocal")) {
-          stems["vocals"] = fileData;
+          stemType = "vocals";
         } else if (lowerFilename.includes("drum")) {
-          stems["drums"] = fileData;
+          stemType = "drums";
         } else if (lowerFilename.includes("bass")) {
-          stems["bass"] = fileData;
+          stemType = "bass";
         } else if (lowerFilename.includes("instrument") || lowerFilename.includes("other")) {
-          stems["instruments"] = fileData;
+          stemType = "instruments";
+        }
+
+        if (stemType) {
+          stems[stemType] = fileData;
+          console.log("[zip-parser] Mapped", filename, "to stem type:", stemType);
+        } else {
+          console.warn("[zip-parser] Could not determine stem type for:", filename);
         }
 
         // Move to next file
-        offset = dataOffset + compressedSize;
+        offset = dataEnd;
       } else {
         offset++;
       }
     }
 
-    console.log("[zip-parser] Extracted stems:", Object.keys(stems));
+    console.log("[zip-parser] Extraction complete:", {
+      filesFound,
+      stemsExtracted: Object.keys(stems),
+      totalSize: Object.values(stems).reduce((acc, data) => acc + data.length, 0)
+    });
+
+    if (Object.keys(stems).length === 0) {
+      throw new Error("No valid stem files found in ZIP archive");
+    }
+
     return stems;
   } catch (error) {
     console.error("[zip-parser] Error parsing ZIP:", error);

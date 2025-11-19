@@ -2580,27 +2580,66 @@ async function separateCurrentStem(st) {
   try {
     console.log('[stem-separation] Starting separation for:', st);
 
-    // Convert the raw audio buffer to WAV format for the API
+    // Validate current take has valid audio data
     const rawBuffer = currentTake.raw
-    const sampleRate = audioContext.sampleRate
-
-    console.log('[stem-separation] Converting audio to WAV - channels:', rawBuffer.numberOfChannels, 'length:', rawBuffer.length, 'sampleRate:', sampleRate);
-
-    // Create a WAV file from the audio buffer
-    const wavBuffer = audioBufferToWav(rawBuffer, sampleRate)
-    const wavSizeMB = (wavBuffer.byteLength / 1024 / 1024).toFixed(2)
-    console.log('[stem-separation] WAV buffer size:', wavBuffer.byteLength, 'bytes', `(${wavSizeMB} MB)`);
-
-    // Validate payload size (ElevenLabs has limits, typically around 25MB)
-    const MAX_PAYLOAD_SIZE = 25 * 1024 * 1024
-    if (wavBuffer.byteLength > MAX_PAYLOAD_SIZE) {
-      throw new Error(`Audio file too large (${wavSizeMB}MB). Maximum size is 25MB. Try using a shorter audio clip.`)
+    if (!rawBuffer || !rawBuffer.length || rawBuffer.length === 0) {
+      throw new Error('No valid audio data in current take. Try regenerating the stem.');
     }
 
-    // Convert to base64 for transmission
-    const base64Audio = arrayBufferToBase64(wavBuffer)
-    const base64SizeMB = (base64Audio.length / 1024 / 1024).toFixed(2)
+    const sampleRate = audioContext.sampleRate
+    if (!sampleRate || sampleRate < 8000 || sampleRate > 96000) {
+      throw new Error(`Invalid sample rate: ${sampleRate}. Expected 8000-96000 Hz.`);
+    }
+
+    console.log('[stem-separation] Converting audio to WAV - channels:', rawBuffer.numberOfChannels, 'length:', rawBuffer.length, 'sampleRate:', sampleRate, 'duration:', rawBuffer.duration, 's');
+
+    // Validate audio duration
+    if (rawBuffer.duration > 300) {
+      throw new Error('Audio too long. Maximum duration is 5 minutes. Try using fewer bars.');
+    }
+
+    // Create a WAV file from the audio buffer
+    let wavBuffer;
+    try {
+      wavBuffer = audioBufferToWav(rawBuffer, sampleRate);
+    } catch (wavError) {
+      console.error('[stem-separation] WAV conversion failed:', wavError);
+      throw new Error('Failed to convert audio to WAV format. Try regenerating the stem.');
+    }
+
+    const wavSizeMB = (wavBuffer.byteLength / 1024 / 1024).toFixed(2);
+    console.log('[stem-separation] WAV buffer size:', wavBuffer.byteLength, 'bytes', `(${wavSizeMB} MB)`);
+
+    // Validate WAV buffer is not empty
+    if (wavBuffer.byteLength === 0) {
+      throw new Error('Generated WAV file is empty. Try regenerating the stem.');
+    }
+
+    // Validate payload size (ElevenLabs has limits, typically around 25MB)
+    const MAX_PAYLOAD_SIZE = 25 * 1024 * 1024;
+    if (wavBuffer.byteLength > MAX_PAYLOAD_SIZE) {
+      throw new Error(`Audio file too large (${wavSizeMB}MB). Maximum size is 25MB. Try using fewer bars or shorter duration.`);
+    }
+
+    // Convert to base64 for transmission with validation
+    let base64Audio;
+    try {
+      base64Audio = arrayBufferToBase64(wavBuffer);
+      if (!base64Audio || base64Audio.length === 0) {
+        throw new Error('Base64 encoding produced empty result');
+      }
+    } catch (b64Error) {
+      console.error('[stem-separation] Base64 encoding failed:', b64Error);
+      throw new Error('Failed to encode audio data. Try regenerating the stem.');
+    }
+
+    const base64SizeMB = (base64Audio.length / 1024 / 1024).toFixed(2);
     console.log('[stem-separation] Base64 audio length:', base64Audio.length, 'characters', `(${base64SizeMB} MB)`);
+
+    // Final size check on base64 data
+    if (base64Audio.length > 35 * 1024 * 1024) {
+      throw new Error(`Encoded audio too large (${base64SizeMB}MB). Try using fewer bars.`);
+    }
 
     // Call the separation edge function with retry logic
     console.log('[stem-separation] Calling edge function with stemType:', st);
@@ -2630,8 +2669,11 @@ async function separateCurrentStem(st) {
 
     console.log('[stem-separation] Edge function response - data:', !!data, 'error:', !!error, 'retries:', retryCount);
 
+    // Validate error response
     if (error) {
       console.error('[stem-separation] Edge function error:', error);
+      console.error('[stem-separation] Error type:', typeof error);
+      console.error('[stem-separation] Error keys:', Object.keys(error || {}));
 
       // Try to extract more detailed error information
       let errorMessage = error.message || 'Stem separation failed';
@@ -2650,35 +2692,90 @@ async function separateCurrentStem(st) {
       throw new Error(errorMessage);
     }
 
-    if (!data || !data.success || !data.audioData) {
-      console.error('[stem-separation] Invalid response:', { hasData: !!data, success: data?.success, hasAudioData: !!data?.audioData });
+    // Comprehensive response validation
+    if (!data) {
+      console.error('[stem-separation] No data received from edge function');
+      throw new Error('No response data received from separation API');
+    }
 
-      // Provide more specific error message based on what's missing
-      if (!data) {
-        throw new Error('No response data received from separation API');
-      } else if (data.error) {
-        // The API returned an error object
-        throw new Error(data.error + (data.hint ? ' - ' + data.hint : ''));
-      } else if (!data.success) {
-        throw new Error('Separation API returned unsuccessful status');
-      } else if (!data.audioData) {
-        throw new Error('No audio data in separation API response');
-      } else {
-        throw new Error('Invalid response from separation API');
-      }
+    console.log('[stem-separation] Response data keys:', Object.keys(data));
+    console.log('[stem-separation] Response success:', data.success);
+    console.log('[stem-separation] Response has audioData:', !!data.audioData);
+
+    // Check for API error in response
+    if (data.error) {
+      console.error('[stem-separation] API returned error:', data.error);
+      const errorMsg = data.error + (data.hint ? ' - ' + data.hint : '');
+      throw new Error(errorMsg);
+    }
+
+    // Validate success flag
+    if (!data.success) {
+      console.error('[stem-separation] API returned success=false');
+      throw new Error('Separation API returned unsuccessful status. ' + (data.hint || 'Please try again.'));
+    }
+
+    // Validate audio data presence
+    if (!data.audioData) {
+      console.error('[stem-separation] No audioData in response');
+      throw new Error('No audio data in separation API response. The service may be unavailable.');
+    }
+
+    // Validate audio data is a string
+    if (typeof data.audioData !== 'string') {
+      console.error('[stem-separation] audioData is not a string:', typeof data.audioData);
+      throw new Error('Invalid audio data format in response');
+    }
+
+    // Validate audio data is not empty
+    if (data.audioData.length === 0) {
+      console.error('[stem-separation] audioData is empty');
+      throw new Error('Received empty audio data from separation API');
     }
 
     console.log('[stem-separation] Received separated audio - stemType:', data.stemType, 'audioData length:', data.audioData.length);
 
-    // Decode the separated audio data
+    // Decode the separated audio data with validation
     console.log('[stem-separation] Decoding base64 audio data...');
-    const separatedAudioData = base64ToArrayBuffer(data.audioData)
-    console.log('[stem-separation] Decoded array buffer size:', separatedAudioData.byteLength, 'bytes');
+    let separatedAudioData;
+    try {
+      separatedAudioData = base64ToArrayBuffer(data.audioData);
+      if (!separatedAudioData || separatedAudioData.byteLength === 0) {
+        throw new Error('Decoded audio buffer is empty');
+      }
+      console.log('[stem-separation] Decoded array buffer size:', separatedAudioData.byteLength, 'bytes');
+    } catch (decodeError) {
+      console.error('[stem-separation] Base64 decode failed:', decodeError);
+      throw new Error('Failed to decode separated audio data. Response may be corrupted.');
+    }
+
+    // Validate decoded size is reasonable
+    if (separatedAudioData.byteLength < 44) {
+      throw new Error('Decoded audio is too small to be valid. Response may be corrupted.');
+    }
 
     // Decode the audio file using Web Audio API
     console.log('[stem-separation] Decoding audio with Web Audio API...');
-    const decodedBuffer = await audioContext.decodeAudioData(separatedAudioData)
-    console.log('[stem-separation] Audio decoded successfully - duration:', decodedBuffer.duration, 'seconds');
+    let decodedBuffer;
+    try {
+      decodedBuffer = await audioContext.decodeAudioData(separatedAudioData);
+      if (!decodedBuffer) {
+        throw new Error('Audio context returned null buffer');
+      }
+      console.log('[stem-separation] Audio decoded successfully - duration:', decodedBuffer.duration, 'seconds, channels:', decodedBuffer.numberOfChannels, 'sampleRate:', decodedBuffer.sampleRate);
+    } catch (audioDecodeError) {
+      console.error('[stem-separation] Web Audio API decode failed:', audioDecodeError);
+      throw new Error('Failed to decode separated audio. The file may be corrupted or in an unsupported format.');
+    }
+
+    // Validate decoded buffer properties
+    if (decodedBuffer.length === 0 || decodedBuffer.duration === 0) {
+      throw new Error('Decoded audio has zero duration. Separation may have failed.');
+    }
+
+    if (decodedBuffer.numberOfChannels === 0) {
+      throw new Error('Decoded audio has no channels. Separation may have failed.');
+    }
 
     // Add the separated stem as a new take in the history
     const master = stemControlValues.master || {}
@@ -2787,32 +2884,63 @@ async function separateCurrentStem(st) {
   } catch (err) {
     console.error('[stem-separation] Error during separation:', err);
     console.error('[stem-separation] Error stack:', err.stack);
+    console.error('[stem-separation] Error name:', err.name);
+    console.error('[stem-separation] Error context:', err.context);
 
-    // Determine user-friendly error message
-    let userMessage = err.message;
+    // Determine user-friendly error message with specific diagnostics
+    let userMessage = err.message || 'An unknown error occurred';
+    let errorCategory = 'unknown';
 
-    // Provide helpful hints based on common errors
-    if (err.message.includes('API key') || err.message.includes('not configured')) {
-      userMessage = 'API key not configured. Please add ELEVENLABS_API_KEY to your environment variables.';
-    } else if (err.message.includes('401') || err.message.includes('Authentication failed')) {
-      userMessage = 'Authentication failed. Please verify your ELEVENLABS_API_KEY is valid.';
-    } else if (err.message.includes('422') || err.message.includes('Invalid audio format')) {
-      userMessage = 'Invalid audio format. Please try regenerating the stem.';
-    } else if (err.message.includes('413') || err.message.includes('too large')) {
-      userMessage = 'Audio file too large. Try using shorter bars or lower sample rate.';
-    } else if (err.message.includes('429') || err.message.includes('Rate limit')) {
-      userMessage = 'Rate limit exceeded. Please wait a moment and try again.';
-    } else if (err.message.includes('Failed to send a request') || err.message.includes('FunctionsFetchError')) {
-      userMessage = 'Connection to server failed. Please check that the edge function is deployed and try again.';
-    } else if (err.message.includes('timeout')) {
-      userMessage = 'Request timed out. The audio may be too long. Try again or use a shorter clip.';
-    } else if (err.message.includes('network') || err.message.includes('NetworkError')) {
-      userMessage = 'Network error. Please check your internet connection and try again.';
-    } else if (err.message.includes('500') || err.message.includes('503') || err.message.includes('temporarily unavailable')) {
-      userMessage = 'Service temporarily unavailable. Please try again in a moment.';
+    // Check for specific error patterns and categorize
+    const errMsg = err.message?.toLowerCase() || '';
+
+    if (errMsg.includes('api key') || errMsg.includes('not configured') || errMsg.includes('authentication')) {
+      errorCategory = 'auth';
+      if (errMsg.includes('not configured')) {
+        userMessage = 'API key not configured. Contact support to enable stem separation.';
+      } else if (errMsg.includes('invalid') || errMsg.includes('401')) {
+        userMessage = 'Authentication failed. Invalid API key.';
+      } else {
+        userMessage = 'Authentication error. Please contact support.';
+      }
+    } else if (errMsg.includes('invalid audio') || errMsg.includes('422') || errMsg.includes('format')) {
+      errorCategory = 'format';
+      userMessage = 'Invalid audio format. Try regenerating this stem.';
+    } else if (errMsg.includes('too large') || errMsg.includes('413') || errMsg.includes('file size')) {
+      errorCategory = 'size';
+      userMessage = 'Audio too large. Try fewer bars or shorter duration.';
+    } else if (errMsg.includes('rate limit') || errMsg.includes('429')) {
+      errorCategory = 'rate_limit';
+      userMessage = 'Rate limit reached. Please wait a moment and try again.';
+    } else if (errMsg.includes('timeout') || errMsg.includes('504')) {
+      errorCategory = 'timeout';
+      userMessage = 'Processing timed out. Try a shorter audio clip.';
+    } else if (errMsg.includes('failed to send') || errMsg.includes('functionsfetcherror') || errMsg.includes('connection')) {
+      errorCategory = 'connection';
+      userMessage = 'Connection failed. Check internet and try again.';
+    } else if (errMsg.includes('network') || errMsg.includes('networkerror')) {
+      errorCategory = 'network';
+      userMessage = 'Network error. Check your connection.';
+    } else if (errMsg.includes('500') || errMsg.includes('503') || errMsg.includes('unavailable') || errMsg.includes('server error')) {
+      errorCategory = 'server';
+      userMessage = 'Service temporarily unavailable. Try again in a moment.';
+    } else if (errMsg.includes('zip') || errMsg.includes('parse') || errMsg.includes('extract')) {
+      errorCategory = 'parse';
+      userMessage = 'Failed to process separation result. Try again or contact support.';
+    } else if (errMsg.includes('decode') || errMsg.includes('audio') || errMsg.includes('buffer')) {
+      errorCategory = 'decode';
+      userMessage = 'Audio processing failed. Try regenerating the stem.';
+    } else if (errMsg.includes('no response') || errMsg.includes('invalid response')) {
+      errorCategory = 'response';
+      userMessage = 'Invalid server response. Try again.';
     } else if (isRetryableError(err)) {
-      userMessage = 'Connection issue after multiple retries. Please try again later.';
+      errorCategory = 'retry_exhausted';
+      userMessage = 'Connection issue persisted after retries. Try again later.';
     }
+
+    // Log the categorized error for debugging
+    console.error('[stem-separation] Error category:', errorCategory);
+    console.error('[stem-separation] User message:', userMessage);
 
     // Show error message
     if (separateHint) {
