@@ -995,6 +995,22 @@ function drawTinyWaveform(canvas, audioBuffer) {
   ctx.stroke()
 }
 
+/**
+ * Draw waveform in the edit modal canvas
+ * @param {string} st - Stem identifier
+ * @param {AudioBuffer} audioBuffer - Audio buffer to visualize
+ */
+function drawEditWaveform(st, audioBuffer) {
+  if (!st || !audioBuffer) return
+  const canvas = document.getElementById('waveformEditCanvas')
+  if (!canvas) return
+  const cfg = stemConfigs[st]
+  if (!cfg) return
+  drawWaveform(canvas, audioBuffer, `rgb(${getColorRGB(cfg.color)})`)
+  const volVal = stemControlValues[st]?.volume ?? 80
+  canvas.style.transform = `scaleY(${volVal / 100})`
+}
+
 /* =========================================================
    Stem configs (9 cards) — order defines 1–9 hotkeys
    ========================================================= */

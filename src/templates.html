@@ -176,6 +176,15 @@
         <span class="dial-btn text-white/60 text-sm sm:text-xl font-extrabold ml-2" data-dial-type="endpoint" data-dial-step="1" data-stem="">+</span>
       </div>
     </div>
+    <!-- Stem Separation Section -->
+    <div class="mb-4 border-t border-white/10 pt-4">
+      <button id="editSeparateBtn" class="w-full py-2.5 bg-white/5 hover:bg-white/10 border border-white/20 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition">
+        <i data-lucide="scissors" class="w-4 h-4"></i>
+        <span id="editSeparateLabel">Separate Stem</span>
+        <i id="editSeparateSpinner" data-lucide="loader-2" class="hidden w-4 h-4 animate-spin"></i>
+      </button>
+      <p id="editSeparateHint" class="text-xs text-white/50 mt-2 text-center">Automatically extract and select this instrument from the mix</p>
+    </div>
     <!-- Action buttons -->
     <div class="flex justify-end gap-3 mt-2">
       <button id="editDefaultBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-sm">Default</button>
