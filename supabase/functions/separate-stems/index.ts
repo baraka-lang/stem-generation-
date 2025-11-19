@@ -34,8 +34,31 @@ Deno.serve(async (req: Request) => {
     });
   }
 
+  // Health check endpoint
+  if (req.method === "GET") {
+    const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+    return new Response(
+      JSON.stringify({
+        status: "healthy",
+        service: "separate-stems",
+        version: "1.0.0",
+        apiKeyConfigured: !!apiKey,
+        timestamp: new Date().toISOString(),
+      }),
+      {
+        status: 200,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
+    );
+  }
+
   try {
-    console.log("[separate-stems] Received request");
+    const startTime = Date.now();
+    console.log("[separate-stems] Received request", {
+      method: req.method,
+      url: req.url,
+      timestamp: new Date().toISOString(),
+    });
 
     // Parse request body
     const body: SeparationRequest = await req.json();
@@ -68,11 +91,12 @@ Deno.serve(async (req: Request) => {
     const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
     if (!apiKey) {
       console.error("[separate-stems] ELEVENLABS_API_KEY not configured");
+      console.error("[separate-stems] Available env vars:", Object.keys(Deno.env.toObject()));
       return new Response(
         JSON.stringify({
           success: false,
           error: "API key not configured",
-          hint: "Please configure ELEVENLABS_API_KEY in environment variables",
+          hint: "Please configure ELEVENLABS_API_KEY in Supabase project secrets",
         }),
         {
           status: 500,
@@ -80,6 +104,8 @@ Deno.serve(async (req: Request) => {
         }
       );
     }
+
+    console.log("[separate-stems] API key configured:", apiKey.substring(0, 8) + "...");
 
     // Convert base64 to binary
     console.log("[separate-stems] Decoding base64 audio data...");
@@ -196,6 +222,9 @@ Deno.serve(async (req: Request) => {
       const base64Audio = btoa(String.fromCharCode(...selectedStem));
       console.log("[separate-stems] Base64 audio length:", base64Audio.length, "characters");
 
+      const duration = Date.now() - startTime;
+      console.log("[separate-stems] Success! Total processing time:", duration, "ms");
+
       return new Response(
         JSON.stringify({
           success: true,
@@ -203,6 +232,7 @@ Deno.serve(async (req: Request) => {
           stemType: targetStemType,
           requestedInstrument: stemType,
           format: outputFormat,
+          processingTimeMs: duration,
         }),
         {
           status: 200,
@@ -230,12 +260,20 @@ Deno.serve(async (req: Request) => {
       throw fetchError;
     }
   } catch (error) {
-    console.error("[separate-stems] Unexpected error:", error);
+    const duration = Date.now() - startTime;
+    console.error("[separate-stems] Unexpected error after", duration, "ms:", error);
+    console.error("[separate-stems] Error details:", {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    });
+
     return new Response(
       JSON.stringify({
         success: false,
         error: "Internal server error",
         hint: error.message || "An unexpected error occurred",
+        errorType: error.name || "UnknownError",
       }),
       {
         status: 500,

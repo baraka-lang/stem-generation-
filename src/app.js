@@ -7,6 +7,7 @@ import { storeStemPCM, getStemPCM, getStemFormat, isPCMReadyForDrag, clearStemPC
 import { pcm16leToWav, pcm16leToWavBlob, validatePcmData, parseElevenLabsFormat, generateWavFilename as generateWavFilenameFromFormat } from './pcmToWav.js'
 import { initAutoDownloadManager, isAutoDownloadSupported, isAutoDownloadEnabled, requestAutoDownloadDirectory, disableAutoDownload, getAutoDownloadStatus, subscribeAutoDownloadEvents, queueAutoDownloadForStem, getStemAutoDownloadRecord } from './autoDownloadManager.js'
 import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Utilities/barUtils.js'
+import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -2587,23 +2588,47 @@ async function separateCurrentStem(st) {
 
     // Create a WAV file from the audio buffer
     const wavBuffer = audioBufferToWav(rawBuffer, sampleRate)
-    console.log('[stem-separation] WAV buffer size:', wavBuffer.byteLength, 'bytes');
+    const wavSizeMB = (wavBuffer.byteLength / 1024 / 1024).toFixed(2)
+    console.log('[stem-separation] WAV buffer size:', wavBuffer.byteLength, 'bytes', `(${wavSizeMB} MB)`);
+
+    // Validate payload size (ElevenLabs has limits, typically around 25MB)
+    const MAX_PAYLOAD_SIZE = 25 * 1024 * 1024
+    if (wavBuffer.byteLength > MAX_PAYLOAD_SIZE) {
+      throw new Error(`Audio file too large (${wavSizeMB}MB). Maximum size is 25MB. Try using a shorter audio clip.`)
+    }
 
     // Convert to base64 for transmission
     const base64Audio = arrayBufferToBase64(wavBuffer)
-    console.log('[stem-separation] Base64 audio length:', base64Audio.length, 'characters');
+    const base64SizeMB = (base64Audio.length / 1024 / 1024).toFixed(2)
+    console.log('[stem-separation] Base64 audio length:', base64Audio.length, 'characters', `(${base64SizeMB} MB)`);
 
-    // Call the separation edge function
+    // Call the separation edge function with retry logic
     console.log('[stem-separation] Calling edge function with stemType:', st);
-    const { data, error } = await supabase.functions.invoke('separate-stems', {
-      body: {
-        audioData: base64Audio,
-        stemType: st,
-        outputFormat: 'mp3_44100_128'
-      }
-    })
 
-    console.log('[stem-separation] Edge function response - data:', !!data, 'error:', !!error);
+    let retryCount = 0
+    const { data, error } = await retryEdgeFunctionCall(
+      () => supabase.functions.invoke('separate-stems', {
+        body: {
+          audioData: base64Audio,
+          stemType: st,
+          outputFormat: 'mp3_44100_128'
+        }
+      }),
+      {
+        functionName: 'separate-stems',
+        maxAttempts: 3,
+        initialDelay: 2000,
+        maxDelay: 8000,
+        onRetry: (attempt, maxAttempts, delay) => {
+          retryCount = attempt
+          if (separateHint) {
+            separateHint.textContent = `Connection issue, retrying (${attempt}/${maxAttempts})...`
+          }
+        }
+      }
+    )
+
+    console.log('[stem-separation] Edge function response - data:', !!data, 'error:', !!error, 'retries:', retryCount);
 
     if (error) {
       console.error('[stem-separation] Edge function error:', error);
@@ -2767,18 +2792,26 @@ async function separateCurrentStem(st) {
     let userMessage = err.message;
 
     // Provide helpful hints based on common errors
-    if (err.message.includes('API key')) {
-      userMessage = 'API key not configured. Please check your settings.';
-    } else if (err.message.includes('401')) {
-      userMessage = 'Authentication failed. Please verify your API credentials.';
-    } else if (err.message.includes('422')) {
-      userMessage = 'Invalid audio format. Please try a different audio file.';
-    } else if (err.message.includes('429')) {
+    if (err.message.includes('API key') || err.message.includes('not configured')) {
+      userMessage = 'API key not configured. Please add ELEVENLABS_API_KEY to your environment variables.';
+    } else if (err.message.includes('401') || err.message.includes('Authentication failed')) {
+      userMessage = 'Authentication failed. Please verify your ELEVENLABS_API_KEY is valid.';
+    } else if (err.message.includes('422') || err.message.includes('Invalid audio format')) {
+      userMessage = 'Invalid audio format. Please try regenerating the stem.';
+    } else if (err.message.includes('413') || err.message.includes('too large')) {
+      userMessage = 'Audio file too large. Try using shorter bars or lower sample rate.';
+    } else if (err.message.includes('429') || err.message.includes('Rate limit')) {
       userMessage = 'Rate limit exceeded. Please wait a moment and try again.';
-    } else if (err.message.includes('timeout') || err.message.includes('network')) {
-      userMessage = 'Network error. Please check your connection and try again.';
-    } else if (err.message.includes('non-2xx')) {
+    } else if (err.message.includes('Failed to send a request') || err.message.includes('FunctionsFetchError')) {
+      userMessage = 'Connection to server failed. Please check that the edge function is deployed and try again.';
+    } else if (err.message.includes('timeout')) {
+      userMessage = 'Request timed out. The audio may be too long. Try again or use a shorter clip.';
+    } else if (err.message.includes('network') || err.message.includes('NetworkError')) {
+      userMessage = 'Network error. Please check your internet connection and try again.';
+    } else if (err.message.includes('500') || err.message.includes('503') || err.message.includes('temporarily unavailable')) {
       userMessage = 'Service temporarily unavailable. Please try again in a moment.';
+    } else if (isRetryableError(err)) {
+      userMessage = 'Connection issue after multiple retries. Please try again later.';
     }
 
     // Show error message
