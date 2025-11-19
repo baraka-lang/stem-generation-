@@ -3140,31 +3140,80 @@ function restartStemNextBoundary(st) {
 const genControllers = new Map()
 function getNewStemController(st){ const prev=genControllers.get(st); if(prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded','AbortError')); const ctrl=new AbortController(); genControllers.set(st, ctrl); return ctrl }
 function buildCompositionPlan({ tempo, bars }, descriptor){ const ms=Math.round(bars*4*(60/tempo)*1000); return { positive_global_styles:["techno","instrumental","loop"], negative_global_styles:["vocals","fade-in","fade-out","free-time"], sections:[{ section_name:"Loop", positive_local_styles:[descriptor||"modern techno"], negative_local_styles:["rubato","modulation","improv cadenza"], duration_ms: ms, lines: [] }] } }
-async function composeOnce(payload, signal){
-  const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/eleven-music-compose`
+async function composeOnce(payload, signal, statusEl = null){
   const tryPayload = (fmt) => ({ ...payload, output_format: fmt, model_id: 'music_v1', respect_sections_durations: true })
   let lastErr = null
+  let retryCount = 0
+
   for (const fmt of [PRIMARY_OUTPUT_FORMAT, FALLBACK_OUTPUT_FORMAT]) {
     try {
-      const res = await fetch(functionUrl, {
-        method: 'POST', signal,
-        headers: { 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(tryPayload(fmt))
-      })
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`
-        try {
-          const e = await res.json()
-          if (e.error) msg = e.error
-          if (e.upstream) msg += ` • upstream: ${e.upstream}`
-        } catch { msg += ` • Raw: ${await res.text()}` }
-        if (fmt === PRIMARY_OUTPUT_FORMAT && /only allowed for Pro|PCM/i.test(msg)) { lastErr = new Error(msg); continue }
-        throw new Error(msg)
+      console.log(`[composeOnce] Attempting with format: ${fmt}`)
+
+      const { data, error } = await retryEdgeFunctionCall(
+        () => supabase.functions.invoke('eleven-music-compose', {
+          body: tryPayload(fmt)
+        }),
+        {
+          functionName: 'eleven-music-compose',
+          maxAttempts: 3,
+          initialDelay: 2000,
+          maxDelay: 8000,
+          onRetry: (attempt, maxAttempts, delay) => {
+            retryCount = attempt
+            console.log(`[composeOnce] Retry ${attempt}/${maxAttempts} for ${fmt} after ${delay}ms`)
+            if (statusEl) {
+              statusEl.textContent = `Connection issue, retrying (${attempt}/${maxAttempts})...`
+            }
+          }
+        }
+      )
+
+      console.log(`[composeOnce] Response:`, { hasData: !!data, hasError: !!error, dataType: typeof data, retries: retryCount })
+
+      if (error) {
+        const errMsg = error.message || error.toString()
+        console.error(`[composeOnce] Supabase invoke error with ${fmt}:`, errMsg)
+
+        if (fmt === PRIMARY_OUTPUT_FORMAT && /only allowed for Pro|PCM|plan|tier/i.test(errMsg)) {
+          lastErr = error
+          continue
+        }
+        throw error
       }
-      return res.arrayBuffer()
-    } catch (e) { lastErr = e }
+
+      if (!data) {
+        throw new Error('No data received from eleven-music-compose function')
+      }
+
+      if (data instanceof ArrayBuffer) {
+        console.log(`[composeOnce] Success with ${fmt}, received ArrayBuffer: ${data.byteLength} bytes`)
+        return data
+      } else if (data instanceof Blob) {
+        console.log(`[composeOnce] Success with ${fmt}, received Blob: ${data.size} bytes`)
+        return await data.arrayBuffer()
+      } else if (typeof data === 'object' && data.error) {
+        const errMsg = data.error + (data.hint ? ` - ${data.hint}` : '')
+        console.error(`[composeOnce] API error with ${fmt}:`, errMsg)
+        if (fmt === PRIMARY_OUTPUT_FORMAT && /only allowed for Pro|PCM|plan|tier/i.test(errMsg)) {
+          lastErr = new Error(errMsg)
+          continue
+        }
+        throw new Error(errMsg)
+      } else {
+        console.error(`[composeOnce] Unexpected response type:`, typeof data, data?.constructor?.name)
+        throw new Error(`Unexpected response type from eleven-music-compose: ${typeof data}`)
+      }
+    } catch (e) {
+      console.error(`[composeOnce] Error with format ${fmt}:`, e)
+      lastErr = e
+
+      if (fmt !== PRIMARY_OUTPUT_FORMAT) {
+        throw e
+      }
+    }
   }
-  throw lastErr || new Error('composeOnce failed')
+
+  throw lastErr || new Error('composeOnce failed with all formats')
 }
 async function composeWithRetries(st, tempo, bars, signal, statusEl){
   const beats=bars*4
@@ -3177,14 +3226,14 @@ async function composeWithRetries(st, tempo, bars, signal, statusEl){
     const prompt=(st==='hihat')?buildHihatPrompt(controls, master, tier):buildSnarePrompt(controls, master, tier)
     if (statusEl) statusEl.textContent=`Creating… (${st}, tier ${tier+1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
     const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt, music_length_ms }
-    const ab=await composeOnce(body, signal)
+    const ab=await composeOnce(body, signal, statusEl)
     const buf=await audioContext.decodeAudioData(ab)
     const ok=(st==='hihat')?validateHihat(buf, tempo, bars):validateSnare(buf, tempo, bars)
     if(ok) return { buffer: buf, usedPrompt: prompt, tier }
   }
   const finalPrompt=(st==='hihat')?buildHihatPrompt(controls, master, 2):buildSnarePrompt(controls, master, 2)
   const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt: finalPrompt, music_length_ms }
-  const ab=await composeOnce(body, signal)
+  const ab=await composeOnce(body, signal, statusEl)
   const buf=await audioContext.decodeAudioData(ab)
   return { buffer: buf, usedPrompt: finalPrompt, tier: 2, failedValidation: true }
 }
@@ -3306,7 +3355,7 @@ async function generateStem(st) {
         const body = USE_COMPOSITION_PLAN
           ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
           : { prompt, music_length_ms }
-        const ab = await composeOnce(body, signal)
+        const ab = await composeOnce(body, signal, statusEl)
         audioBuffer = await audioContext.decodeAudioData(ab)
         usedPrompt = prompt
         tier = 0
