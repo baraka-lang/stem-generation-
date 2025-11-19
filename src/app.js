@@ -235,13 +235,26 @@ async function applyPlayerState(snapshot) {
     // Update visible instruments array
     visibleInstruments = [...snapshot.visibleInstruments]
 
-    // Show only the visible instruments
-    visibleInstruments.forEach(st => {
-      const card = document.querySelector(`[data-stem="${st}"]`)
-      if (card) {
-        card.style.display = ''
-      }
-    })
+    // Reorder cards in the DOM to match visibleInstruments order
+    const container = document.getElementById('stem-container')
+    const plusButton = document.getElementById('add-instrument-button')
+    if (container) {
+      visibleInstruments.forEach(st => {
+        const card = document.querySelector(`[data-stem="${st}"]`)
+        if (card) {
+          card.style.display = ''
+          // Move card to maintain visibleInstruments order
+          if (plusButton) {
+            container.insertBefore(card, plusButton)
+          } else {
+            container.appendChild(card)
+          }
+        }
+      })
+    }
+
+    // Update card numbers to reflect the restored order
+    updateAllCardNumbers()
 
     // Update plus button visibility
     updatePlusButtonVisibility()
@@ -4159,10 +4172,11 @@ function buildFloatingMixerPanel(){
   // Display three channels per row on all screen sizes for consistency.
   grid.className = 'grid grid-cols-3 gap-2 sm:grid-cols-3 sm:gap-4 md:grid-cols-3'
   // Populate with full-width channel rows
-  grid.innerHTML = STEM_ORDER.map(st => mixChannelRowHTML(st)).join('')
+  // Use visibleInstruments order instead of STEM_ORDER for consistent ordering
+  grid.innerHTML = visibleInstruments.map(st => mixChannelRowHTML(st)).join('')
   // Update mixer glow and card number colours
-  STEM_ORDER.forEach(updateMixerGlow)
-  STEM_ORDER.forEach(updateCardNumberColor)
+  visibleInstruments.forEach(updateMixerGlow)
+  visibleInstruments.forEach(updateCardNumberColor)
 }
 function setMixerOpen(open){
   const tray=document.getElementById('mixerTray')
@@ -5462,11 +5476,20 @@ function showInstrumentDropdown(buttonElement) {
 
   dropdown.innerHTML = dropdownHTML
 
-  // Position dropdown
+  // Position dropdown to the right of the button
   const rect = buttonElement.getBoundingClientRect()
   dropdown.style.position = 'fixed'
-  dropdown.style.top = `${rect.bottom + 8}px`
-  dropdown.style.left = `${rect.left}px`
+  dropdown.style.top = `${rect.top}px`
+  dropdown.style.left = `${rect.right + 12}px`
+
+  // Ensure dropdown stays within viewport bounds
+  setTimeout(() => {
+    const dropdownRect = dropdown.getBoundingClientRect()
+    if (dropdownRect.right > window.innerWidth) {
+      // If dropdown overflows right, position it to the left of the button instead
+      dropdown.style.left = `${rect.left - dropdownRect.width - 12}px`
+    }
+  }, 0)
 
   document.body.appendChild(dropdown)
 
@@ -5499,13 +5522,27 @@ function addInstrument(stemId) {
     return
   }
 
-  // Add to visible instruments
+  // Add to visible instruments at the end
   visibleInstruments.push(stemId)
 
-  // Show the instrument card
+  // Get the card and container
   const card = document.querySelector(`[data-stem="${stemId}"]`)
-  if (card) {
+  const container = document.getElementById('stem-container')
+  const plusButton = document.getElementById('add-instrument-button')
+
+  if (card && container) {
+    // Show the card
     card.style.display = ''
+
+    // Move the card to the end, right before the plus button
+    if (plusButton) {
+      container.insertBefore(card, plusButton)
+    } else {
+      container.appendChild(card)
+    }
+
+    // Update card number to reflect new position
+    updateAllCardNumbers()
   }
 
   // Update plus button visibility
@@ -5515,6 +5552,21 @@ function addInstrument(stemId) {
   window.lucide?.createIcons()
 
   console.log(`✅ Added instrument: ${stemId}`)
+}
+
+function updateAllCardNumbers() {
+  // Update card numbers to reflect the current order in visibleInstruments
+  visibleInstruments.forEach((st, index) => {
+    const cardNumEl = document.querySelector(`[data-card-number="${st}"]`)
+    if (cardNumEl) {
+      cardNumEl.textContent = index + 1
+    }
+    // Also update mixer number if it exists
+    const mixNumEl = document.querySelector(`[data-mix-number="${st}"]`)
+    if (mixNumEl) {
+      mixNumEl.textContent = index + 1
+    }
+  })
 }
 
 function updatePlusButtonVisibility() {
@@ -5544,14 +5596,24 @@ function initTechnoGenerator(){
   const container = document.getElementById('stem-container')
   if (container && PROMPTS_MODE === 'builder') {
     container.innerHTML = ''
-    STEM_ORDER.forEach(st => {
+
+    // First, add visible instruments in their specified order
+    visibleInstruments.forEach(st => {
       const card = createBuilderStemCard(st, stemConfigs[st])
-      // Hide instruments that aren't in the visibleInstruments array
-      if (!visibleInstruments.includes(st)) {
-        card.style.display = 'none'
-      }
       container.appendChild(card)
     })
+
+    // Then, add hidden instruments for remaining stems
+    STEM_ORDER.forEach(st => {
+      if (!visibleInstruments.includes(st)) {
+        const card = createBuilderStemCard(st, stemConfigs[st])
+        card.style.display = 'none'
+        container.appendChild(card)
+      }
+    })
+
+    // Update card numbers based on visibleInstruments order
+    updateAllCardNumbers()
 
     // Add plus button to add more instruments
     createAddInstrumentButton(container)
