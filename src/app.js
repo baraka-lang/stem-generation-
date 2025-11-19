@@ -126,6 +126,17 @@ let autoDownloadActionBtn = null
 let autoDownloadDisableBtn = null
 
 /* =========================================================
+   Visible Instruments State
+   ========================================================= */
+
+// Track which instruments are currently visible in the session.
+// By default, only kick and bass are shown.
+let visibleInstruments = ['kick', 'bass']
+
+// Track if the techno generator has been initialized to prevent duplicate initialization
+let technoGeneratorInitialized = false
+
+/* =========================================================
    Saved Sets (Player State Snapshots)
    ========================================================= */
 
@@ -154,7 +165,7 @@ let pendingLoadSetIndex = null
  * @returns {object} snapshot of the current player state
  */
 function getCurrentPlayerState() {
-  const snapshot = { stems: {} }
+  const snapshot = { stems: {}, visibleInstruments: [...visibleInstruments] }
   STEM_ORDER.forEach(st => {
     // ensure structures exist
     const activeIndex = stemActiveIndex[st] ?? -1
@@ -210,6 +221,32 @@ function updateSessionInfoCard() {
  */
 async function applyPlayerState(snapshot) {
   if (!snapshot || !snapshot.stems) return
+
+  // Restore visible instruments if saved
+  if (snapshot.visibleInstruments && Array.isArray(snapshot.visibleInstruments)) {
+    // Hide all instruments first
+    STEM_ORDER.forEach(st => {
+      const card = document.querySelector(`[data-stem="${st}"]`)
+      if (card) {
+        card.style.display = 'none'
+      }
+    })
+
+    // Update visible instruments array
+    visibleInstruments = [...snapshot.visibleInstruments]
+
+    // Show only the visible instruments
+    visibleInstruments.forEach(st => {
+      const card = document.querySelector(`[data-stem="${st}"]`)
+      if (card) {
+        card.style.display = ''
+      }
+    })
+
+    // Update plus button visibility
+    updatePlusButtonVisibility()
+  }
+
   // For each stem in the order, restore its state
   for (const st of STEM_ORDER) {
     const saved = snapshot.stems[st]
@@ -5364,7 +5401,141 @@ function setupNavigationListeners(){
   const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => {})
   const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => {})
 }
+
+/* =========================================================
+   Add Instrument Functionality
+   ========================================================= */
+
+function createAddInstrumentButton(container) {
+  const plusButton = document.createElement('div')
+  plusButton.id = 'add-instrument-button'
+  plusButton.className = 'glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] select-none cursor-pointer flex items-center justify-center min-h-[200px]'
+  plusButton.innerHTML = `
+    <div class="flex flex-col items-center gap-2">
+      <div class="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center">
+        <i data-lucide="plus" class="w-6 h-6 text-white/70"></i>
+      </div>
+      <span class="text-xs text-white/70">Add Instrument</span>
+    </div>
+  `
+
+  plusButton.addEventListener('click', () => {
+    showInstrumentDropdown(plusButton)
+  })
+
+  container.appendChild(plusButton)
+  updatePlusButtonVisibility()
+}
+
+function showInstrumentDropdown(buttonElement) {
+  // Remove existing dropdown if any
+  const existingDropdown = document.getElementById('instrument-dropdown')
+  if (existingDropdown) {
+    existingDropdown.remove()
+    return
+  }
+
+  // Get available instruments (not yet visible)
+  const availableInstruments = STEM_ORDER.filter(st => !visibleInstruments.includes(st))
+
+  if (availableInstruments.length === 0) {
+    return
+  }
+
+  // Create dropdown
+  const dropdown = document.createElement('div')
+  dropdown.id = 'instrument-dropdown'
+  dropdown.className = 'absolute z-50 mt-2 w-56 bg-black/90 border border-white/20 rounded-xl shadow-2xl backdrop-blur-lg'
+
+  let dropdownHTML = '<div class="p-2 space-y-1">'
+  availableInstruments.forEach(st => {
+    const cfg = stemConfigs[st]
+    dropdownHTML += `
+      <button class="w-full px-3 py-2 text-left text-sm text-white rounded-lg hover:bg-white/10 transition flex items-center gap-2"
+              data-add-instrument="${st}">
+        <div class="w-3 h-3 rounded-full bg-${cfg.color}-500"></div>
+        <span>${cfg.name}</span>
+      </button>
+    `
+  })
+  dropdownHTML += '</div>'
+
+  dropdown.innerHTML = dropdownHTML
+
+  // Position dropdown
+  const rect = buttonElement.getBoundingClientRect()
+  dropdown.style.position = 'fixed'
+  dropdown.style.top = `${rect.bottom + 8}px`
+  dropdown.style.left = `${rect.left}px`
+
+  document.body.appendChild(dropdown)
+
+  // Add click handlers for each instrument
+  availableInstruments.forEach(st => {
+    const btn = dropdown.querySelector(`[data-add-instrument="${st}"]`)
+    if (btn) {
+      btn.addEventListener('click', () => {
+        addInstrument(st)
+        dropdown.remove()
+      })
+    }
+  })
+
+  // Close dropdown when clicking outside
+  const closeDropdown = (e) => {
+    if (!dropdown.contains(e.target) && !buttonElement.contains(e.target)) {
+      dropdown.remove()
+      document.removeEventListener('click', closeDropdown)
+    }
+  }
+
+  setTimeout(() => {
+    document.addEventListener('click', closeDropdown)
+  }, 10)
+}
+
+function addInstrument(stemId) {
+  if (visibleInstruments.includes(stemId)) {
+    return
+  }
+
+  // Add to visible instruments
+  visibleInstruments.push(stemId)
+
+  // Show the instrument card
+  const card = document.querySelector(`[data-stem="${stemId}"]`)
+  if (card) {
+    card.style.display = ''
+  }
+
+  // Update plus button visibility
+  updatePlusButtonVisibility()
+
+  // Reinitialize lucide icons for the newly shown card
+  window.lucide?.createIcons()
+
+  console.log(`✅ Added instrument: ${stemId}`)
+}
+
+function updatePlusButtonVisibility() {
+  const plusButton = document.getElementById('add-instrument-button')
+  if (!plusButton) return
+
+  // Hide plus button if all instruments are visible
+  if (visibleInstruments.length >= STEM_ORDER.length) {
+    plusButton.style.display = 'none'
+  } else {
+    plusButton.style.display = ''
+  }
+}
+
 function initTechnoGenerator(){
+  // Prevent duplicate initialization
+  if (technoGeneratorInitialized) {
+    console.log('🎛️ Techno Generator already initialized')
+    return
+  }
+
   console.log('🎛️ Initializing Techno Generator…')
   injectGlobalStyles()
   initializeStemControlValues()
@@ -5373,11 +5544,24 @@ function initTechnoGenerator(){
   const container = document.getElementById('stem-container')
   if (container && PROMPTS_MODE === 'builder') {
     container.innerHTML = ''
-    STEM_ORDER.forEach(st => container.appendChild(createBuilderStemCard(st, stemConfigs[st])))
+    STEM_ORDER.forEach(st => {
+      const card = createBuilderStemCard(st, stemConfigs[st])
+      // Hide instruments that aren't in the visibleInstruments array
+      if (!visibleInstruments.includes(st)) {
+        card.style.display = 'none'
+      }
+      container.appendChild(card)
+    })
+
+    // Add plus button to add more instruments
+    createAddInstrumentButton(container)
   }
 
   setupEventListeners()
   window.lucide?.createIcons()
+
+  // Mark as initialized
+  technoGeneratorInitialized = true
 
   // Build docked mixer
   buildFloatingMixerPanel()
