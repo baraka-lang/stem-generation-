@@ -58,11 +58,32 @@ export async function retryWithBackoff(fn, options = {}) {
 }
 
 /**
+ * Check if an error is a CORS error
+ * @param {Error} error - Error to check
+ * @returns {boolean} - True if error is CORS-related
+ */
+export function isCorsError(error) {
+  const errorMessage = error?.message?.toLowerCase() || ''
+  const errorName = error?.name?.toLowerCase() || ''
+  const errorString = errorMessage + ' ' + errorName
+
+  return errorString.includes('cors') ||
+         errorString.includes('preflight') ||
+         errorString.includes('access control') ||
+         (errorString.includes('failed to fetch') && !errorString.includes('network'))
+}
+
+/**
  * Check if an error is retryable (network/temporary errors)
  * @param {Error} error - Error to check
  * @returns {boolean} - True if error should be retried
  */
 export function isRetryableError(error) {
+  // CORS errors should not be retried
+  if (isCorsError(error)) {
+    return false
+  }
+
   const retryableMessages = [
     'Failed to send a request',
     'network error',

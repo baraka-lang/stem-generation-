@@ -3,7 +3,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey, x-requested-with",
+  "Access-Control-Max-Age": "86400",
+  "Access-Control-Allow-Credentials": "true",
 };
 
 // Mapping from internal stem types to ElevenLabs separation stem types
@@ -260,20 +262,23 @@ Deno.serve(async (req: Request) => {
       throw fetchError;
     }
   } catch (error) {
-    const duration = Date.now() - startTime;
+    let duration = 0;
+    try {
+      duration = Date.now() - startTime;
+    } catch {}
     console.error("[separate-stems] Unexpected error after", duration, "ms:", error);
     console.error("[separate-stems] Error details:", {
-      name: error.name,
-      message: error.message,
-      stack: error.stack,
+      name: error?.name,
+      message: error?.message,
+      stack: error?.stack,
     });
 
     return new Response(
       JSON.stringify({
         success: false,
         error: "Internal server error",
-        hint: error.message || "An unexpected error occurred",
-        errorType: error.name || "UnknownError",
+        hint: error?.message || "An unexpected error occurred",
+        errorType: error?.name || "UnknownError",
       }),
       {
         status: 500,

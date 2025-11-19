@@ -155,17 +155,54 @@ function initializeFallbackIcons() {
 window.safeCreateIcons = safeCreateIcons;
 window.initializeFallbackIcons = initializeFallbackIcons;
 
+// Validate environment variables
+function validateEnvironment() {
+  const requiredVars = {
+    VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL,
+    VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY
+  }
+
+  const missing = []
+  const warnings = []
+
+  for (const [key, value] of Object.entries(requiredVars)) {
+    if (!value) {
+      missing.push(key)
+    } else if (value.includes('your-project') || value.includes('your-anon-key')) {
+      warnings.push(`${key} appears to be a placeholder value`)
+    }
+  }
+
+  if (missing.length > 0) {
+    console.error('❌ Missing required environment variables:', missing.join(', '))
+    return false
+  }
+
+  if (warnings.length > 0) {
+    console.warn('⚠️ Environment warnings:', warnings.join('; '))
+  }
+
+  console.log('✅ Environment variables validated')
+  console.log('   Supabase URL:', import.meta.env.VITE_SUPABASE_URL)
+  return true
+}
+
 // Initialize when both DOM and libraries are ready
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('🚀 Starting app initialization...');
-  
+
   try {
+    // Validate environment first
+    if (!validateEnvironment()) {
+      throw new Error('Environment configuration is incomplete. Please check your .env file.')
+    }
+
     const templatesLoaded = await loadTemplates();
     if (!templatesLoaded) {
       console.error('❌ Failed to load templates, stopping initialization');
       return;
     }
-    
+
     console.log('⏳ Waiting for external libraries...');
     await waitForLibraries();
     

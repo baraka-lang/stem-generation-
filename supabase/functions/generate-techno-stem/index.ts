@@ -12,9 +12,10 @@
 // metadata describing the prompt and validation tier.
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-requested-with',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Max-Age': '86400'
+  'Access-Control-Max-Age': '86400',
+  'Access-Control-Allow-Credentials': 'true'
 };
 // Stem base descriptions used in prompt construction.  Only the
 // basePrompt fields are required here; other UI‑related metadata is
