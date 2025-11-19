@@ -224,43 +224,27 @@ async function applyPlayerState(snapshot) {
 
   // Restore visible instruments if saved
   if (snapshot.visibleInstruments && Array.isArray(snapshot.visibleInstruments)) {
+    // Hide all instruments first
+    STEM_ORDER.forEach(st => {
+      const card = document.querySelector(`[data-stem="${st}"]`)
+      if (card) {
+        card.style.display = 'none'
+      }
+    })
+
     // Update visible instruments array
     visibleInstruments = [...snapshot.visibleInstruments]
 
-    // Rebuild the container to show instruments in the correct order
-    const container = document.getElementById('stem-container')
-    if (container) {
-      // Get the plus button to re-add it at the end
-      const plusButton = document.getElementById('add-instrument-button')
-      if (plusButton) {
-        plusButton.remove()
+    // Show only the visible instruments
+    visibleInstruments.forEach(st => {
+      const card = document.querySelector(`[data-stem="${st}"]`)
+      if (card) {
+        card.style.display = ''
       }
+    })
 
-      // Get all existing cards
-      const existingCards = {}
-      STEM_ORDER.forEach(st => {
-        const card = document.querySelector(`[data-stem="${st}"]`)
-        if (card) {
-          existingCards[st] = card
-          card.remove()
-        }
-      })
-
-      // Re-append cards in the order of visibleInstruments
-      visibleInstruments.forEach(st => {
-        if (existingCards[st]) {
-          container.appendChild(existingCards[st])
-        }
-      })
-
-      // Re-add the plus button
-      if (plusButton) {
-        container.appendChild(plusButton)
-      }
-
-      // Update plus button visibility
-      updatePlusButtonVisibility()
-    }
+    // Update plus button visibility
+    updatePlusButtonVisibility()
   }
 
   // For each stem in the order, restore its state
@@ -5515,39 +5499,13 @@ function addInstrument(stemId) {
     return
   }
 
-  // Add to visible instruments at the end
+  // Add to visible instruments
   visibleInstruments.push(stemId)
 
-  // Rebuild the container to show instruments in the correct order
-  const container = document.getElementById('stem-container')
-  if (!container) return
-
-  // Get the plus button to re-add it at the end
-  const plusButton = document.getElementById('add-instrument-button')
-  if (plusButton) {
-    plusButton.remove()
-  }
-
-  // Get all existing cards
-  const existingCards = {}
-  STEM_ORDER.forEach(st => {
-    const card = document.querySelector(`[data-stem="${st}"]`)
-    if (card) {
-      existingCards[st] = card
-      card.remove()
-    }
-  })
-
-  // Re-append cards in the order of visibleInstruments
-  visibleInstruments.forEach(st => {
-    if (existingCards[st]) {
-      container.appendChild(existingCards[st])
-    }
-  })
-
-  // Re-add the plus button
-  if (plusButton) {
-    container.appendChild(plusButton)
+  // Show the instrument card
+  const card = document.querySelector(`[data-stem="${stemId}"]`)
+  if (card) {
+    card.style.display = ''
   }
 
   // Update plus button visibility
@@ -5586,18 +5544,13 @@ function initTechnoGenerator(){
   const container = document.getElementById('stem-container')
   if (container && PROMPTS_MODE === 'builder') {
     container.innerHTML = ''
-
-    // Create a map of all cards for easy lookup
-    const allCards = {}
     STEM_ORDER.forEach(st => {
-      allCards[st] = createBuilderStemCard(st, stemConfigs[st])
-    })
-
-    // Append only visible instruments in the order they appear in visibleInstruments
-    visibleInstruments.forEach(st => {
-      if (allCards[st]) {
-        container.appendChild(allCards[st])
+      const card = createBuilderStemCard(st, stemConfigs[st])
+      // Hide instruments that aren't in the visibleInstruments array
+      if (!visibleInstruments.includes(st)) {
+        card.style.display = 'none'
       }
+      container.appendChild(card)
     })
 
     // Add plus button to add more instruments
