@@ -1020,6 +1020,69 @@ function applyGentleLimiter(chans, thresholdDb = -0.3) {
     }
   }
 }
+// Call the loop-fix-gemini edge function for AI-assisted loop warping
+async function callLoopFixGemini(wavBytes: Uint8Array, tempo: number, bars: number): Promise<Uint8Array | null> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn("Supabase credentials not available for loop-fix-gemini call");
+    return null;
+  }
+
+  try {
+    let binary = '';
+    for (let i = 0; i < wavBytes.length; i++) {
+      binary += String.fromCharCode(wavBytes[i]);
+    }
+    const audio_base64 = btoa(binary);
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/loop-fix-gemini`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        audio_base64,
+        target_bpm: tempo,
+        bars,
+        use_gemini: true
+      }),
+      signal: AbortSignal.timeout(60000)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.warn(`loop-fix-gemini failed: ${response.status} - ${errorText}`);
+      return null;
+    }
+
+    const result = await response.json();
+    const diagnostics = response.headers.get('X-LoopFix-Diagnostics');
+
+    if (diagnostics) {
+      console.log('Loop-fix diagnostics:', diagnostics);
+    }
+
+    if (!result.fixed_audio_base64) {
+      console.warn('loop-fix-gemini returned no audio data');
+      return null;
+    }
+
+    const fixedBinary = atob(result.fixed_audio_base64);
+    const fixedBytes = new Uint8Array(fixedBinary.length);
+    for (let i = 0; i < fixedBinary.length; i++) {
+      fixedBytes[i] = fixedBinary.charCodeAt(i);
+    }
+
+    return fixedBytes;
+  } catch (error) {
+    console.warn('loop-fix-gemini error:', error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
 // Convert channel arrays back to a PCM16 WAV.  Borrowed from loop-fix.
 function makeWavFromPCM16(chans, sr) {
   const ch = chans.length;
@@ -1138,6 +1201,7 @@ Deno.serve(async (req)=>{
     }
     const stem = String(body.stem || '').toLowerCase();
     const controls = body.controls || {};
+    const use_gemini = body.use_gemini !== undefined ? body.use_gemini : true;
     const master = body.master || {
       tempo: 130,
       bars: 4,
@@ -1333,49 +1397,73 @@ Deno.serve(async (req)=>{
         }
       });
     }
-    // Convert raw PCM to channel arrays for trimming
-    const pcm = convertRawPCMToChans(rawPCM, channels, sampleRate);
-    // Compute trimming parameters
-    const framesPerBeatFloat = sampleRate * (60 / tempo);
-    const framesPerBeatInt = Math.max(1, Math.round(framesPerBeatFloat));
-    let targetFrames = framesPerBeatInt * 4 * bars;
-    if (targetFrames > pcm.length) {
-      const beatMultiple = Math.max(1, Math.floor(pcm.length / framesPerBeatInt));
-      targetFrames = Math.max(framesPerBeatInt, beatMultiple * framesPerBeatInt);
+    // Try AI-assisted loop fix with Gemini if enabled
+    let outBytes: Uint8Array;
+    let loopMethod = 'heuristic';
+
+    if (use_gemini && Deno.env.get("GEMINI_API_KEY")) {
+      // Create a WAV from raw PCM first
+      const pcm = convertRawPCMToChans(rawPCM, channels, sampleRate);
+      const initialWav = makeWavFromPCM16(pcm.data, sampleRate);
+
+      const geminiFixed = await callLoopFixGemini(initialWav, tempo, bars);
+
+      if (geminiFixed) {
+        console.log('✓ Using Gemini-enhanced loop fix');
+        outBytes = geminiFixed;
+        loopMethod = 'gemini';
+      } else {
+        console.log('⚠ Gemini loop fix failed, using heuristic fallback');
+        // Fall through to heuristic method below
+      }
     }
-    const headIdx = detectHeadIndexArray(pcm.data[0], sampleRate);
-    const xfadeMs = 12;
-    const xfadeN = Math.max(2, Math.round(xfadeMs / 1000 * sampleRate));
-    const bestOff = findBestSeamOffsetArray(pcm.data[0], headIdx, targetFrames, xfadeN, sampleRate);
-    let start = mod(headIdx + bestOff, pcm.length);
-    const framesPerBeat = framesPerBeatFloat;
-    if (Number.isFinite(framesPerBeat) && framesPerBeat > 0) {
-      const quantStart = Math.round(start / framesPerBeat) * framesPerBeat;
-      if (Number.isFinite(quantStart) && Math.abs(quantStart - start) <= framesPerBeat * 0.35) {
-        start = Math.max(0, Math.min(pcm.length - 1, Math.round(quantStart)));
+
+    // Fallback to heuristic loop fix if Gemini not used or failed
+    if (!outBytes) {
+      // Convert raw PCM to channel arrays for trimming
+      const pcm = convertRawPCMToChans(rawPCM, channels, sampleRate);
+      // Compute trimming parameters
+      const framesPerBeatFloat = sampleRate * (60 / tempo);
+      const framesPerBeatInt = Math.max(1, Math.round(framesPerBeatFloat));
+      let targetFrames = framesPerBeatInt * 4 * bars;
+      if (targetFrames > pcm.length) {
+        const beatMultiple = Math.max(1, Math.floor(pcm.length / framesPerBeatInt));
+        targetFrames = Math.max(framesPerBeatInt, beatMultiple * framesPerBeatInt);
+      }
+      const headIdx = detectHeadIndexArray(pcm.data[0], sampleRate);
+      const xfadeMs = 12;
+      const xfadeN = Math.max(2, Math.round(xfadeMs / 1000 * sampleRate));
+      const bestOff = findBestSeamOffsetArray(pcm.data[0], headIdx, targetFrames, xfadeN, sampleRate);
+      let start = mod(headIdx + bestOff, pcm.length);
+      const framesPerBeat = framesPerBeatFloat;
+      if (Number.isFinite(framesPerBeat) && framesPerBeat > 0) {
+        const quantStart = Math.round(start / framesPerBeat) * framesPerBeat;
+        if (Number.isFinite(quantStart) && Math.abs(quantStart - start) <= framesPerBeat * 0.35) {
+          start = Math.max(0, Math.min(pcm.length - 1, Math.round(quantStart)));
+        } else {
+          start = Math.round(start);
+        }
       } else {
         start = Math.round(start);
       }
-    } else {
-      start = Math.round(start);
+      const trimmed = sliceWrapArray(pcm.data, start, targetFrames);
+
+      // Remove DC offset to prevent clicks
+      removeDcOffset(trimmed);
+
+      // Apply ramps and crossfade
+      applyEdgeRampsArray(trimmed, sampleRate, 5);
+      applySeamCrossfadeArray(trimmed, sampleRate, xfadeMs);
+
+      // Stem-specific processing
+      if (stem === 'perc') {
+        applyHighPassArray(trimmed, sampleRate, 180);
+      }
+
+      // Apply gentle limiting to prevent clipping while maintaining punch
+      applyGentleLimiter(trimmed, -0.3);
+      outBytes = makeWavFromPCM16(trimmed, sampleRate);
     }
-    const trimmed = sliceWrapArray(pcm.data, start, targetFrames);
-
-    // Remove DC offset to prevent clicks
-    removeDcOffset(trimmed);
-
-    // Apply ramps and crossfade
-    applyEdgeRampsArray(trimmed, sampleRate, 5);
-    applySeamCrossfadeArray(trimmed, sampleRate, xfadeMs);
-
-    // Stem-specific processing
-    if (stem === 'perc') {
-      applyHighPassArray(trimmed, sampleRate, 180);
-    }
-
-    // Apply gentle limiting to prevent clipping while maintaining punch
-    applyGentleLimiter(trimmed, -0.3);
-    const outBytes = makeWavFromPCM16(trimmed, sampleRate);
     // Encode to base64
     let binary = '';
     for(let i = 0; i < outBytes.length; i++)binary += String.fromCharCode(outBytes[i]);
@@ -1388,7 +1476,8 @@ Deno.serve(async (req)=>{
       validated,
       format: usedFormat,
       sampleRate: sampleRate,
-      channels: channels
+      channels: channels,
+      loopMethod: loopMethod
     };
     return new Response(JSON.stringify(responseBody), {
       status: 200,

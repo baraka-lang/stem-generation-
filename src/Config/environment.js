@@ -133,7 +133,7 @@ export const emailConfig = {
   serviceUrl: import.meta.env.VITE_EMAIL_SERVICE_URL || '',
   apiKey: import.meta.env.VITE_EMAIL_SERVICE_KEY || '',
   useCustomService: !!import.meta.env.VITE_EMAIL_SERVICE_URL,
-  
+
   // Environment-specific email settings
   fromEmail: {
     development: 'noreply@localhost',
@@ -141,9 +141,20 @@ export const emailConfig = {
     staging: 'noreply@stemflow.app',
     production: 'noreply@stemflow.app'
   },
-  
+
   // Get appropriate from email for current environment
   getFromEmail: () => emailConfig.fromEmail[currentEnv] || emailConfig.fromEmail.production
+};
+
+// AI Loop Fix configuration
+export const loopFixConfig = {
+  useGemini: import.meta.env.VITE_USE_GEMINI_LOOP_FIX === 'true' || import.meta.env.VITE_USE_GEMINI_LOOP_FIX === true,
+  geminiApiKey: import.meta.env.GEMINI_API_KEY || '',
+
+  // Feature flag for A/B testing
+  isGeminiEnabled: () => {
+    return loopFixConfig.useGemini && !!loopFixConfig.geminiApiKey;
+  }
 };
 
 // Log configuration in development
@@ -165,6 +176,7 @@ export default {
   urlGenerators,
   supabaseConfig,
   emailConfig,
+  loopFixConfig,
   config
 };
 
