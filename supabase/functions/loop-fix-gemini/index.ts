@@ -66,7 +66,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    // Decode base64, supporting data URIs
     const data = audio_base64.split(',').pop() || audio_base64;
     const bin = atob(data);
     const audioBuffer = new Uint8Array(bin.length);
@@ -152,7 +151,15 @@ Deno.serve(async (req: Request) => {
     applyCrossfade(trimmed, seamIndex, fadeSamples);
 
     const fixedWav = createWavFile(trimmed, header.sampleRate);
-    const fixedBase64 = btoa(String.fromCharCode(...fixedWav));
+
+    // Convert to base64 in chunks to avoid stack overflow
+    let fixedBinary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < fixedWav.length; i += chunkSize) {
+      const chunk = fixedWav.subarray(i, Math.min(i + chunkSize, fixedWav.length));
+      fixedBinary += String.fromCharCode(...chunk);
+    }
+    const fixedBase64 = btoa(fixedBinary);
 
     const totalProcessMs = performance.now() - startTime;
 
@@ -206,8 +213,15 @@ async function analyzeWithGemini(
   }
 
   const wav = createWavFile(pcmData, sampleRate);
-  const base64Audio = btoa(String.fromCharCode(...wav));
-  const dataUri = `data:audio/wav;base64,${base64Audio}`;
+
+  // Convert to base64 in chunks to avoid stack overflow
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < wav.length; i += chunkSize) {
+    const chunk = wav.subarray(i, Math.min(i + chunkSize, wav.length));
+    binary += String.fromCharCode(...chunk);
+  }
+  const base64Audio = btoa(binary);
 
   const prompt = `You are an expert audio engineer analyzing a techno music loop for perfect bar alignment.
 
@@ -397,6 +411,8 @@ function parseWavHeader(view: DataView) {
   console.log(`WAV header: channels=${numChannels}, sampleRate=${sampleRate}, bits=${bitsPerSample}`);
 
   let dataOffset = 44;
+  let foundData = false;
+
   while (dataOffset < view.byteLength - 8) {
     const chunkId = String.fromCharCode(...[
       view.getUint8(dataOffset),
@@ -410,10 +426,22 @@ function parseWavHeader(view: DataView) {
 
     if (chunkId === "data") {
       dataOffset += 8;
+      foundData = true;
       console.log(`Data chunk starts at offset ${dataOffset}`);
       break;
     }
+
+    if (chunkSize <= 0 || chunkSize > view.byteLength || (dataOffset + 8 + chunkSize) > view.byteLength) {
+      console.error(`Invalid chunk size ${chunkSize} at offset ${dataOffset}`);
+      break;
+    }
+
     dataOffset += 8 + chunkSize;
+  }
+
+  if (!foundData) {
+    console.warn('Data chunk not found, using standard offset 44');
+    dataOffset = 44;
   }
 
   const result = { numChannels, sampleRate, bitsPerSample, dataOffset };

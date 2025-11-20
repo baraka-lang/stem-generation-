@@ -10,6 +10,8 @@
 // the audio to an exact number of bars using the same DSP pipeline
 // used in the client.  It returns a base64 encoded WAV along with
 // metadata describing the prompt and validation tier.
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-requested-with',
@@ -105,13 +107,6 @@ function getRootText(master) {
 function roleDirectives(st, c) {
   switch(st){
     case 'kick':
-      // For techno, the kick must adhere to a strict four‑on‑the‑floor pattern.  We
-      // explicitly instruct the model to place exactly one kick hit on each
-      // quarter note (beats 1, 2, 3 and 4) of every bar with no extra hits or
-      // fills.  Additional percussion (toms, claps, hats, snares) are
-      // explicitly excluded here; we reinforce this again in the negative
-      // directives below.  When retrying with higher strictness, the
-      // buildStemPrompt function appends stronger ABSOLUTE directives.
       return [
         'ROLE: single isolated kick only (Roland TR-909 voicing)',
         'Pattern: four-on-the-floor; exactly one kick hit on beats 1, 2, 3 and 4 of every bar (no extra hits)',
@@ -174,10 +169,6 @@ function negatives(st) {
       'no pitch glides',
       'no tonal sub drops',
       'no reverb tail',
-      // Explicitly exclude all other drums to prevent leakage into the kick
-      // stem.  This includes hi-hats, snares, claps, rimshots, shakers and other
-      // percussive elements that are occasionally produced by the Eleven Labs
-      // model when the prompt is underspecified.
       'no hi-hat',
       'no snare',
       'no clap',
@@ -204,10 +195,6 @@ function negatives(st) {
       'no toms',
       'no melodic percussion',
       'no reverb tail',
-      // Exclude any additional drums or percussion (ride, shaker, cymbal) to
-      // prevent contamination of the snare stem.  These extra negatives work
-      // together with the strict pattern directive to keep the snare loop
-      // simple and bar‑perfect.
       'no ride',
       'no shaker',
       'no cymbal',
@@ -398,11 +385,6 @@ function buildPercLoopPrompt(controls, master) {
 function buildStemPrompt(st, controls, master, strictness = 0) {
   if (st === 'hihat') return buildHihatPrompt(controls, master, strictness);
   if (st === 'perc') return buildSnarePrompt(controls, master, strictness);
-  // Kick also supports strictness tiers.  When strictness is increased,
-  // we append absolute directives to the prompt to enforce exactly one
-  // kick per beat and prohibit any extra hits.  This helps the model
-  // converge on a four‑on‑the‑floor pattern when it produces extra
-  // percussion in initial attempts.
   if (st === 'kick') {
     const basePrompt = [
       `STEM: ${st.toUpperCase()} — solo ${stemConfigs[st]?.basePrompt || 'kick'}.`,
@@ -411,7 +393,6 @@ function buildStemPrompt(st, controls, master, strictness = 0) {
       `Avoid: ${negatives(st)}`,
       'Deliver a bar-perfect loop that aligns exactly with bar boundaries and starts at bar 1 beat 1.'
     ];
-    // Strictness tiers add increasingly strong mandates
     if (strictness === 1) {
       basePrompt.push('ABSOLUTE: Only one kick hit on beats 1, 2, 3 and 4 per bar; no off-grid timing; no additional percussion.', 'ABSOLUTE: Maintain pure Roland TR-909 kick voicing; do not layer snares, claps or bass notes.');
     } else if (strictness >= 2) {
@@ -435,8 +416,6 @@ function buildStemPrompt(st, controls, master, strictness = 0) {
     'Deliver a bar-perfect loop that aligns exactly with bar boundaries and starts at bar 1 beat 1.'
   ].join(' ');
 }
-// Guess the number of channels given the expected sample rate and music
-// length.  This mirrors the ElevenLabs proxy implementation.
 function guessChannelsFromLength(pcmBytesLength, sampleRate, musicLengthMs) {
   const expectedFrames = Math.max(1, Math.round(sampleRate * (musicLengthMs / 1000)));
   const bytesPerMono = expectedFrames * 2;
@@ -448,8 +427,6 @@ function guessChannelsFromLength(pcmBytesLength, sampleRate, musicLengthMs) {
   if (monoDiff < stereoDiff && monoDiff <= tol) return 1;
   return 2;
 }
-// Convert raw PCM16 bytes into channel arrays.  Each sample is
-// converted to Float32 and normalised to [-1,1].
 function convertRawPCMToChans(pcm, channels, sampleRate) {
   const totalSamples = pcm.length / 2;
   const frames = totalSamples / channels;
@@ -475,8 +452,6 @@ function convertRawPCMToChans(pcm, channels, sampleRate) {
     length: frames
   };
 }
-// Count transient onsets in a buffer (first channel) using an RMS
-// threshold.  Used by hi-hat validation.
 function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
   const sr = buf.sr;
   const x = buf.data[0];
@@ -502,7 +477,6 @@ function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
   return peaks;
 }
 
-// Utility: compute RMS of an array using a stride to keep things light.
 function computeRms(data, step = 512) {
   let sum = 0;
   let n = 0;
@@ -514,7 +488,6 @@ function computeRms(data, step = 512) {
   return n > 0 ? Math.sqrt(sum / n) : 0;
 }
 
-// Remove DC offset from audio buffer to prevent clicks
 function removeDcOffset(chans) {
   for (const data of chans) {
     let sum = 0;
@@ -530,17 +503,15 @@ function removeDcOffset(chans) {
   }
 }
 
-// Detect tempo drift by analyzing inter-onset intervals
 function detectTempoDrift(buf, expectedBpm, bars) {
   const sr = buf.sr;
   const x = buf.data[0];
   const expectedBeatSec = 60 / expectedBpm;
   const expectedBeatSamples = Math.round(expectedBeatSec * sr);
 
-  // Find onsets
   const onsets = [];
-  const windowSize = Math.round(0.05 * sr); // 50ms window
-  const hopSize = Math.round(0.01 * sr); // 10ms hop
+  const windowSize = Math.round(0.05 * sr);
+  const hopSize = Math.round(0.01 * sr);
 
   for (let i = 0; i < x.length - windowSize; i += hopSize) {
     let energy = 0;
@@ -549,7 +520,6 @@ function detectTempoDrift(buf, expectedBpm, bars) {
     }
     const rms = Math.sqrt(energy / windowSize);
 
-    // Peak detection with refractory period
     if (rms > 0.1 && (onsets.length === 0 || i - onsets[onsets.length - 1] > expectedBeatSamples * 0.3)) {
       onsets.push(i);
     }
@@ -559,20 +529,17 @@ function detectTempoDrift(buf, expectedBpm, bars) {
     return { valid: false, reason: 'insufficient_onsets', drift: 0 };
   }
 
-  // Analyze inter-onset intervals
   const intervals = [];
   for (let i = 1; i < onsets.length; i++) {
     intervals.push(onsets[i] - onsets[i - 1]);
   }
 
-  // Calculate BPM variance
   const intervalBpms = intervals.map(int => (60 * sr) / int);
   const avgBpm = intervalBpms.reduce((a, b) => a + b, 0) / intervalBpms.length;
   const variance = intervalBpms.reduce((sum, bpm) => sum + Math.pow(bpm - avgBpm, 2), 0) / intervalBpms.length;
   const stdDev = Math.sqrt(variance);
   const drift = Math.abs(avgBpm - expectedBpm);
 
-  // Allow 0.5% BPM deviation
   const maxDrift = expectedBpm * 0.005;
   const valid = drift <= maxDrift && stdDev <= expectedBpm * 0.01;
 
@@ -586,12 +553,10 @@ function detectTempoDrift(buf, expectedBpm, bars) {
   };
 }
 
-// Analyze spectral content to detect unwanted frequency bleed
 function analyzeSpectrum(buf, stem) {
   const sr = buf.sr;
   const x = buf.data[0];
 
-  // Simple frequency band analysis using time-domain filtering
   const analyzeBand = (data, lowHz, highHz) => {
     const lowPass = (d, fc) => {
       const rc = 1 / (2 * Math.PI * fc);
@@ -613,11 +578,11 @@ function analyzeSpectrum(buf, stem) {
     return computeRms(filtered, 256);
   };
 
-  const subBass = analyzeBand(x, 0, 80);      // 0-80 Hz
-  const lowBass = analyzeBand(x, 80, 180);    // 80-180 Hz
-  const midLow = analyzeBand(x, 180, 500);    // 180-500 Hz
-  const midHigh = analyzeBand(x, 500, 2000);  // 500-2000 Hz
-  const high = analyzeBand(x, 2000, 8000);    // 2000-8000 Hz
+  const subBass = analyzeBand(x, 0, 80);
+  const lowBass = analyzeBand(x, 80, 180);
+  const midLow = analyzeBand(x, 180, 500);
+  const midHigh = analyzeBand(x, 500, 2000);
+  const high = analyzeBand(x, 2000, 8000);
   const total = computeRms(x, 256);
 
   const spectrum = {
@@ -628,30 +593,25 @@ function analyzeSpectrum(buf, stem) {
     high: high / (total + 1e-10)
   };
 
-  // Validation rules per stem type
   let valid = true;
   let reason = 'ok';
 
   if (stem === 'kick') {
-    // Kick should have strong sub and low bass, minimal highs
     if (spectrum.subBass < 0.3 || spectrum.high > 0.15) {
       valid = false;
       reason = 'kick_spectrum_invalid';
     }
   } else if (stem === 'hihat') {
-    // Hi-hat should be primarily high frequencies
     if (spectrum.high < 0.4 || spectrum.subBass > 0.1) {
       valid = false;
       reason = 'hihat_has_low_freq_bleed';
     }
   } else if (stem === 'perc') {
-    // Snare should have mid emphasis, minimal sub
     if (spectrum.subBass > 0.2 || (spectrum.midLow + spectrum.midHigh) < 0.3) {
       valid = false;
       reason = 'snare_spectrum_invalid';
     }
   } else if (stem === 'bass') {
-    // Bass should dominate low frequencies
     if ((spectrum.subBass + spectrum.lowBass) < 0.5) {
       valid = false;
       reason = 'bass_lacks_low_end';
@@ -661,9 +621,7 @@ function analyzeSpectrum(buf, stem) {
   return { valid, reason, spectrum };
 }
 
-// Check phase coherence at loop boundary using autocorrelation
 function checkPhaseCoherence(chans, sr, xfadeN) {
-  // Compare the start and end of the loop
   const data = chans[0];
   const n = data.length;
 
@@ -684,16 +642,11 @@ function checkPhaseCoherence(chans, sr, xfadeN) {
   }
 
   const coherence = correlation / (Math.sqrt(startEnergy * endEnergy) + 1e-10);
-
-  // Good phase coherence should be > 0.7 for smooth loops
   const valid = coherence > 0.5;
 
   return { valid, reason: valid ? 'ok' : 'phase_mismatch', coherence };
 }
 
-// Utility: compute a 1-pole low-pass filtered RMS to detect kick energy
-// bleeding into the snare stem.  A large ratio between low-band and
-// full-band RMS indicates an unwanted kick/thump is present.
 function computeLowBandRms(data, sr, cutoffHz = 180) {
   if (!data.length) return 0;
   const dt = 1 / sr;
@@ -708,18 +661,11 @@ function computeLowBandRms(data, sr, cutoffHz = 180) {
   }
   return Math.sqrt(sum / data.length);
 }
-// Validate a hi-hat buffer: expect ~16 hits per bar; accept if at
-// least 60% of expected hits are present.
 function validateHihat(buf, bpm, bars) {
   const expected = bars * 16;
   const found = countOnsets(buf, 0.07, 0.35);
-  // Raise the minimum required onsets to at least 80% of the expected hits.
-  // A stricter threshold ensures the hat pattern remains dense and avoids
-  // sparse or off‑time loops【721972514835288†L320-L324】.  We still allow a
-  // minimum of 10 hits in very short loops to avoid rejecting all outputs.
   return found >= Math.max(10, Math.round(expected * 0.8));
 }
-// Validate a snare buffer: ensure hits at beat 2 and 4 of each bar.
 function validateSnare(buf, bpm, bars) {
   const sr = buf.sr;
   const x = buf.data[0];
@@ -733,9 +679,6 @@ function validateSnare(buf, bpm, bars) {
       return false;
     }
   }
-  // Helper to detect a peak near the given sample index.  Computes an
-  // RMS in a small window and sets a threshold relative to that RMS.  If
-  // any sample exceeds the threshold, we consider a hit present.
   function hasPeakNear(sampleIdx) {
     const a = Math.max(0, sampleIdx - tol);
     const b = Math.min(x.length - 1, sampleIdx + tol);
@@ -753,19 +696,12 @@ function validateSnare(buf, bpm, bars) {
     }
     return false;
   }
-  // Validate expected hits on beats 2 and 4 for each bar
   for (let bar = 0; bar < bars; bar++) {
     const barStart = Math.round(bar * barSec * sr);
     const beat2 = barStart + Math.round(1 * beatSec * sr);
     const beat4 = barStart + Math.round(3 * beatSec * sr);
     if (!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false;
   }
-  // Ensure no additional strong peaks outside expected beat windows.  We
-  // compute a global RMS across the buffer and set a threshold.  Then we
-  // mark the windows around beats 2 and 4 of each bar as allowed.  If any
-  // sample exceeding the threshold falls outside these windows, the
-  // snare contains extra hits and should be rejected.
-  // Compute global RMS for thresholding
   let sumAll = 0;
   for (let i = 0; i < x.length; i += 512) {
     const v = x[i];
@@ -773,7 +709,6 @@ function validateSnare(buf, bpm, bars) {
   }
   const rmsAll = Math.sqrt(sumAll / Math.max(1, Math.floor(x.length / 512)));
   const globalThr = Math.max(0.02, rmsAll * 3.0);
-  // Build allowed windows
   const allowed = [];
   for (let bar = 0; bar < bars; bar++) {
     const barStart = Math.round(bar * barSec * sr);
@@ -796,10 +731,6 @@ function validateSnare(buf, bpm, bars) {
   return true;
 }
 
-// Validate a kick buffer: ensure exactly one peak per quarter note and no
-// extra hits.  The pattern expected is four-on-the-floor: hits on beats
-// 1, 2, 3 and 4 of each bar.  Extra peaks outside these positions cause
-// rejection.  We allow a small tolerance around each beat for humanisation.
 function validateKick(buf, bpm, bars) {
   const sr = buf.sr;
   const x = buf.data[0];
@@ -823,7 +754,6 @@ function validateKick(buf, bpm, bars) {
     }
     return false;
   }
-  // Validate expected hits on beats 1,2,3,4 per bar
   for (let bar = 0; bar < bars; bar++) {
     const barStart = Math.round(bar * barSec * sr);
     for (let bBeat = 0; bBeat < 4; bBeat++) {
@@ -831,8 +761,6 @@ function validateKick(buf, bpm, bars) {
       if (!hasPeakNear(beatPos)) return false;
     }
   }
-  // Ensure no extra peaks outside expected windows
-  // Compute global RMS threshold
   let sumAll = 0;
   for (let i = 0; i < x.length; i += 512) {
     const v = x[i];
@@ -840,7 +768,6 @@ function validateKick(buf, bpm, bars) {
   }
   const rmsAll = Math.sqrt(sumAll / Math.max(1, Math.floor(x.length / 512)));
   const globalThr = Math.max(0.02, rmsAll * 3.0);
-  // Build allowed windows for beats 1-4
   const allowed = [];
   for (let bar = 0; bar < bars; bar++) {
     const barStart = Math.round(bar * barSec * sr);
@@ -862,7 +789,6 @@ function validateKick(buf, bpm, bars) {
   }
   return true;
 }
-// DSP helpers from loop-fix.  These operate on raw channel arrays.
 function mod(a, n) {
   return (a % n + n) % n;
 }
@@ -909,10 +835,6 @@ function detectHeadIndexArray(data, sr) {
 }
 function findBestSeamOffsetArray(data, startIdx, targetLen, xfadeN, sr) {
   const n = data.length;
-  // Increase the seam search window from 45ms to 90ms.  A wider search
-  // around the loop seam helps align kick and snare transients more
-  // accurately, improving bar‑perfect looping especially for sparse
-  // drum stems.
   const search = Math.max(0, Math.round(90 / 1000 * sr));
   const step = Math.max(1, Math.round(sr / 12000));
   let bestOff = 0;
@@ -1001,7 +923,6 @@ function applyHighPassArray(chans, sr, cutoffHz = 180) {
   }
 }
 
-// Apply gentle limiting to prevent clipping while maintaining transient punch
 function applyGentleLimiter(chans, thresholdDb = -0.3) {
   const threshold = Math.pow(10, thresholdDb / 20);
 
@@ -1011,7 +932,6 @@ function applyGentleLimiter(chans, thresholdDb = -0.3) {
       const abs = Math.abs(sample);
 
       if (abs > threshold) {
-        // Soft knee compression above threshold
         const sign = sample < 0 ? -1 : 1;
         const excess = abs - threshold;
         const compressed = threshold + excess * 0.5;
@@ -1020,7 +940,6 @@ function applyGentleLimiter(chans, thresholdDb = -0.3) {
     }
   }
 }
-// Call the loop-fix-gemini edge function for AI-assisted loop warping
 async function callLoopFixGemini(wavBytes: Uint8Array, tempo: number, bars: number): Promise<Uint8Array | null> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
@@ -1083,7 +1002,6 @@ async function callLoopFixGemini(wavBytes: Uint8Array, tempo: number, bars: numb
   }
 }
 
-// Convert channel arrays back to a PCM16 WAV.  Borrowed from loop-fix.
 function makeWavFromPCM16(chans, sr) {
   const ch = chans.length;
   const frames = chans[0].length;
@@ -1091,13 +1009,10 @@ function makeWavFromPCM16(chans, sr) {
   const dataSize = frames * blockAlign;
   const buffer = new ArrayBuffer(44 + dataSize);
   const view = new DataView(buffer);
-  view.setUint32(0, 0x52494646, false) // 'RIFF'
-  ;
+  view.setUint32(0, 0x52494646, false);
   view.setUint32(4, 36 + dataSize, true);
-  view.setUint32(8, 0x57415645, false) // 'WAVE'
-  ;
-  view.setUint32(12, 0x666d7420, false) // 'fmt '
-  ;
+  view.setUint32(8, 0x57415645, false);
+  view.setUint32(12, 0x666d7420, false);
   view.setUint32(16, 16, true);
   view.setUint16(20, 1, true);
   view.setUint16(22, ch, true);
@@ -1105,8 +1020,7 @@ function makeWavFromPCM16(chans, sr) {
   view.setUint32(28, sr * blockAlign, true);
   view.setUint16(32, blockAlign, true);
   view.setUint16(34, 16, true);
-  view.setUint32(36, 0x64617461, false) // 'data'
-  ;
+  view.setUint32(36, 0x64617461, false);
   view.setUint32(40, dataSize, true);
   let off = 44;
   for(let i = 0; i < frames; i++){
@@ -1121,38 +1035,20 @@ function makeWavFromPCM16(chans, sr) {
   }
   return new Uint8Array(buffer);
 }
-// Generate the stem: build prompt, call ElevenLabs, validate and trim.
 Deno.serve(async (req)=>{
   try {
-    // CORS preflight
-    // The OPTIONS handler must be the very first check.  Browsers send a
-    // preflight OPTIONS request before the actual request to verify
-    // permissions【654614680547023†L84-L133】.  Responding early with CORS
-    // headers prevents the function logic from executing on a preflight
-    // request.
     if (req.method === 'OPTIONS') {
       return new Response('ok', {
         status: 200,
         headers: corsHeaders
       });
     }
-    // Support both POST and GET requests.  Supabase invokes this function via
-    // POST when called through the supabase-js client.  However, browser
-    // fetches may be forced to GET to avoid preflight.  In a GET request,
-    // we expect the payload to be encoded as a `payload` query parameter.
     let body = null;
     if (req.method === 'GET') {
-      // Extract and decode the `payload` query parameter.  The client
-      // encodes the JSON string via encodeURIComponent, so decode it
-      // here before parsing.  If absent, body stays null.
       const url = new URL(req.url);
       const payloadParam = url.searchParams.get('payload');
       if (payloadParam) {
         try {
-          // Decode URI component to get base64, then decode base64 into
-          // a binary string.  Convert the binary string into a Uint8Array
-          // and use TextDecoder to produce a UTF-8 string.  Finally
-          // parse the JSON.  This avoids deprecated escape/unescape.
           const b64 = decodeURIComponent(payloadParam);
           const binary = atob(b64);
           const bytes = new Uint8Array(binary.length);
@@ -1167,7 +1063,6 @@ Deno.serve(async (req)=>{
         }
       }
     } else if (req.method === 'POST') {
-      // Parse JSON from application/json or plain text body
       try {
         body = await req.json();
       } catch (_jsonErr) {
@@ -1179,7 +1074,6 @@ Deno.serve(async (req)=>{
         }
       }
     } else {
-      // Reject any other HTTP methods
       return new Response('Not found', {
         status: 404,
         headers: {
@@ -1209,7 +1103,6 @@ Deno.serve(async (req)=>{
       accidental: 'natural',
       mode: 'Minor'
     };
-    // Clamp tempo and bars
     const tempo = Math.max(40, Math.min(300, Math.round(Number(master.tempo) || 130)));
     const bars = Math.max(1, Math.min(32, Math.round(Number(master.bars) || 4)));
     const rootText = getRootText(master);
@@ -1231,7 +1124,6 @@ Deno.serve(async (req)=>{
         }
       });
     }
-    // Determine if we need strictness retries (hihat/snare)
     let strictness = 0;
     let usedPrompt = '';
     let validated = true;
@@ -1240,19 +1132,15 @@ Deno.serve(async (req)=>{
     let sampleRate = 24000;
     let channels = 1;
     let musicLengthMs = 0;
-    // We'll attempt up to 3 tiers for hihat, snare (perc) and kick.  Other
-    // stems do not vary strictness and will exit after the first pass.
     const preferredFormats = ['pcm_44100', 'pcm_24000', 'pcm_22050', 'pcm_16000'];
     let usedFormat = 'pcm_24000';
     let formatSampleRate = 24000;
 
     for(strictness = 0; strictness < 3; strictness++){
       usedPrompt = buildStemPrompt(stem, controls, masterForPrompt, strictness);
-      // Compute length in milliseconds
       const beats = bars * 4;
       const seconds = beats * (60 / tempo);
-      musicLengthMs = Math.round(seconds * 1000) + 200 // pad tail
-      ;
+      musicLengthMs = Math.round(seconds * 1000) + 200;
       musicLengthMs = Math.max(10000, Math.min(300000, musicLengthMs));
 
       let resp = null;
@@ -1334,16 +1222,12 @@ Deno.serve(async (req)=>{
       }
 
       sampleRate = formatSampleRate;
-      // ElevenLabs returns raw PCM16
       const rawBytes = new Uint8Array(await resp.arrayBuffer());
-      // Guess channels and convert to channel arrays
       channels = guessChannelsFromLength(rawBytes.length, sampleRate, musicLengthMs);
       const pcm = convertRawPCMToChans(rawBytes, channels, sampleRate);
-      // Comprehensive validation pipeline
       let stemValidated = true;
       const validationErrors = [];
 
-      // Original stem-specific validation
       if (stem === 'hihat') {
         stemValidated = validateHihat(pcm, tempo, bars);
         if (!stemValidated) validationErrors.push('hihat pattern invalid');
@@ -1355,28 +1239,23 @@ Deno.serve(async (req)=>{
         if (!stemValidated) validationErrors.push('kick pattern invalid');
       }
 
-      // Advanced validation: tempo drift detection
       const tempoDriftOk = detectTempoDrift(pcm, tempo, bars);
       if (!tempoDriftOk) {
         validationErrors.push('tempo drift detected');
       }
 
-      // Advanced validation: spectral analysis for frequency bleed
       const spectrumOk = analyzeSpectrum(pcm, stem);
       if (!spectrumOk) {
         validationErrors.push('unwanted frequency content');
       }
 
-      // Advanced validation: phase coherence for seamless loops
       const phaseOk = checkPhaseCoherence(pcm.data, sampleRate, Math.round(12 / 1000 * sampleRate));
       if (!phaseOk) {
         validationErrors.push('phase discontinuity at loop boundary');
       }
 
-      // Combined validation result
       validated = stemValidated && tempoDriftOk && spectrumOk && phaseOk;
 
-      // Log validation metrics for monitoring
       if (!validated && validationErrors.length > 0) {
         console.log(`Validation failed for ${stem} (attempt ${strictness}): ${validationErrors.join(', ')}`);
       }
@@ -1397,12 +1276,10 @@ Deno.serve(async (req)=>{
         }
       });
     }
-    // Try AI-assisted loop fix with Gemini if enabled
     let outBytes: Uint8Array;
     let loopMethod = 'heuristic';
 
     if (use_gemini && Deno.env.get("GEMINI_API_KEY")) {
-      // Create a WAV from raw PCM first
       const pcm = convertRawPCMToChans(rawPCM, channels, sampleRate);
       const initialWav = makeWavFromPCM16(pcm.data, sampleRate);
 
@@ -1414,15 +1291,11 @@ Deno.serve(async (req)=>{
         loopMethod = 'gemini';
       } else {
         console.log('⚠ Gemini loop fix failed, using heuristic fallback');
-        // Fall through to heuristic method below
       }
     }
 
-    // Fallback to heuristic loop fix if Gemini not used or failed
     if (!outBytes) {
-      // Convert raw PCM to channel arrays for trimming
       const pcm = convertRawPCMToChans(rawPCM, channels, sampleRate);
-      // Compute trimming parameters
       const framesPerBeatFloat = sampleRate * (60 / tempo);
       const framesPerBeatInt = Math.max(1, Math.round(framesPerBeatFloat));
       let targetFrames = framesPerBeatInt * 4 * bars;
@@ -1448,23 +1321,17 @@ Deno.serve(async (req)=>{
       }
       const trimmed = sliceWrapArray(pcm.data, start, targetFrames);
 
-      // Remove DC offset to prevent clicks
       removeDcOffset(trimmed);
-
-      // Apply ramps and crossfade
       applyEdgeRampsArray(trimmed, sampleRate, 5);
       applySeamCrossfadeArray(trimmed, sampleRate, xfadeMs);
 
-      // Stem-specific processing
       if (stem === 'perc') {
         applyHighPassArray(trimmed, sampleRate, 180);
       }
 
-      // Apply gentle limiting to prevent clipping while maintaining punch
       applyGentleLimiter(trimmed, -0.3);
       outBytes = makeWavFromPCM16(trimmed, sampleRate);
     }
-    // Encode to base64
     let binary = '';
     for(let i = 0; i < outBytes.length; i++)binary += String.fromCharCode(outBytes[i]);
     const b64 = btoa(binary);
