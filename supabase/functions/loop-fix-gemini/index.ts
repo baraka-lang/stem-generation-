@@ -66,8 +66,17 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const audioBuffer = Uint8Array.from(atob(audio_base64), c => c.charCodeAt(0));
-    const view = new DataView(audioBuffer.buffer);
+    // Decode base64, supporting data URIs
+    const data = audio_base64.split(',').pop() || audio_base64;
+    const bin = atob(data);
+    const audioBuffer = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) {
+      audioBuffer[i] = bin.charCodeAt(i);
+    }
+
+    console.log(`Received audio buffer: ${audioBuffer.length} bytes`);
+
+    const view = new DataView(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.byteLength);
 
     const header = parseWavHeader(view);
     if (!header) {
@@ -368,16 +377,24 @@ function wsolaTimeStretch(input: Float32Array, sampleRate: number, stretchRatio:
 }
 
 function parseWavHeader(view: DataView) {
-  if (view.byteLength < 44) return null;
+  if (view.byteLength < 44) {
+    console.error(`WAV file too small: ${view.byteLength} bytes`);
+    return null;
+  }
 
   const riff = String.fromCharCode(...[view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3)]);
   const wave = String.fromCharCode(...[view.getUint8(8), view.getUint8(9), view.getUint8(10), view.getUint8(11)]);
 
-  if (riff !== "RIFF" || wave !== "WAVE") return null;
+  if (riff !== "RIFF" || wave !== "WAVE") {
+    console.error(`Invalid WAV format: RIFF="${riff}", WAVE="${wave}"`);
+    return null;
+  }
 
   const numChannels = view.getUint16(22, true);
   const sampleRate = view.getUint32(24, true);
   const bitsPerSample = view.getUint16(34, true);
+
+  console.log(`WAV header: channels=${numChannels}, sampleRate=${sampleRate}, bits=${bitsPerSample}`);
 
   let dataOffset = 44;
   while (dataOffset < view.byteLength - 8) {
@@ -389,21 +406,36 @@ function parseWavHeader(view: DataView) {
     ]);
     const chunkSize = view.getUint32(dataOffset + 4, true);
 
+    console.log(`Found chunk "${chunkId}" at offset ${dataOffset}, size ${chunkSize}`);
+
     if (chunkId === "data") {
       dataOffset += 8;
+      console.log(`Data chunk starts at offset ${dataOffset}`);
       break;
     }
     dataOffset += 8 + chunkSize;
   }
 
-  return { numChannels, sampleRate, bitsPerSample, dataOffset };
+  const result = { numChannels, sampleRate, bitsPerSample, dataOffset };
+  console.log(`Parsed header:`, result);
+  return result;
 }
 
 function parsePcmData(view: DataView, header: any): Float32Array[] {
   const { numChannels, bitsPerSample, dataOffset } = header;
   const bytesPerSample = bitsPerSample / 8;
-  const totalSamples = (view.byteLength - dataOffset) / bytesPerSample;
+  const remainingBytes = view.byteLength - dataOffset;
+
+  if (remainingBytes <= 0) {
+    throw new Error(`Invalid data offset: ${dataOffset}, file size: ${view.byteLength}`);
+  }
+
+  const totalSamples = remainingBytes / bytesPerSample;
   const framesCount = Math.floor(totalSamples / numChannels);
+
+  if (framesCount <= 0 || !Number.isFinite(framesCount)) {
+    throw new Error(`Invalid frame count: ${framesCount} (bytes: ${remainingBytes}, channels: ${numChannels}, bitsPerSample: ${bitsPerSample})`);
+  }
 
   const channels: Float32Array[] = [];
   for (let ch = 0; ch < numChannels; ch++) {
