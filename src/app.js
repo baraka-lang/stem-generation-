@@ -5489,11 +5489,12 @@ function setupEventListeners() {
       // Handle clean button: directly separate stem (no modal)
       if (action === 'clean-stem' && st) {
         console.log(`[Clean] Clean button clicked for stem: ${st}`)
-        const wasPlaying = stemPlaying[st]
-        if (wasPlaying) stopStem(st)
+        const wasPlaying = isPlaying
+        if (wasPlaying) stopTransport()
         await separateCurrentStem(st)
-        if (stemLoop[st]) {
-          togglePlayback(st)
+        // Auto-start playback after separation
+        if (stemLoop[st] && !isPlaying) {
+          document.getElementById('playButton')?.click()
         }
         return
       }
