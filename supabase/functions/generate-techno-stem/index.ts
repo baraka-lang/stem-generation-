@@ -940,7 +940,19 @@ function applyGentleLimiter(chans, thresholdDb = -0.3) {
     }
   }
 }
-async function callLoopFixGemini(wavBytes: Uint8Array, tempo: number, bars: number): Promise<Uint8Array | null> {
+async function callLoopFixGemini(
+  wavBytes: Uint8Array,
+  tempo: number,
+  bars: number,
+  context: {
+    promptText?: string;
+    playbackBars?: number;
+    sampleRate?: number;
+    sourceFrames?: number;
+    audioDurationSec?: number;
+    generationBars?: number;
+  } = {}
+): Promise<Uint8Array | null> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
@@ -966,6 +978,13 @@ async function callLoopFixGemini(wavBytes: Uint8Array, tempo: number, bars: numb
         audio_base64,
         target_bpm: tempo,
         bars,
+        prompt_text: context.promptText,
+        prompt_bars: bars,
+        playback_bars: context.playbackBars,
+        generation_bars: context.generationBars ?? bars,
+        sample_rate: context.sampleRate,
+        source_frames: context.sourceFrames,
+        audio_duration_sec: context.audioDurationSec,
         use_gemini: true
       }),
       signal: AbortSignal.timeout(60000)
@@ -1282,8 +1301,17 @@ Deno.serve(async (req)=>{
     if (use_gemini && Deno.env.get("GEMINI_API_KEY")) {
       const pcm = convertRawPCMToChans(rawPCM, channels, sampleRate);
       const initialWav = makeWavFromPCM16(pcm.data, sampleRate);
+      const playbackBars = Math.max(1, Math.round(bars / 2));
+      const audioDurationSec = pcm.length / sampleRate;
 
-      const geminiFixed = await callLoopFixGemini(initialWav, tempo, bars);
+      const geminiFixed = await callLoopFixGemini(initialWav, tempo, bars, {
+        promptText: usedPrompt,
+        playbackBars,
+        sampleRate,
+        sourceFrames: pcm.length,
+        audioDurationSec,
+        generationBars: bars
+      });
 
       if (geminiFixed) {
         console.log('✓ Using Gemini-enhanced loop fix');

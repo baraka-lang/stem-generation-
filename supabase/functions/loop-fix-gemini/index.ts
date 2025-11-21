@@ -33,6 +33,13 @@ interface LoopFixRequest {
   stem_type?: string;
   user_id?: string;
   session_id?: string;
+  prompt_text?: string;
+  prompt_bars?: number;
+  playback_bars?: number;
+  generation_bars?: number;
+  sample_rate?: number;
+  source_frames?: number;
+  audio_duration_sec?: number;
 }
 
 interface LoopFixDiagnostics {
@@ -64,6 +71,12 @@ interface WSOLAParams {
   searchWindow: number;
 }
 
+function toPositiveInt(value: number | undefined | null, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Math.max(1, Math.round(fallback));
+  return Math.max(1, Math.round(n));
+}
+
 // ============================================================================
 // MAIN HANDLER
 // ============================================================================
@@ -82,7 +95,22 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body: LoopFixRequest = await req.json();
-    const { audio_base64, target_bpm, bars, use_gemini = true, stem_type, user_id, session_id } = body;
+    const {
+      audio_base64,
+      target_bpm,
+      bars,
+      use_gemini = true,
+      stem_type,
+      user_id,
+      session_id,
+      prompt_text,
+      prompt_bars,
+      playback_bars,
+      generation_bars,
+      sample_rate,
+      source_frames,
+      audio_duration_sec
+    } = body;
 
     if (!audio_base64 || !target_bpm || !bars) {
       return new Response(
@@ -113,6 +141,20 @@ Deno.serve(async (req: Request) => {
 
     const pcmData = parsePcmData(view, header);
     const audioDurationSeconds = pcmData[0].length / header.sampleRate;
+    const sourceDurationSeconds = Number.isFinite(audio_duration_sec)
+      ? Number(audio_duration_sec)
+      : audioDurationSeconds;
+    const sourceFramesCount = Number.isFinite(source_frames)
+      ? Math.max(1, Math.round(Number(source_frames)))
+      : pcmData[0].length;
+    const promptBarsNormalized = toPositiveInt(prompt_bars, bars);
+    const playbackBarsNormalized = toPositiveInt(playback_bars, Math.max(1, Math.round(promptBarsNormalized / 2)));
+    const generationBarsNormalized = toPositiveInt(generation_bars, promptBarsNormalized);
+    const targetBars = playbackBarsNormalized || promptBarsNormalized || bars;
+    const sampleRateHint = Number.isFinite(sample_rate) ? Number(sample_rate) : header.sampleRate;
+    const inferredPromptBars = sourceDurationSeconds && target_bpm
+      ? Math.max(1, Math.round((sourceDurationSeconds * target_bpm) / (60 * 4)))
+      : null;
 
     // Calculate audio hash for caching
     const audioHash = await calculateAudioHash(audioBuffer);
@@ -120,6 +162,10 @@ Deno.serve(async (req: Request) => {
     let geminiAnalysis: GeminiAnalysisResponse | null = null;
     let geminiCallMs = 0;
     let wsolaProcessMs = 0;
+
+    console.log(
+      `[LoopFix] Context → promptBars=${promptBarsNormalized}, playbackBars=${playbackBarsNormalized}, generationBars=${generationBarsNormalized}, duration=${sourceDurationSeconds?.toFixed(2) || 'n/a'}s, frames=${sourceFramesCount}`
+    );
     let geminiError: string | undefined;
     let stretchedPcm = pcmData;
     let modelUsed = "heuristic";
@@ -146,8 +192,12 @@ Deno.serve(async (req: Request) => {
           pcmData,
           header.sampleRate,
           target_bpm,
-          bars,
-          stem_type
+          generationBarsNormalized,
+          stem_type,
+          prompt_text,
+          playbackBarsNormalized,
+          sourceDurationSeconds,
+          sourceFramesCount
         );
 
         geminiAnalysis = result.analysis;
@@ -157,7 +207,16 @@ Deno.serve(async (req: Request) => {
 
         // Cache the analysis if successful
         if (geminiAnalysis && geminiAnalysis.confidence >= 0.5) {
-          await cacheAnalysis(supabase, audioHash, audioDurationSeconds, target_bpm, bars, stem_type, geminiAnalysis, modelUsed);
+          await cacheAnalysis(
+            supabase,
+            audioHash,
+            audioDurationSeconds,
+            target_bpm,
+            generationBarsNormalized,
+            stem_type,
+            geminiAnalysis,
+            modelUsed
+          );
         }
 
         console.log(`[LoopFix] Gemini analysis: Model=${modelUsed}, BPM=${geminiAnalysis?.detected_bpm}, Confidence=${geminiAnalysis?.confidence}, Retries=${retryCount}`);
@@ -188,19 +247,20 @@ Deno.serve(async (req: Request) => {
       console.log(`[LoopFix] Low confidence (${geminiAnalysis.confidence}), using heuristic method`);
     }
 
-    // Trim to exact bar length
-    const targetFrames = Math.round((60 / target_bpm) * 4 * bars * header.sampleRate);
+    // Trim to exact bar length (playback-aware)
+    const targetFrames = Math.round((60 / target_bpm) * 4 * targetBars * sampleRateHint);
+    const effectiveTargetFrames = Math.min(targetFrames, stretchedPcm[0].length);
 
     let headIndex = 0;
     if (geminiAnalysis?.suggested_start_frame !== undefined && geminiAnalysis.confidence >= 0.5) {
-      headIndex = Math.max(0, Math.min(geminiAnalysis.suggested_start_frame, stretchedPcm[0].length - targetFrames));
+      headIndex = Math.max(0, Math.min(geminiAnalysis.suggested_start_frame, stretchedPcm[0].length - effectiveTargetFrames));
     } else {
       headIndex = detectHeadIndexEnhanced(stretchedPcm, header.sampleRate, stem_type);
     }
 
-    const trimmed = stretchedPcm.map(ch => ch.slice(headIndex, headIndex + targetFrames));
+    const trimmed = stretchedPcm.map(ch => ch.slice(headIndex, headIndex + effectiveTargetFrames));
 
-    if (trimmed[0].length < targetFrames) {
+    if (trimmed[0].length < effectiveTargetFrames) {
       return new Response(
         JSON.stringify({ error: "Audio too short after processing" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -229,7 +289,7 @@ Deno.serve(async (req: Request) => {
       geminiAnalysis,
       seamIndex,
       fadeSamples,
-      targetFrames
+      effectiveTargetFrames
     );
 
     // Create output WAV
@@ -249,7 +309,7 @@ Deno.serve(async (req: Request) => {
     // Build diagnostics
     const diagnostics: LoopFixDiagnostics = {
       original_duration_frames: pcmData[0].length,
-      target_duration_frames: targetFrames,
+      target_duration_frames: effectiveTargetFrames,
       head_trim_frames: headIndex,
       seam_location_frames: seamIndex,
       fade_samples: fadeSamples,
@@ -259,6 +319,12 @@ Deno.serve(async (req: Request) => {
       gemini_used: geminiAnalysis !== null && !geminiError,
       model_used: modelUsed,
       cache_hit: cacheHit,
+      prompt_bars: promptBarsNormalized,
+      playback_bars: playbackBarsNormalized,
+      generation_bars: generationBarsNormalized,
+      source_frames: sourceFramesCount,
+      source_duration_seconds: sourceDurationSeconds,
+      inferred_prompt_bars: inferredPromptBars,
       gemini_error: geminiError,
       suggested_start_frame: geminiAnalysis?.suggested_start_frame,
       seam_frame: geminiAnalysis?.seam_frame,
@@ -276,7 +342,7 @@ Deno.serve(async (req: Request) => {
       session_id,
       stem_type,
       target_bpm,
-      bars,
+      bars: targetBars,
       audio_duration_seconds: audioDurationSeconds,
       audio_size_bytes: audioBuffer.length,
       model_used: modelUsed,
@@ -325,7 +391,11 @@ async function analyzeWithGeminiMultiModel(
   sampleRate: number,
   targetBpm: number,
   bars: number,
-  stemType?: string
+  stemType?: string,
+  promptText?: string,
+  playbackBars?: number,
+  sourceDurationSeconds?: number,
+  sourceFrames?: number
 ): Promise<{ analysis: GeminiAnalysisResponse; modelUsed: string; retryCount: number }> {
   const models = [
     { name: "gemini-2.0-flash-exp", timeout: 30000, cost: 0.0002 },
@@ -338,15 +408,19 @@ async function analyzeWithGeminiMultiModel(
   for (const model of models) {
     try {
       console.log(`[Gemini] Trying model: ${model.name}`);
-      const analysis = await analyzeWithGemini(
-        pcmData,
-        sampleRate,
-        targetBpm,
-        bars,
-        stemType,
-        model.name,
-        model.timeout
-      );
+        const analysis = await analyzeWithGemini(
+          pcmData,
+          sampleRate,
+          targetBpm,
+          bars,
+          stemType,
+          model.name,
+          model.timeout,
+          promptText,
+          playbackBars,
+          sourceDurationSeconds,
+          sourceFrames
+        );
 
       if (analysis && analysis.confidence >= 0.5) {
         return { analysis, modelUsed: model.name, retryCount: totalRetries };
@@ -374,7 +448,11 @@ async function analyzeWithGeminiMultiModel(
               bars,
               stemType,
               model.name,
-              model.timeout
+              model.timeout,
+              promptText,
+              playbackBars,
+              sourceDurationSeconds,
+              sourceFrames
             );
             if (analysis && analysis.confidence >= 0.5) {
               return { analysis, modelUsed: model.name, retryCount: totalRetries };
@@ -397,7 +475,11 @@ async function analyzeWithGemini(
   bars: number,
   stemType: string | undefined,
   modelName: string,
-  timeout: number
+  timeout: number,
+  promptText?: string,
+  playbackBars?: number,
+  sourceDurationSeconds?: number,
+  sourceFrames?: number
 ): Promise<GeminiAnalysisResponse | null> {
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) {
@@ -414,7 +496,16 @@ async function analyzeWithGemini(
   const base64Audio = btoa(binary);
 
   // Enhanced prompt with stem-type awareness
-  const prompt = buildEnhancedPrompt(targetBpm, bars, sampleRate, stemType);
+  const prompt = buildEnhancedPrompt(
+    targetBpm,
+    bars,
+    sampleRate,
+    stemType,
+    promptText,
+    playbackBars,
+    sourceDurationSeconds,
+    sourceFrames
+  );
 
   const requestBody = {
     contents: [{
@@ -543,17 +634,41 @@ async function analyzeWithGemini(
   }
 }
 
-function buildEnhancedPrompt(targetBpm: number, bars: number, sampleRate: number, stemType?: string): string {
+function buildEnhancedPrompt(
+  targetBpm: number,
+  bars: number,
+  sampleRate: number,
+  stemType?: string,
+  promptText?: string,
+  playbackBars?: number,
+  sourceDurationSeconds?: number,
+  sourceFrames?: number
+): string {
   const stemContext = getStemTypeContext(stemType);
+  const userIntent = promptText?.trim()
+    ? `USER PROMPT / INTENT: ${promptText.trim()}`
+    : 'USER PROMPT / INTENT: <not provided; follow stem style and tempo strictly>';
+  const playbackInfo = playbackBars
+    ? `Playback target: ${playbackBars} bars (system may generate ~${bars} bars for analysis headroom).`
+    : `Playback target: ${Math.max(1, Math.round(bars / 2))} bars (generation length: ${bars} bars).`;
+  const lengthInfo = sourceDurationSeconds
+    ? `Source length: ${sourceDurationSeconds.toFixed(2)} sec${sourceFrames ? ` (~${sourceFrames} frames)` : ''}.`
+    : sourceFrames
+      ? `Source frames: ${sourceFrames}.`
+      : 'Source length: <unknown>.';
 
   return `You are an expert audio engineer analyzing a ${stemType || 'techno music'} loop for bar-perfect alignment.
 
+${userIntent}
+
 AUDIO SPECIFICATIONS:
 - Target BPM: ${targetBpm}
-- Target bars: ${bars}
+- Generation bars (raw input): ${bars}
+- ${playbackInfo}
 - Time signature: 4/4
 - Sample rate: ${sampleRate} Hz
 - Content type: ${stemContext.description}
+- ${lengthInfo}
 
 YOUR TASK:
 1. Detect the ACTUAL BPM with ±0.1 BPM precision
@@ -562,6 +677,7 @@ YOUR TASK:
 4. Locate ALL strong transients (${stemContext.transients})
 5. Find the OPTIMAL loop start frame with these criteria:
    ${stemContext.startCriteria}
+   Never start inside the body of a kick/bass transient—start at the initial attack or clean zero-crossing.
 6. Find the OPTIMAL seam frame (crossfade point) with these criteria:
    ${stemContext.seamCriteria}
 7. Provide ALTERNATIVES: List 2-3 alternative start/seam points ranked by quality
@@ -571,7 +687,7 @@ ANALYSIS REQUIREMENTS:
 - Frame indices must be integers within audio bounds
 - Prioritize ${stemContext.priority}
 - Consider phase continuity at loop boundaries
-- Ensure the loop will be exactly ${bars} bars at ${targetBpm} BPM
+- Ensure the loop will be exactly ${playbackBars || Math.max(1, Math.round(bars / 2))} bars at ${targetBpm} BPM for playback, using extra material only for analysis
 - Rate your confidence based on signal clarity and beat consistency
 
 QUALITY CHECKLIST:

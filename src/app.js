@@ -2621,7 +2621,7 @@ function hideCleanStemModal() {
  * @param {number} bars The number of bars for the loop
  * @returns {Promise<{fixed: AudioBuffer, method: string, diagnostics: object}>}
  */
-async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars) {
+async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, context = {}) {
   console.log(`[LoopFix] Starting loop fix for separated ${st} - BPM: ${targetBpm}, Bars: ${bars}`)
 
   // Check if Gemini loop fix is enabled
@@ -2646,6 +2646,13 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars) {
           audio_base64: audioBase64,
           target_bpm: targetBpm,
           bars: bars,
+          prompt_text: context.promptText || '',
+          prompt_bars: context.promptBars,
+          playback_bars: context.playbackBars,
+          generation_bars: context.generationBars,
+          sample_rate: audioBuffer.sampleRate,
+          source_frames: audioBuffer.length,
+          audio_duration_sec: audioBuffer.duration,
           use_gemini: true
         }
       })
@@ -2982,6 +2989,16 @@ async function separateCurrentStem(st) {
     const tempo = master.tempo ?? DEFAULT_TEMPO
     const bars = master.bars ?? DEFAULT_BARS
     const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
+    const promptBars = normalizeBarsValue(currentTake?.bars ?? bars ?? DEFAULT_BARS, DEFAULT_BARS)
+    const loopFixContext = {
+      promptText: currentTake?.prompt || stemControlValues.master?.prompt || '',
+      promptBars,
+      playbackBars,
+      generationBars: currentTake?.bars ?? promptBars,
+      sourceFrames: decodedBuffer.length,
+      sampleRate: decodedBuffer.sampleRate,
+      sourceDurationSec: decodedBuffer.duration
+    }
 
     // Update UI to show loop fix is in progress
     if (separateHint) {
@@ -2994,7 +3011,7 @@ async function separateCurrentStem(st) {
     console.log('[stem-separation] Applying loop fix to separated audio...')
     let loopFixResult
     try {
-      loopFixResult = await applyLoopFixToSeparatedAudio(decodedBuffer, st, tempo, bars)
+      loopFixResult = await applyLoopFixToSeparatedAudio(decodedBuffer, st, tempo, bars, loopFixContext)
       console.log(`[stem-separation] Loop fix complete - method: ${loopFixResult.method}`)
 
       // Use the fixed buffer for further processing
