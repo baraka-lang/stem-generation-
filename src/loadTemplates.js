@@ -104,10 +104,18 @@ export async function loadTemplates() {
       console.warn('Techno generator page placeholder not found, appending techno generator page to end');
       appRoot.insertAdjacentHTML('beforeend', technoGeneratorContent);
     }
-    
+
+    // Verify cleanStemModal was loaded
+    const cleanModal = document.getElementById('cleanStemModal');
+    if (cleanModal) {
+      console.log('✅ cleanStemModal loaded successfully');
+    } else {
+      console.error('❌ cleanStemModal NOT found after loading templates!');
+    }
+
     // Append profile page
     appRoot.insertAdjacentHTML('beforeend', profilePageContent);
-    
+
     // console.log('Templates, login page, and selection page loaded successfully');
     return true;
     
