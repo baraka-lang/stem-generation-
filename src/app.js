@@ -5486,10 +5486,16 @@ function setupEventListeners() {
       if (action === 'generate' && st) { await generateStem(st); return }
       // When clicking the new generate button, open the settings modal instead of generating immediately
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
-      // Handle clean button: show confirmation modal before separating
+      // Handle clean button: directly separate stem (no modal)
       if (action === 'clean-stem' && st) {
         console.log(`[Clean] Clean button clicked for stem: ${st}`)
-        showCleanStemModal(st)
+        await separateCurrentStem(st)
+        // Auto-play the separated stem
+        setTimeout(() => {
+          if (stemLoop[st]) {
+            togglePlayback(st)
+          }
+        }, 500)
         return
       }
       if (action === 'download-stem' && st) { downloadStem(st); return }
