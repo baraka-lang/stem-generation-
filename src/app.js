@@ -2551,19 +2551,29 @@ function closeWaveformEditModal(save) {
  * @param {string} st The stem identifier
  */
 function showCleanStemModal(st) {
-  if (!st) return
+  console.log(`[Clean] showCleanStemModal called for stem: ${st}`)
+
+  if (!st) {
+    console.warn('[Clean] No stem provided to showCleanStemModal')
+    return
+  }
 
   const modal = document.getElementById('cleanStemModal')
-  if (!modal) return
+  if (!modal) {
+    console.error('[Clean] cleanStemModal element not found in DOM!')
+    return
+  }
 
   // Store the stem being cleaned
   currentCleanStem = st
+  console.log(`[Clean] Set currentCleanStem to: ${currentCleanStem}`)
 
   // Update the stem name in the modal
   const stemNameSpan = document.getElementById('cleanStemName')
   if (stemNameSpan) {
     const cfg = stemConfigs[st]
     stemNameSpan.textContent = cfg?.label || st
+    console.log(`[Clean] Updated modal with stem name: ${cfg?.label || st}`)
   }
 
   // Show modal with animation
@@ -2575,6 +2585,7 @@ function showCleanStemModal(st) {
 
   // Prevent background scrolling
   document.body.style.overflow = 'hidden'
+  console.log('[Clean] Modal displayed')
 }
 
 /**
@@ -4771,17 +4782,32 @@ function setupEventListeners() {
   const cleanConfirmBtn = document.getElementById('cleanModalConfirmBtn')
   const cleanCloseBtn = document.getElementById('cleanModalCloseBtn')
   const cleanOverlay = document.getElementById('cleanStemOverlay')
+
+  console.log('[Setup] Clean modal buttons found:', {
+    cancel: !!cleanCancelBtn,
+    confirm: !!cleanConfirmBtn,
+    close: !!cleanCloseBtn,
+    overlay: !!cleanOverlay
+  })
+
   if (cleanCancelBtn) cleanCancelBtn.addEventListener('click', () => hideCleanStemModal())
   if (cleanCloseBtn) cleanCloseBtn.addEventListener('click', () => hideCleanStemModal())
   if (cleanOverlay) cleanOverlay.addEventListener('click', () => hideCleanStemModal())
   if (cleanConfirmBtn) {
     cleanConfirmBtn.addEventListener('click', async () => {
+      console.log('[Clean] Confirm button clicked, currentCleanStem:', currentCleanStem)
       const st = currentCleanStem
       if (st) {
+        console.log(`[Clean] Starting separation for ${st}`)
         hideCleanStemModal()
         await separateCurrentStem(st)
+      } else {
+        console.warn('[Clean] No stem selected for cleaning')
       }
     })
+    console.log('[Setup] Clean confirm button event listener attached')
+  } else {
+    console.error('[Setup] Clean confirm button NOT found! Modal may not have loaded.')
   }
 
   // Live update the value labels in the create settings modal.  When the user moves a slider, update
@@ -5461,7 +5487,11 @@ function setupEventListeners() {
       // When clicking the new generate button, open the settings modal instead of generating immediately
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
       // Handle clean button: show confirmation modal before separating
-      if (action === 'clean-stem' && st) { showCleanStemModal(st); return }
+      if (action === 'clean-stem' && st) {
+        console.log(`[Clean] Clean button clicked for stem: ${st}`)
+        showCleanStemModal(st)
+        return
+      }
       if (action === 'download-stem' && st) { downloadStem(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       // Open the takes browser via the "open" button
