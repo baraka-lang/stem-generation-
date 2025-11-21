@@ -262,13 +262,41 @@ Return only the JSON data with no additional commentary.`;
       response_schema: {
         type: "object",
         properties: {
-          detected_bpm: { type: "number" },
-          confidence: { type: "number" },
-          downbeat_frames: { type: "array", items: { type: "integer" } },
-          beat_frames: { type: "array", items: { type: "integer" } },
-          transient_frames: { type: "array", items: { type: "integer" } },
-          suggested_start_frame: { type: "integer" },
-          seam_frame: { type: "integer" }
+          detected_bpm: {
+            type: "number",
+            minimum: 40,
+            maximum: 300,
+            description: "Detected BPM with decimal precision (e.g., 128.5)"
+          },
+          confidence: {
+            type: "number",
+            minimum: 0,
+            maximum: 1,
+            description: "Analysis confidence score (0.0-1.0)"
+          },
+          downbeat_frames: {
+            type: "array",
+            items: { type: "integer" },
+            description: "Frame indices of each bar's first beat"
+          },
+          beat_frames: {
+            type: "array",
+            items: { type: "integer" },
+            description: "Frame indices of all beats (including downbeats)"
+          },
+          transient_frames: {
+            type: "array",
+            items: { type: "integer" },
+            description: "Strong transient attack positions (e.g., kick hits)"
+          },
+          suggested_start_frame: {
+            type: "integer",
+            description: "Optimal loop start frame (required)"
+          },
+          seam_frame: {
+            type: "integer",
+            description: "Optimal crossfade location for loop seam"
+          }
         },
         required: ["detected_bpm", "suggested_start_frame"]
       }
@@ -280,7 +308,7 @@ Return only the JSON data with no additional commentary.`;
 
   try {
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent",
       {
         method: "POST",
         headers: {
