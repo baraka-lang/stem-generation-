@@ -114,8 +114,23 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
     const wavBuffer = wrapPCMToWAV(pcmBuffer, sampleRate, numChannels)
     fs.writeFileSync(tempFilePath, wavBuffer)
 
+    // Verify the file was written successfully
+    if (!fs.existsSync(tempFilePath)) {
+      console.error('[Drag] Temp file was not created:', tempFilePath)
+      event.returnValue = { success: false, error: 'Failed to create temp file' }
+      return
+    }
+
+    const fileStats = fs.statSync(tempFilePath)
+    if (fileStats.size !== wavBuffer.length) {
+      console.error(`[Drag] File size mismatch: expected ${wavBuffer.length}, got ${fileStats.size}`)
+      event.returnValue = { success: false, error: 'File size mismatch' }
+      return
+    }
+
     const elapsed = Date.now() - startTime
     console.log(`[Drag] Wrote temp file synchronously in ${elapsed}ms: ${tempFilePath} (${(wavBuffer.length / 1024).toFixed(1)}KB)`)
+    console.log(`[Drag] File verified: ${fileStats.size} bytes written successfully`)
 
     // Get the window and start the native drag immediately
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -127,11 +142,21 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
     }
 
     try {
+      // Resolve icon path - in development it's in public/, in production it's in dist/
+      let iconPath = path.join(__dirname, 'public/vite.svg')
+      if (!fs.existsSync(iconPath)) {
+        iconPath = path.join(__dirname, 'dist/vite.svg')
+      }
+      if (!fs.existsSync(iconPath)) {
+        console.warn('[Drag] Icon not found, using empty string (may cause issues on macOS)')
+        iconPath = ''
+      }
+
       // Start the native OS drag operation
       // This must be called synchronously during the dragstart event
       win.webContents.startDrag({
         file: tempFilePath,
-        icon: path.join(__dirname, 'public/vite.svg')
+        icon: iconPath
       })
 
       console.log(`[Drag] ✓ Native drag initiated successfully (total: ${Date.now() - startTime}ms)`)
@@ -146,7 +171,7 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
         } catch (err) {
           console.warn('[Drag] Failed to cleanup temp file:', err.message)
         }
-      }, 10000)
+      }, 60000)
 
       // Return success synchronously
       event.returnValue = { success: true, filePath: tempFilePath, method: 'temp-file-sync', elapsed }

@@ -5304,26 +5304,10 @@ function setupEventListeners() {
             console.log(`✓ Electron native drag started for ${st} using ${result.method} (${result.elapsed}ms)`)
             console.log(`[Drag] Temp file: ${result.filePath}`)
 
-            // Also set browser DataTransfer as backup/complement
-            // This creates a hybrid approach: both native Electron drag AND HTML5 drag
-            try {
-              const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
-              const wavFile = new File([wavBlob], filename, {
-                type: 'audio/wav',
-                lastModified: Date.now()
-              })
-
-              // Add file to DataTransfer for additional compatibility
-              if (e.dataTransfer.items && typeof e.dataTransfer.items.add === 'function') {
-                e.dataTransfer.items.add(wavFile)
-                console.log(`[Drag] Also added WAV to HTML5 DataTransfer for hybrid approach`)
-              }
-
-              e.dataTransfer.effectAllowed = 'copy'
-              setDragImageForFilename(e, filename)
-            } catch (hybridErr) {
-              console.warn('[Drag] Failed to set hybrid DataTransfer:', hybridErr)
-            }
+            // Prevent HTML5 drag from interfering with native Electron drag
+            // The webContents.startDrag() call has already initiated the native OS drag
+            // We must prevent the default HTML5 drag behavior to avoid conflicts
+            e.preventDefault()
 
             if (btn) btn.style.opacity = '0.7'
           } else {
