@@ -314,7 +314,7 @@ async function applyPlayerState(snapshot) {
     updateCardNumberColor(st)
     updateMutedBorder(st)
     updateTempoIndicator(st)
-    updateDragButtonState(st)
+    updateDragButtonState(st); updateCleanButtonState(st)
   })
   return
 }
@@ -771,6 +771,9 @@ let sliderTooltipEl = null
 // Track which stem's settings are being edited in the generate settings modal
 let currentGenerateStem = null
 
+// Track which stem is being cleaned (for the clean confirmation modal)
+let currentCleanStem = null
+
 // Flag indicating whether the session master settings (tempo, bars, key)
 // have been selected. Once this flag is true, the session settings are
 // locked for the remainder of the session and the setup modal will not be shown again.
@@ -860,13 +863,13 @@ async function prepareStemmForDrag(st, audioBuffer) {
     stemArrayBufferCache[st] = arrayBuffer
 
     stemDragReady[st] = true
-    updateDragButtonState(st)
+    updateDragButtonState(st); updateCleanButtonState(st)
 
     console.log(`✓ ${st} ready for drag: ${(wavBlob.size / 1024).toFixed(1)}KB`)
   } catch (err) {
     console.error(`Failed to prepare ${st} for drag:`, err)
     stemDragReady[st] = false
-    updateDragButtonState(st)
+    updateDragButtonState(st); updateCleanButtonState(st)
   }
 }
 
@@ -909,7 +912,7 @@ function pushStemVersion(st, entry) {
   updateHistoryBadge(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
-  updateDragButtonState(st)
+  updateDragButtonState(st); updateCleanButtonState(st)
   updateTempoIndicator(st)
 }
 function getActiveVersion(st) {
@@ -2544,6 +2547,58 @@ function closeWaveformEditModal(save) {
 }
 
 /**
+ * Show the clean stem confirmation modal for a specific stem
+ * @param {string} st The stem identifier
+ */
+function showCleanStemModal(st) {
+  if (!st) return
+
+  const modal = document.getElementById('cleanStemModal')
+  if (!modal) return
+
+  // Store the stem being cleaned
+  currentCleanStem = st
+
+  // Update the stem name in the modal
+  const stemNameSpan = document.getElementById('cleanStemName')
+  if (stemNameSpan) {
+    const cfg = stemConfigs[st]
+    stemNameSpan.textContent = cfg?.label || st
+  }
+
+  // Show modal with animation
+  modal.classList.remove('hidden')
+  setTimeout(() => {
+    modal.classList.remove('opacity-0')
+    modal.querySelector('.transform').classList.remove('scale-95')
+  }, 10)
+
+  // Prevent background scrolling
+  document.body.style.overflow = 'hidden'
+}
+
+/**
+ * Hide the clean stem confirmation modal
+ */
+function hideCleanStemModal() {
+  const modal = document.getElementById('cleanStemModal')
+  if (!modal) return
+
+  // Start fade out
+  modal.classList.add('opacity-0')
+  modal.querySelector('.transform')?.classList.add('scale-95')
+
+  // After animation, hide completely
+  setTimeout(() => {
+    modal.classList.add('hidden')
+    currentCleanStem = null
+  }, 300)
+
+  // Restore scrolling
+  document.body.style.overflow = ''
+}
+
+/**
  * Separate the current stem's audio into individual components using
  * ElevenLabs stem separation API. The separated stem that matches the
  * instrument type will automatically be selected and loaded.
@@ -2566,11 +2621,21 @@ async function separateCurrentStem(st) {
     return
   }
 
+  // Preserve current endpoint factor (Gemini loop fix state) to reapply after separation
+  const preservedEndpointFactor = endpointFactors[st] || 1
+  console.log(`[stem-separation] Preserving endpoint factor for ${st}:`, preservedEndpointFactor)
+
   // Update UI to show processing state
   const separateBtn = document.getElementById('editSeparateBtn')
   const separateLabel = document.getElementById('editSeparateLabel')
   const separateSpinner = document.getElementById('editSeparateSpinner')
   const separateHint = document.getElementById('editSeparateHint')
+
+  // Also update the clean button if it exists
+  const cleanBtn = document.querySelector(`[data-action="clean-stem"][data-stem="${st}"]`)
+  const cleanLabel = document.querySelector(`[data-clean-label="${st}"]`)
+  if (cleanBtn) cleanBtn.disabled = true
+  if (cleanLabel) cleanLabel.textContent = 'Cleaning...'
 
   if (separateBtn) separateBtn.disabled = true
   if (separateLabel) separateLabel.textContent = 'Separating...'
@@ -2865,6 +2930,13 @@ async function separateCurrentStem(st) {
     // Update the edit modal canvas with the new waveform
       drawEditWaveform(st, aligned.loop)
 
+    // Reapply the preserved endpoint factor (Gemini loop fix) to maintain loop quality
+    if (preservedEndpointFactor !== 1) {
+      console.log(`[stem-separation] Reapplying endpoint factor ${preservedEndpointFactor} to maintain loop quality`)
+      endpointFactors[st] = preservedEndpointFactor
+      await adjustEndpoint(st, preservedEndpointFactor)
+    }
+
     // Show success message
     if (separateHint) {
       separateHint.textContent = `Successfully extracted ${data.stemType} stem!`
@@ -2958,10 +3030,16 @@ async function separateCurrentStem(st) {
       }, 8000)
     }
   } finally {
-    // Reset button state
+    // Reset button states
     if (separateBtn) separateBtn.disabled = false
-    if (separateLabel) separateLabel.textContent = 'Separate Stems'
+    if (separateLabel) separateLabel.textContent = 'Separate Stem'
     if (separateSpinner) separateSpinner.classList.add('hidden')
+
+    // Reset clean button state
+    const cleanBtn = document.querySelector(`[data-action="clean-stem"][data-stem="${st}"]`)
+    const cleanLabel = document.querySelector(`[data-clean-label="${st}"]`)
+    if (cleanBtn) cleanBtn.disabled = false
+    if (cleanLabel) cleanLabel.textContent = 'Clean'
   }
 }
 
@@ -3473,7 +3551,7 @@ async function generateStem(st) {
     updateMixerGlow(st)
     updateCardNumberColor(st)
     updateHistoryIndicator(st)
-    updateDragButtonState(st)
+    updateDragButtonState(st); updateCleanButtonState(st)
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.error(`❌ Generation error (${st}):`, err)
@@ -3734,31 +3812,43 @@ function updateAutoDownloadPanel(status = getAutoDownloadStatus()) {
 }
 
 function updateAutoDownloadChip(st) {
-  const chip = document.querySelector(`[data-auto-download-chip="${st}"]`)
-  if (!chip) return
+  // Update inline status indicator inside drag button
+  const statusSpan = document.querySelector(`[data-auto-download-status="${st}"]`)
+  if (!statusSpan) return
+
   const status = getAutoDownloadStatus()
-  if (!isAutoDownloadSupported()) {
-    chip.textContent = 'Desktop app required for native drag'
+  if (!isAutoDownloadSupported() || !status.enabled) {
+    statusSpan.textContent = ''
     return
   }
-  if (!status.enabled) {
-    chip.textContent = 'Optional: auto-save stems to a folder for DAW drops'
-    return
-  }
+
   const record = getStemAutoDownloadRecord(st)
   if (!record) {
-    chip.textContent = `Armed • ${status.directoryName || 'Folder'}`
+    statusSpan.textContent = ''
     return
   }
+
   if (record.status === 'pending') {
-    chip.textContent = `Saving ${record.filename || 'stem'}…`
+    statusSpan.innerHTML = '<i data-lucide="clock" class="w-3 h-3 inline"></i>'
+    // Re-render Lucide icons for the new icon
+    if (window.lucide && window.lucide.createIcons) {
+      window.lucide.createIcons()
+    }
     return
   }
+
   if (record.status === 'error') {
-    chip.textContent = `Auto-save failed: ${record.error}`
+    statusSpan.textContent = ''
     return
   }
-  chip.textContent = `Saved • ${status.directoryName || 'Folder'}`
+
+  if (record.status === 'saved') {
+    statusSpan.innerHTML = '<i data-lucide="check" class="w-3 h-3 inline"></i>'
+    // Re-render Lucide icons for the new icon
+    if (window.lucide && window.lucide.createIcons) {
+      window.lucide.createIcons()
+    }
+  }
 }
 
 async function initializeAutoDownloadSupport() {
@@ -4146,13 +4236,16 @@ function createBuilderStemCard(st, cfg){
   // Define a drag button for desktop browsers (Chromium only).  This button appears above
   // the Create button and allows users to drag the active sample directly to their DAW or desktop.
   // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag & Drop\n            </span>\n          </button>\n          <div class="mt-2 text-[11px] tracking-wide text-white/60" data-auto-download-chip="${st}"></div>\n        </div>\n      `;
+  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center justify-between w-full gap-2 text-xs sm:text-sm">\n              <span class="inline-flex items-center gap-2">\n                <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n                Drag & Drop\n              </span>\n              <span class="text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n            </span>\n          </button>\n        </div>\n      `;
+
+  // Clean button: allows users to separate stems (remove unwanted instruments) from the current sample
+  const cleanButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-clean-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="clean-stem" data-stem="${st}" title="Remove unwanted instruments from this sample">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="sparkles" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              <span data-clean-label="${st}">Clean</span>\n            </span>\n          </button>\n        </div>\n      `;
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
   const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
-  // Use our custom create button HTML with drag button above it.  Update status line text accordingly.
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + dragButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  // Use our custom create button HTML with drag, clean, and create buttons.  Update status line text accordingly.
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + dragButtonHTML + cleanButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
   // The span within the create button becomes the label, and the icon gets a special class so
   // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
@@ -4464,7 +4557,7 @@ function toggleMute(st){
   reflectMuteSoloButtons(st); updateMixerGlow(st)
   updateCardNumberColor(st)
   updateMutedBorder(st)
-  updateDragButtonState(st)
+  updateDragButtonState(st); updateCleanButtonState(st)
 }
 
 /* ---------- Events ---------- */
@@ -4575,6 +4668,30 @@ function updateDragButtonState(st) {
   updateAutoDownloadChip(st)
 }
 
+/**
+ * Update the clean button's visibility and enabled state based on audio availability
+ * @param {string} st Stem identifier
+ */
+function updateCleanButtonState(st) {
+  const cleanContainer = document.querySelector(`[data-clean-container="${st}"]`)
+  const cleanBtn = document.querySelector(`[data-action="clean-stem"][data-stem="${st}"]`)
+
+  if (!cleanContainer || !cleanBtn) return
+
+  const buf = stemLoop[st]
+  const hasValidData = buf && buf.length > 0
+  const hasActiveSample = stemActiveIndex[st] != null && stemActiveIndex[st] >= 0
+
+  // Show clean button only when there's valid audio
+  if (!hasActiveSample || !hasValidData) {
+    cleanContainer.style.display = 'none'
+  } else {
+    cleanContainer.style.display = ''
+    cleanBtn.disabled = false
+    cleanBtn.style.opacity = '1'
+  }
+}
+
 function updateCardNumberColor(st){
   const nTakes = (stemHistory[st]?.length || 0)
   const muted = stemMuteStates[st]
@@ -4649,6 +4766,24 @@ function setupEventListeners() {
   if (genCancelBtn) genCancelBtn.addEventListener('click', () => hideGenerateSettingsModal())
   if (genOverlay) genOverlay.addEventListener('click', () => hideGenerateSettingsModal())
   if (genStartBtn) genStartBtn.addEventListener('click', () => { applyGenerateSettingsAndStart() })
+
+  // Clean stem modal buttons
+  const cleanCancelBtn = document.getElementById('cleanModalCancelBtn')
+  const cleanConfirmBtn = document.getElementById('cleanModalConfirmBtn')
+  const cleanCloseBtn = document.getElementById('cleanModalCloseBtn')
+  const cleanOverlay = document.getElementById('cleanStemOverlay')
+  if (cleanCancelBtn) cleanCancelBtn.addEventListener('click', () => hideCleanStemModal())
+  if (cleanCloseBtn) cleanCloseBtn.addEventListener('click', () => hideCleanStemModal())
+  if (cleanOverlay) cleanOverlay.addEventListener('click', () => hideCleanStemModal())
+  if (cleanConfirmBtn) {
+    cleanConfirmBtn.addEventListener('click', async () => {
+      const st = currentCleanStem
+      if (st) {
+        hideCleanStemModal()
+        await separateCurrentStem(st)
+      }
+    })
+  }
 
   // Live update the value labels in the create settings modal.  When the user moves a slider, update
   // the adjacent span to reflect the new value and unit.
@@ -5307,6 +5442,8 @@ function setupEventListeners() {
       if (action === 'generate' && st) { await generateStem(st); return }
       // When clicking the new generate button, open the settings modal instead of generating immediately
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
+      // Handle clean button: show confirmation modal before separating
+      if (action === 'clean-stem' && st) { showCleanStemModal(st); return }
       if (action === 'download-stem' && st) { downloadStem(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       // Open the takes browser via the "open" button
@@ -5399,7 +5536,7 @@ function setupEventListeners() {
           selectStemVersion(st, newIndex)
           updateHistoryIndicator(st)
           updateCardNumberColor(st)
-          updateDragButtonState(st)
+          updateDragButtonState(st); updateCleanButtonState(st)
         }
         return
       }
@@ -5413,7 +5550,7 @@ function setupEventListeners() {
           selectStemVersion(st, newIndex)
           updateHistoryIndicator(st)
           updateCardNumberColor(st)
-          updateDragButtonState(st)
+          updateDragButtonState(st); updateCleanButtonState(st)
         }
         return
       }
@@ -5500,7 +5637,7 @@ function updateHistoryBadge(st){
   badgeEls.forEach(badge => { badge.textContent=n; badge.style.opacity = n > 0 ? '1' : '0.4' })
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
-  updateDragButtonState(st)
+  updateDragButtonState(st); updateCleanButtonState(st)
 }
 function toggleHistoryDrawer(st, forceOpen=null){
   const drawer=document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
@@ -5615,7 +5752,7 @@ function selectStemVersion(st, index){
   if (isPlaying) restartStemNextBoundary(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
-  updateDragButtonState(st)
+  updateDragButtonState(st); updateCleanButtonState(st)
   updateTempoIndicator(st)
 }
 
@@ -5891,7 +6028,7 @@ function initTechnoGenerator(){
     updateCardNumberColor(st)
     updateMutedBorder(st)
     updateTempoIndicator(st)
-    updateDragButtonState(st)
+    updateDragButtonState(st); updateCleanButtonState(st)
   })
   // Present the session setup modal if settings have not been chosen
   // yet.  This ensures the user sets the master tempo, bars and key
