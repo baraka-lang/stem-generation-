@@ -90,74 +90,73 @@ function wrapPCMToWAV(pcmBuffer, sampleRate, numChannels) {
   return Buffer.concat([header, pcmBuffer])
 }
 
-ipcMain.handle('start-native-drag', async (event, { stemId, pcmData, sampleRate, numChannels, filename }) => {
+// Synchronous IPC handler for drag operations
+// This must be synchronous to work within the dragstart event timing window
+ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChannels, filename }) => {
   try {
+    const startTime = Date.now()
     const pcmBuffer = Buffer.from(pcmData)
 
-    console.log(`[Drag] Starting native drag for ${stemId}: ${filename}`)
-    console.log(`[Drag] Format: ${sampleRate}Hz, ${numChannels}ch, ${pcmBuffer.length} bytes`)
+    console.log(`[Drag] Starting synchronous drag for ${stemId}: ${filename}`)
+    console.log(`[Drag] Format: ${sampleRate}Hz, ${numChannels}ch, ${(pcmBuffer.length / 1024).toFixed(1)}KB`)
 
-    if (nativeDragHelper && nativeDragHelper.startNativeDrag) {
-      try {
-        const result = await nativeDragHelper.startNativeDrag([
-          {
-            stemId,
-            pcmData: Array.from(pcmBuffer),
-            sampleRate,
-            numChannels,
-            filename
-          }
-        ])
-
-        if (result.success) {
-          console.log(`✓ Native drag started successfully via native module`)
-          return { success: true, method: 'native' }
-        } else {
-          console.warn('Native drag module returned failure, using fallback')
-        }
-      } catch (nativeErr) {
-        console.warn('Native drag module error, using fallback:', nativeErr.message)
-      }
-    }
-
-    console.log('[Drag] Using fallback: temp file + webContents.startDrag')
+    // Skip native module attempts - not compiled, go straight to reliable temp file approach
     const tempDir = path.join(os.tmpdir(), '343labs-stems')
 
-    try {
-      await fsPromises.mkdir(tempDir, { recursive: true })
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err
+    // Create directory synchronously
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true })
     }
 
     const tempFilePath = path.join(tempDir, filename)
 
+    // Wrap PCM to WAV and write synchronously
     const wavBuffer = wrapPCMToWAV(pcmBuffer, sampleRate, numChannels)
-    await fsPromises.writeFile(tempFilePath, wavBuffer)
+    fs.writeFileSync(tempFilePath, wavBuffer)
 
-    console.log(`[Drag] Wrote temp file: ${tempFilePath} (${wavBuffer.length} bytes)`)
+    const elapsed = Date.now() - startTime
+    console.log(`[Drag] Wrote temp file synchronously in ${elapsed}ms: ${tempFilePath} (${(wavBuffer.length / 1024).toFixed(1)}KB)`)
 
+    // Get the window and start the native drag immediately
     const win = BrowserWindow.fromWebContents(event.sender)
 
-    if (process.platform === 'darwin' || process.platform === 'win32') {
+    if (!win) {
+      console.error('[Drag] Could not find window for drag operation')
+      event.returnValue = { success: false, error: 'Window not found' }
+      return
+    }
+
+    try {
+      // Start the native OS drag operation
+      // This must be called synchronously during the dragstart event
       win.webContents.startDrag({
         file: tempFilePath,
         icon: path.join(__dirname, 'public/vite.svg')
       })
+
+      console.log(`[Drag] ✓ Native drag initiated successfully (total: ${Date.now() - startTime}ms)`)
+
+      // Schedule cleanup of temp file after drag completes
+      setTimeout(() => {
+        try {
+          if (fs.existsSync(tempFilePath)) {
+            fs.unlinkSync(tempFilePath)
+            console.log(`[Drag] Cleaned up temp file: ${tempFilePath}`)
+          }
+        } catch (err) {
+          console.warn('[Drag] Failed to cleanup temp file:', err.message)
+        }
+      }, 10000)
+
+      // Return success synchronously
+      event.returnValue = { success: true, filePath: tempFilePath, method: 'temp-file-sync', elapsed }
+    } catch (dragErr) {
+      console.error('[Drag] webContents.startDrag failed:', dragErr)
+      event.returnValue = { success: false, error: dragErr.message }
     }
-
-    setTimeout(async () => {
-      try {
-        await fsPromises.unlink(tempFilePath)
-        console.log(`[Drag] Cleaned up temp file: ${tempFilePath}`)
-      } catch (err) {
-        console.error('Failed to cleanup temp file:', err)
-      }
-    }, 10000)
-
-    return { success: true, filePath: tempFilePath, method: 'fallback' }
   } catch (error) {
-    console.error('[Drag] Native drag failed:', error)
-    return { success: false, error: error.message }
+    console.error('[Drag] Synchronous drag failed:', error)
+    event.returnValue = { success: false, error: error.message }
   }
 })
 

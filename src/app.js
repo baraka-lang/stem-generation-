@@ -5261,52 +5261,51 @@ function setupEventListeners() {
 
       if (isElectron) {
         // Use Electron native drag with raw PCM data
-        // The Electron main process will wrap PCM to WAV during drag fulfillment
-        e.preventDefault()
+        // IMPORTANT: Do NOT call e.preventDefault() - let the drag gesture flow naturally
+        // The synchronous IPC call will set up the native drag within the timing window
 
-        // Call Electron API with raw PCM data
-        window.electronAPI.startNativeDrag(st, pcmData, sampleRate, numChannels, filename)
-          .then(result => {
-            if (result.success) {
-              console.log(`✓ Native drag started for ${st}: ${result.filePath}`)
-              btn.style.opacity = '0.7'
+        console.log(`[Drag] Electron mode: calling synchronous IPC for ${st}`)
 
-              // Visual feedback
-              const dragFeedback = document.createElement('div')
-              dragFeedback.style.cssText = `
-                position: fixed;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
-                padding: 20px 30px;
-                background: rgba(0, 200, 100, 0.95);
-                color: white;
-                border-radius: 12px;
-                font-size: 16px;
-                font-weight: 600;
-                box-shadow: 0 8px 24px rgba(0,0,0,0.4);
-                z-index: 10000;
-                pointer-events: none;
-              `
-              dragFeedback.textContent = `Dragging: ${filename}`
-              document.body.appendChild(dragFeedback)
+        try {
+          // Call Electron API synchronously - returns immediately
+          const result = window.electronAPI.startNativeDrag(st, pcmData, sampleRate, numChannels, filename)
 
-              setTimeout(() => {
-                dragFeedback.remove()
-                btn.style.opacity = '1'
-              }, 2000)
-            } else {
-              console.error('Native drag failed:', result.error)
-              alert(`Failed to start drag operation: ${result.error}`)
-              btn.style.opacity = '1'
+          if (result.success) {
+            console.log(`✓ Electron native drag started for ${st} using ${result.method} (${result.elapsed}ms)`)
+            console.log(`[Drag] Temp file: ${result.filePath}`)
+
+            // Also set browser DataTransfer as backup/complement
+            // This creates a hybrid approach: both native Electron drag AND HTML5 drag
+            try {
+              const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
+              const wavFile = new File([wavBlob], filename, {
+                type: 'audio/wav',
+                lastModified: Date.now()
+              })
+
+              // Add file to DataTransfer for additional compatibility
+              if (e.dataTransfer.items && typeof e.dataTransfer.items.add === 'function') {
+                e.dataTransfer.items.add(wavFile)
+                console.log(`[Drag] Also added WAV to HTML5 DataTransfer for hybrid approach`)
+              }
+
+              e.dataTransfer.effectAllowed = 'copy'
+              setDragImageForFilename(e, filename)
+            } catch (hybridErr) {
+              console.warn('[Drag] Failed to set hybrid DataTransfer:', hybridErr)
             }
-          })
-          .catch(err => {
-            console.error('Electron drag error:', err)
-            alert(`Drag operation failed: ${err.message}`)
-            btn.style.opacity = '1'
-          })
 
+            if (btn) btn.style.opacity = '0.7'
+          } else {
+            console.error('[Drag] Electron drag failed:', result.error)
+            // Don't prevent default - let browser drag work as fallback
+          }
+        } catch (err) {
+          console.error('[Drag] Electron drag error:', err)
+          // Don't prevent default - let browser drag work as fallback
+        }
+
+        // Let the drag gesture continue naturally
         return
       }
 
@@ -5319,7 +5318,7 @@ function setupEventListeners() {
       // Wrap PCM to WAV for browser drag
       const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
       const wavFile = new File([wavBlob], filename, {
-        type: 'audio/wav',
+        type: 'audio/wav',  // Primary MIME type
         lastModified: Date.now()
       })
 
@@ -5335,24 +5334,44 @@ function setupEventListeners() {
       const url = URL.createObjectURL(wavFile)
       stemBlobUrls[st] = url
 
-      // Try to add file using DataTransferItem API
+      // Try to add file using DataTransferItem API (most reliable for file drops)
       let addedViaItems = false
       if (e.dataTransfer.items && typeof e.dataTransfer.items.add === 'function') {
         try {
           e.dataTransfer.items.add(wavFile)
           addedViaItems = true
-          console.log(`[Drag] Added file via DataTransferItem API`)
+          console.log(`[Drag] ✓ Added file via DataTransferItem API`)
         } catch (itemErr) {
           console.warn('[Drag] DataTransferItem.add() failed:', itemErr)
         }
       }
 
-      // Set drag data formats (browser fallback)
-      e.dataTransfer.setData('text/uri-list', url)
-      e.dataTransfer.setData('text/plain', url)
-      e.dataTransfer.effectAllowed = 'copy'
+      // Set multiple data formats for maximum compatibility
+      // DownloadURL format (Chrome-specific for better file downloads)
+      try {
+        const downloadURL = `audio/wav:${filename}:${url}`
+        e.dataTransfer.setData('DownloadURL', downloadURL)
+        console.log(`[Drag] Set DownloadURL format`)
+      } catch (dlErr) {
+        console.warn('[Drag] DownloadURL not supported:', dlErr)
+      }
 
-      console.log(`[Drag] Browser drag prepared: ${addedViaItems ? 'File+URL' : 'URL only'}`)
+      // Standard formats
+      e.dataTransfer.setData('text/uri-list', url)
+      e.dataTransfer.setData('text/plain', filename)  // Use filename instead of URL
+
+      // Set multiple MIME type hints
+      try {
+        e.dataTransfer.setData('audio/wav', url)
+        e.dataTransfer.setData('audio/x-wav', url)
+      } catch (mimeErr) {
+        console.warn('[Drag] MIME type data not supported:', mimeErr)
+      }
+
+      e.dataTransfer.effectAllowed = 'copy'
+      e.dataTransfer.dropEffect = 'copy'
+
+      console.log(`[Drag] Browser drag prepared: ${addedViaItems ? 'File+URL+DownloadURL' : 'URL+DownloadURL'}`)
 
       // Create custom drag image with filename display
       setDragImageForFilename(e, filename)

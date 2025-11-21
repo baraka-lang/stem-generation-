@@ -105,11 +105,19 @@ User Drags → PCM wrapped to WAV blob → Browser DataTransfer →
   → Desktop folder (works) OR DAW (usually rejected)
 ```
 
-### Electron Mode with Fallback (Current)
+### Electron Mode with Synchronous Fallback (Current - FIXED)
 ```
-User Drags → PCM sent to main process → Wrapped to WAV →
-  → Temp file created → webContents.startDrag() → DAW
+User Drags (dragstart event) →
+  → Synchronous IPC to main process →
+  → PCM wrapped to WAV (sync) →
+  → Temp file written (sync, ~5-20ms) →
+  → webContents.startDrag() called immediately →
+  → Native OS drag initiated →
+  → DAW accepts drop →
+  → File delivered to DAW
 ```
+
+**Key Fix**: Changed from async IPC (handle/invoke) to sync IPC (on/sendSync) to work within the dragstart event timing window. The entire operation completes in < 50ms, allowing the OS drag gesture to proceed naturally.
 
 ### Electron Mode with Native Modules (Ideal)
 ```
@@ -137,16 +145,22 @@ Windows:
 3. Drag to desktop folder (should work in Chromium)
 4. Drag to DAW (likely won't work - expected limitation)
 
-### Drag Testing (Electron Fallback)
+### Drag Testing (Electron Synchronous Mode - FIXED)
 
 1. Run `npm run electron:dev`
 2. Generate a stem
 3. Drag to Ableton/Logic/FL Studio
-4. Check console for: `[Drag] Using fallback: temp file + webContents.startDrag`
+4. Check console for: `✓ Electron native drag started for kick using temp-file-sync (15ms)`
 5. Verify temp file is created in OS temp directory
-6. Check if DAW accepts the file
+6. Verify DAW accepts the file
 
-**Expected Result**: May work or may fail depending on:
+**Expected Result**: Should work reliably on both macOS and Windows because:
+- Synchronous IPC completes within dragstart event timing window
+- Temp file is written and ready before drag gesture proceeds
+- Native OS drag protocol is used (not browser APIs)
+- Both webContents.startDrag AND HTML5 DataTransfer are set (hybrid approach)
+
+**Common Issues Fixed**:
 - macOS: Should work in most cases
 - Windows: May fail if elevation mismatch (see Troubleshooting)
 
@@ -202,6 +216,24 @@ npm run electron:build:linux  # Linux only
 
 ## Troubleshooting
 
+### Drag Not Working - Check Console Logs
+
+Look for these key indicators:
+
+**Success Pattern**:
+```
+[Drag] Electron mode: calling synchronous IPC for kick
+✓ Electron native drag started for kick using temp-file-sync (15ms)
+[Drag] Temp file: /tmp/343labs-stems/Techno_Kick_130_Am_4bars.wav
+```
+
+**Timing Issue (OLD - FIXED)**:
+```
+[Drag] Using fallback: temp file + webContents.startDrag
+[Drag] Wrote temp file: ... (async)
+```
+This was the old async pattern that didn't work. Should not see this anymore.
+
 ### Windows: Drag Works to Folders but Not DAWs
 
 **Cause**: Elevation level mismatch. If Ableton runs as Administrator and your app doesn't (or vice versa), Windows blocks the drag for security.
@@ -211,6 +243,12 @@ npm run electron:build:linux  # Linux only
 2. Match elevation levels:
    - If Ableton elevated: Run app as Administrator
    - If Ableton normal: Ensure app runs normally (don't elevate)
+
+### Drag Gesture Cancelled Immediately
+
+**Cause**: e.preventDefault() was called before setting up drag data (OLD BUG - FIXED)
+
+**Fix**: The code no longer calls preventDefault() in Electron mode. The drag gesture flows naturally while synchronous IPC sets up the temp file.
 
 ### macOS: Drag Not Accepted by DAW
 

@@ -1,12 +1,15 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  // Synchronous drag operation - must return immediately for dragstart event
   startNativeDrag: (stemId, pcmData, sampleRate, numChannels, filename) => {
     const pcmArray = pcmData instanceof ArrayBuffer
       ? Array.from(new Uint8Array(pcmData))
       : Array.from(pcmData)
 
-    return ipcRenderer.invoke('start-native-drag', {
+    // Use sendSync for synchronous IPC - returns immediately
+    // This is critical for drag operations to work within the dragstart event timing
+    return ipcRenderer.sendSync('start-native-drag', {
       stemId,
       pcmData: pcmArray,
       sampleRate,
