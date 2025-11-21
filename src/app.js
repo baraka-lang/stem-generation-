@@ -3741,9 +3741,9 @@ async function setupAutoDownloadPanel() {
     <div class="text-[11px] uppercase tracking-[0.3em] text-white/60">DAW Drop Helper</div>
     <div class="flex items-start gap-3">
       <div class="flex-1">
-        <div class="text-sm font-semibold" data-auto-download-status>Auto-download unavailable</div>
+        <div class="text-sm font-semibold" data-auto-download-status>Auto-download disabled</div>
         <p class="text-[12px] text-white/70 mt-1" data-auto-download-note>
-          Enable Chrome's File System Access API to pre-save stems before you drag them into a DAW.
+          Enable this to drag samples directly into your DAW. Stems will be pre-saved when you click the drag button.
         </p>
       </div>
       <div class="flex flex-col gap-2">
@@ -3796,11 +3796,11 @@ function updateAutoDownloadPanel(status = getAutoDownloadStatus()) {
   }
   if (autoDownloadNoteEl) {
     if (!status.enabled) {
-      autoDownloadNoteEl.textContent = 'Pick a folder once and stems will be saved there the moment they finish rendering.'
+      autoDownloadNoteEl.textContent = 'Enable this to drag samples directly into your DAW. Stems will be pre-saved when you click the drag button.'
     } else if (status.lastSavedStem) {
-      autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}`
+      autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}. Ready for DAW drag & drop.`
     } else {
-      autoDownloadNoteEl.textContent = 'Ready. Generate or drag a stem and it will be written into your chosen folder automatically.'
+      autoDownloadNoteEl.textContent = 'Ready for DAW drag & drop. Stems auto-save when generated.'
     }
   }
   if (autoDownloadActionBtn) {
@@ -4236,14 +4236,14 @@ function createBuilderStemCard(st, cfg){
   // Define a drag button for desktop browsers (Chromium only).  This button appears above
   // the Create button and allows users to drag the active sample directly to their DAW or desktop.
   // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center justify-between w-full gap-2 text-xs sm:text-sm">\n              <span class="inline-flex items-center gap-2">\n                <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n                Drag & Drop\n              </span>\n              <span class="text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n            </span>\n          </button>\n        </div>\n      `;
+  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm relative w-full">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag & Drop\n              <span class="absolute right-0 text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n            </span>\n          </button>\n        </div>\n      `;
 
   // Clean button: allows users to separate stems (remove unwanted instruments) from the current sample
-  const cleanButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-clean-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="clean-stem" data-stem="${st}" title="Remove unwanted instruments from this sample">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="sparkles" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              <span data-clean-label="${st}">Clean</span>\n            </span>\n          </button>\n        </div>\n      `;
+  const cleanButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative" data-clean-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="clean-stem" data-stem="${st}" title="Remove unwanted instruments from this sample">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="sparkles" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              <span data-clean-label="${st}">Clean</span>\n            </span>\n          </button>\n        </div>\n      `;
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
-  const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
+  const genCreateButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
   // Use our custom create button HTML with drag, clean, and create buttons.  Update status line text accordingly.
   card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + dragButtonHTML + cleanButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
@@ -4669,24 +4669,23 @@ function updateDragButtonState(st) {
 }
 
 /**
- * Update the clean button's visibility and enabled state based on audio availability
+ * Update the clean button's enabled state based on audio availability
  * @param {string} st Stem identifier
  */
 function updateCleanButtonState(st) {
-  const cleanContainer = document.querySelector(`[data-clean-container="${st}"]`)
   const cleanBtn = document.querySelector(`[data-action="clean-stem"][data-stem="${st}"]`)
 
-  if (!cleanContainer || !cleanBtn) return
+  if (!cleanBtn) return
 
   const buf = stemLoop[st]
   const hasValidData = buf && buf.length > 0
   const hasActiveSample = stemActiveIndex[st] != null && stemActiveIndex[st] >= 0
 
-  // Show clean button only when there's valid audio
+  // Enable clean button only when there's valid audio
   if (!hasActiveSample || !hasValidData) {
-    cleanContainer.style.display = 'none'
+    cleanBtn.disabled = true
+    cleanBtn.style.opacity = '0.5'
   } else {
-    cleanContainer.style.display = ''
     cleanBtn.disabled = false
     cleanBtn.style.opacity = '1'
   }
