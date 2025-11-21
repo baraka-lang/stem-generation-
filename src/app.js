@@ -5494,6 +5494,15 @@ function setupEventListeners() {
       if (action === 'clean-stem' && st) {
         console.log(`[Clean] Clean button clicked for stem: ${st}`)
         await separateCurrentStem(st)
+
+        // Verify PCM data is ready for drag-and-drop
+        const pcmReady = isPCMReadyForDrag(st)
+        console.log(`[Clean] Separation complete. PCM ready for drag: ${pcmReady}`)
+        if (pcmReady) {
+          const pcmCache = getStemPCM(st)
+          console.log(`[Clean] PCM cache: ${pcmCache.format} (${(pcmCache.pcmData.byteLength / 1024).toFixed(1)}KB)`)
+        }
+
         // Seamlessly swap in the new audio if playing, or start playback if stopped
         if (isPlaying) {
           restartStemNextBoundary(st)
