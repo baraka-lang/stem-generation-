@@ -33,7 +33,7 @@ const PROMPTS_MODE = 'builder' // 'builder' | 'freeform'
 const TEMPO_MIN = 110
 const TEMPO_MAX = 140
 const DEFAULT_TEMPO = 130
-const DEFAULT_BARS  = 2
+const DEFAULT_BARS  = 4
 
 const START_ENV_MS   = 5
 // Increase ramp and crossfade durations to minimise audible clicks at loop
