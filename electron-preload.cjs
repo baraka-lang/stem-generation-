@@ -22,5 +22,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getPlatform: () => ipcRenderer.invoke('get-platform'),
 
-  showItemInFolder: (filePath) => ipcRenderer.invoke('show-item-in-folder', filePath)
+  showItemInFolder: (filePath) => ipcRenderer.invoke('show-item-in-folder', filePath),
+
+  showSaveDirectoryDialog: () => ipcRenderer.invoke('show-save-directory-dialog'),
+
+  saveWavFile: (params) => ipcRenderer.invoke('save-wav-file', params),
+
+  startNativeDragWithPath: (stemId, filePath, filename) => {
+    return ipcRenderer.sendSync('start-native-drag-with-path', { stemId, filePath, filename })
+  }
 })

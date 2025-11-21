@@ -6,6 +6,7 @@ import { initWavEncoder, encodeWAVAsync, encodeWAVSync, preComputeDataURI, termi
 import { storeStemPCM, getStemPCM, getStemFormat, isPCMReadyForDrag, clearStemPCM, getPCMCacheStats } from './stemDataManager.js'
 import { pcm16leToWav, pcm16leToWavBlob, validatePcmData, parseElevenLabsFormat, generateWavFilename as generateWavFilenameFromFormat } from './pcmToWav.js'
 import { initAutoDownloadManager, isAutoDownloadSupported, isAutoDownloadEnabled, requestAutoDownloadDirectory, disableAutoDownload, getAutoDownloadStatus, subscribeAutoDownloadEvents, queueAutoDownloadForStem, getStemAutoDownloadRecord } from './autoDownloadManager.js'
+import { isElectronMode, isElectronSaveEnabled, getElectronSaveDirectory, chooseElectronSaveDirectory, disableElectronSave, saveWavFileElectron, getSavedFilePath, getSavedFileRecord, subscribeElectronFileEvents, getElectronFileStatus } from './electronFileManager.js'
 import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Utilities/barUtils.js'
 import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper.js'
 
@@ -3697,6 +3698,10 @@ function setDragImageForFilename(event, filename) {
 }
 
 function tryAttachFileHandleDrag(e, st, btn) {
+  if (isElectronMode()) {
+    return false
+  }
+
   if (!supportsFileHandleDragOut()) return false
   if (!isAutoDownloadSupported() || !isAutoDownloadEnabled()) return false
   const record = getStemAutoDownloadRecord(st)
@@ -3715,7 +3720,7 @@ function tryAttachFileHandleDrag(e, st, btn) {
     if (btn) {
       btn.style.opacity = '0.7'
     }
-    console.log(`[Drag] Using saved FileSystemHandle for ${st}: ${filename}`)
+    console.log(`[Drag] Browser: Using FileSystemHandle for folder drop only: ${filename}`)
     return true
   } catch (handleErr) {
     console.warn(`[Drag] File handle drag failed for ${st}, falling back:`, handleErr)
@@ -3727,24 +3732,39 @@ function tryAttachFileHandleDrag(e, st, btn) {
    Auto-download helpers
    ========================================================= */
 function scheduleAutoDownloadForStem(st) {
-  if (!isAutoDownloadSupported() || !isAutoDownloadEnabled()) return
   const pcmCache = getStemPCM(st)
   if (!pcmCache || !pcmCache.pcmData) return
+
   const filename = generateWavFilename(st)
-  queueAutoDownloadForStem(st, {
-    pcmData: pcmCache.pcmData,
-    sampleRate: pcmCache.sampleRate,
-    numChannels: pcmCache.numChannels,
-    filename,
-    timestamp: pcmCache.timestamp
-  }).catch(err => {
-    console.warn(`[AutoDownload] Failed to save ${st}:`, err?.message || err)
-  })
+
+  if (isElectronMode() && isElectronSaveEnabled()) {
+    saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename)
+      .then(result => {
+        console.log(`[Electron] Saved ${st}: ${result.path}`)
+        updateDragButtonState(st)
+      })
+      .catch(err => {
+        console.error(`[Electron] Failed to save ${st}:`, err?.message || err)
+      })
+  } else if (isAutoDownloadSupported() && isAutoDownloadEnabled()) {
+    queueAutoDownloadForStem(st, {
+      pcmData: pcmCache.pcmData,
+      sampleRate: pcmCache.sampleRate,
+      numChannels: pcmCache.numChannels,
+      filename,
+      timestamp: pcmCache.timestamp
+    }).catch(err => {
+      console.warn(`[AutoDownload] Failed to save ${st}:`, err?.message || err)
+    })
+  }
 }
 
 function queueAutoDownloadsForAvailableStems() {
-  if (!isAutoDownloadSupported() || !isAutoDownloadEnabled()) return
-  STEM_ORDER.forEach(st => scheduleAutoDownloadForStem(st))
+  if (isElectronMode() && isElectronSaveEnabled()) {
+    STEM_ORDER.forEach(st => scheduleAutoDownloadForStem(st))
+  } else if (isAutoDownloadSupported() && isAutoDownloadEnabled()) {
+    STEM_ORDER.forEach(st => scheduleAutoDownloadForStem(st))
+  }
 }
 
 async function setupAutoDownloadPanel() {
@@ -3776,11 +3796,20 @@ async function setupAutoDownloadPanel() {
   if (autoDownloadActionBtn) {
     autoDownloadActionBtn.addEventListener('click', async () => {
       try {
-        await requestAutoDownloadDirectory()
-        updateAutoDownloadPanel()
-        queueAutoDownloadsForAvailableStems()
+        if (isElectronMode()) {
+          const result = await chooseElectronSaveDirectory()
+          if (!result.canceled) {
+            console.log(`[Electron] Save directory selected: ${result.path}`)
+            updateAutoDownloadPanel()
+            queueAutoDownloadsForAvailableStems()
+          }
+        } else {
+          await requestAutoDownloadDirectory()
+          updateAutoDownloadPanel()
+          queueAutoDownloadsForAvailableStems()
+        }
       } catch (err) {
-        alert(`Unable to enable auto-downloads: ${err?.message || err}`)
+        alert(`Unable to enable auto-save: ${err?.message || err}`)
       }
     })
   }
@@ -3788,41 +3817,80 @@ async function setupAutoDownloadPanel() {
   if (autoDownloadDisableBtn) {
     autoDownloadDisableBtn.addEventListener('click', async () => {
       try {
-        await disableAutoDownload()
+        if (isElectronMode()) {
+          disableElectronSave()
+        } else {
+          await disableAutoDownload()
+        }
         updateAutoDownloadPanel()
       } catch (err) {
-        console.warn('Failed to disable auto-download:', err)
+        console.warn('Failed to disable auto-save:', err)
       }
     })
   }
 }
 
-function updateAutoDownloadPanel(status = getAutoDownloadStatus()) {
+function updateAutoDownloadPanel(status = null) {
   if (!autoDownloadPanelEl) return
-  if (!status?.supported) {
-    autoDownloadPanelEl.classList.add('hidden')
-    return
-  }
-  autoDownloadPanelEl.classList.remove('hidden')
-  if (autoDownloadStatusEl) {
-    autoDownloadStatusEl.textContent = status.enabled
-      ? `Auto-download ready${status.directoryName ? ` → ${status.directoryName}` : ''}`
-      : 'Auto-download disabled'
-  }
-  if (autoDownloadNoteEl) {
-    if (!status.enabled) {
-      autoDownloadNoteEl.textContent = 'Enable this to drag samples directly into your DAW. Stems will be pre-saved when you click the drag button.'
-    } else if (status.lastSavedStem) {
-      autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}. Ready for DAW drag & drop.`
-    } else {
-      autoDownloadNoteEl.textContent = 'Ready for DAW drag & drop. Stems auto-save when generated.'
+
+  if (isElectronMode()) {
+    const electronStatus = getElectronFileStatus()
+    autoDownloadPanelEl.classList.remove('hidden')
+
+    if (autoDownloadStatusEl) {
+      autoDownloadStatusEl.textContent = electronStatus.enabled
+        ? `Auto-save ready → ${electronStatus.directory || 'folder'}`
+        : 'Auto-save disabled'
     }
-  }
-  if (autoDownloadActionBtn) {
-    autoDownloadActionBtn.textContent = status.enabled ? 'Change folder' : 'Enable'
-  }
-  if (autoDownloadDisableBtn) {
-    autoDownloadDisableBtn.classList.toggle('hidden', !status.enabled)
+
+    if (autoDownloadNoteEl) {
+      if (!electronStatus.enabled) {
+        autoDownloadNoteEl.textContent = 'Enable to drag samples directly into your DAW. Files save automatically when generated.'
+      } else {
+        autoDownloadNoteEl.textContent = `Ready for DAW drag & drop. ${electronStatus.savedCount} file(s) saved.`
+      }
+    }
+
+    if (autoDownloadActionBtn) {
+      autoDownloadActionBtn.textContent = electronStatus.enabled ? 'Change folder' : 'Enable'
+    }
+
+    if (autoDownloadDisableBtn) {
+      autoDownloadDisableBtn.classList.toggle('hidden', !electronStatus.enabled)
+    }
+  } else {
+    if (!status) status = getAutoDownloadStatus()
+
+    if (!status?.supported) {
+      autoDownloadPanelEl.classList.add('hidden')
+      return
+    }
+
+    autoDownloadPanelEl.classList.remove('hidden')
+
+    if (autoDownloadStatusEl) {
+      autoDownloadStatusEl.textContent = status.enabled
+        ? `Auto-download ready${status.directoryName ? ` → ${status.directoryName}` : ''}`
+        : 'Auto-download disabled'
+    }
+
+    if (autoDownloadNoteEl) {
+      if (!status.enabled) {
+        autoDownloadNoteEl.textContent = 'Enable to save files (drag to folders only, not DAWs). Use Electron app for DAW drag.'
+      } else if (status.lastSavedStem) {
+        autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}. Drag to folders only.`
+      } else {
+        autoDownloadNoteEl.textContent = 'Files auto-save when generated. Drag to folders only (not DAWs).'
+      }
+    }
+
+    if (autoDownloadActionBtn) {
+      autoDownloadActionBtn.textContent = status.enabled ? 'Change folder' : 'Enable'
+    }
+
+    if (autoDownloadDisableBtn) {
+      autoDownloadDisableBtn.classList.toggle('hidden', !status.enabled)
+    }
   }
 }
 
@@ -4660,13 +4728,17 @@ function updateDragButtonState(st) {
     let tooltip = `${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
 
     if (isElectron) {
-      if (autoStatus.enabled && autoRecord?.status === 'saved') {
-        tooltip += `\n\n✓ Saved in ${autoStatus.directoryName}`
-        tooltip += `\n\nFor DAWs: Click 📁 to reveal, then drag from Explorer/Finder`
-      } else if (autoStatus.enabled && autoRecord?.status === 'pending') {
-        tooltip += `\n\nSaving to ${autoStatus.directoryName}...`
+      const savedRecord = getSavedFileRecord(st)
+      const saveDir = getElectronSaveDirectory()
+
+      if (savedRecord?.status === 'saved') {
+        tooltip += `\n\n✓ Saved to ${saveDir || 'disk'}`
+        tooltip += `\n\nDrag directly to your DAW!`
+        tooltip += `\nOr click 📁 to reveal in Explorer/Finder`
+      } else if (savedRecord?.status === 'pending') {
+        tooltip += `\n\nSaving to ${saveDir}...`
       } else {
-        tooltip += `\n\nEnable auto-download to save files for DAW use`
+        tooltip += `\n\nEnable auto-save to use drag-and-drop`
       }
     } else {
       tooltip += `\n\nDrag to folders only (not DAWs)`
@@ -4696,11 +4768,17 @@ function updateDragButtonState(st) {
   const showInFolderBtn = document.querySelector(`[data-action="show-in-folder"][data-stem="${st}"]`)
   if (showInFolderBtn) {
     const isElectron = typeof window.electronAPI !== 'undefined'
-    const fileSaved = autoRecord?.status === 'saved'
 
-    if (isElectron && fileSaved && autoStatus.enabled) {
-      showInFolderBtn.classList.remove('hidden')
-      showInFolderBtn.title = `Reveal ${autoRecord.filename} in Explorer/Finder`
+    if (isElectron) {
+      const savedRecord = getSavedFileRecord(st)
+      const fileSaved = savedRecord?.status === 'saved'
+
+      if (fileSaved) {
+        showInFolderBtn.classList.remove('hidden')
+        showInFolderBtn.title = `Reveal ${savedRecord.filename} in Explorer/Finder`
+      } else {
+        showInFolderBtn.classList.add('hidden')
+      }
     } else {
       showInFolderBtn.classList.add('hidden')
     }
@@ -5276,6 +5354,35 @@ function setupEventListeners() {
     const st = k.getAttribute('data-stem'); setVolumeUnified(st, stemConfigs[st]?.controls?.volume?.default ?? 80)
   })
 
+  // Pre-warm file saving on pointerdown (before dragstart)
+  // This ensures files are ready before the drag gesture starts
+  document.addEventListener('pointerdown', e => {
+    const btn = e.target.closest('[data-action="drag-stem"]')
+    if (!btn) return
+
+    const st = btn.dataset.stem
+    if (!st) return
+
+    if (!isElectronMode() || !isElectronSaveEnabled()) return
+
+    const savedRecord = getSavedFileRecord(st)
+    const pcmCache = getStemPCM(st)
+
+    if (!savedRecord && pcmCache?.pcmData) {
+      console.log(`[PreWarm] Initiating save for ${st} before drag`)
+      const filename = generateWavFilename(st)
+
+      saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename)
+        .then(result => {
+          console.log(`[PreWarm] ✓ File ready: ${result.path}`)
+          updateDragButtonState(st)
+        })
+        .catch(err => {
+          console.error(`[PreWarm] Save failed:`, err)
+        })
+    }
+  })
+
   // Dragstart handler for drag-to-DAW functionality
   // Uses raw PCM data from ElevenLabs for native OS drag
   document.addEventListener('dragstart', e => {
@@ -5320,34 +5427,43 @@ function setupEventListeners() {
       if (isElectron) {
         console.log(`[Drag] Electron mode detected`)
 
-        if (autoStatus.enabled && autoRecord?.status === 'saved') {
+        const savedPath = getSavedFilePath(st)
+        const savedRecord = getSavedFileRecord(st)
+
+        if (savedPath && savedRecord?.status === 'saved') {
+          console.log(`[Drag] Using saved file: ${savedPath}`)
+
+          try {
+            const result = window.electronAPI.startNativeDragWithPath(st, savedPath, filename)
+
+            if (result.success) {
+              console.log(`[Drag] ✓ Native drag started: ${result.method} (${result.elapsed}ms)`)
+              e.preventDefault()
+              if (btn) btn.style.opacity = '0.7'
+              return
+            } else {
+              console.error('[Drag] Native drag failed:', result.error)
+              e.preventDefault()
+              alert(`Drag failed: ${result.error}\n\nTry using the 📁 button to reveal the file and drag from Explorer/Finder.`)
+              return
+            }
+          } catch (err) {
+            console.error('[Drag] Native drag error:', err)
+            e.preventDefault()
+            alert(`Drag error: ${err.message}\n\nTry using the 📁 button to reveal the file and drag from Explorer/Finder.`)
+            return
+          }
+        } else if (savedRecord?.status === 'pending') {
           e.preventDefault()
           if (btn) btn.style.opacity = '0.5'
-
-          const message = `✓ File saved: ${autoRecord.filename}\n\nFor reliable DAW drag-and-drop:\n1. Click the 📁 button to reveal the file\n2. Drag from Explorer/Finder into your DAW\n\nDirect drag from this app doesn't work reliably with DAWs.`
-
-          console.warn('[Drag] Electron direct drag disabled - use Show in Folder instead')
-          alert(message)
-
-          if (btn) btn.style.opacity = '1'
-          return
-        } else if (autoStatus.enabled && autoRecord?.status === 'pending') {
-          e.preventDefault()
-          if (btn) btn.style.opacity = '0.5'
-
           alert('File is still being saved. Please wait a moment and try again.')
-
           if (btn) btn.style.opacity = '1'
           return
         } else {
           e.preventDefault()
           if (btn) btn.style.opacity = '0.5'
-
-          const message = 'Auto-download is not enabled.\n\nTo use drag-and-drop with DAWs:\n1. Enable auto-download (menu button)\n2. Choose a folder\n3. Generate audio\n4. Use the 📁 button to reveal files\n5. Drag from Explorer/Finder into your DAW'
-
-          console.warn('[Drag] Auto-download not enabled')
+          const message = 'File not saved yet.\n\nTo enable drag-and-drop:\n1. Enable auto-save (menu button)\n2. Choose a folder\n3. Generate audio\n4. Drag will work automatically!'
           alert(message)
-
           if (btn) btn.style.opacity = '1'
           return
         }
@@ -5530,48 +5646,43 @@ function setupEventListeners() {
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       if (action === 'show-in-folder' && st) {
         const isElectron = typeof window.electronAPI !== 'undefined'
-        const autoStatus = getAutoDownloadStatus()
-        const autoRecord = getStemAutoDownloadRecord(st)
-
-        if (!autoStatus.enabled || !autoRecord || autoRecord.status !== 'saved') {
-          console.warn('[ShowInFolder] File not saved or auto-download disabled')
-          alert('File has not been saved yet. Enable auto-download and generate a sample first.')
-          return
-        }
-
-        const folderPath = autoStatus.directoryName || 'folder'
-        const filename = autoRecord.filename
 
         if (isElectron) {
-          console.log(`[ShowInFolder] Electron: Attempting to reveal ${filename}`)
+          const savedPath = getSavedFilePath(st)
+          const savedRecord = getSavedFileRecord(st)
 
-          if (autoRecord.fileHandle && typeof autoRecord.fileHandle.getFile === 'function') {
-            autoRecord.fileHandle.getFile()
-              .then(file => {
-                if (file.path) {
-                  console.log(`[ShowInFolder] File path from handle: ${file.path}`)
-                  return window.electronAPI.showItemInFolder(file.path)
-                } else {
-                  throw new Error('File handle does not have path property')
-                }
-              })
-              .then(result => {
-                if (result.success) {
-                  console.log(`[ShowInFolder] Successfully revealed: ${result.path}`)
-                } else {
-                  console.error('[ShowInFolder] Failed:', result.error)
-                  alert(`Could not reveal file: ${result.error}`)
-                }
-              })
-              .catch(err => {
-                console.error('[ShowInFolder] Error:', err)
-                alert(`Error: ${err.message}\n\nThe file is saved in "${folderPath}". Please navigate there manually.`)
-              })
-          } else {
-            alert(`File saved as "${filename}" in "${folderPath}".\n\nPlease navigate to that folder manually.`)
+          if (!savedPath || savedRecord?.status !== 'saved') {
+            alert('File has not been saved yet. Enable auto-save and generate audio first.')
+            return
           }
+
+          console.log(`[ShowInFolder] Revealing: ${savedPath}`)
+
+          window.electronAPI.showItemInFolder(savedPath)
+            .then(result => {
+              if (result.success) {
+                console.log(`[ShowInFolder] ✓ Revealed: ${result.path}`)
+              } else {
+                console.error('[ShowInFolder] Failed:', result.error)
+                alert(`Could not reveal file: ${result.error}`)
+              }
+            })
+            .catch(err => {
+              console.error('[ShowInFolder] Error:', err)
+              alert(`Error revealing file: ${err.message}`)
+            })
         } else {
-          alert(`File saved as "${filename}" in "${folderPath}".\n\nThis feature requires the Electron desktop app to reveal files. For now, navigate to your chosen folder manually.`)
+          const autoStatus = getAutoDownloadStatus()
+          const autoRecord = getStemAutoDownloadRecord(st)
+
+          if (!autoStatus.enabled || !autoRecord || autoRecord.status !== 'saved') {
+            alert('File has not been saved yet. Enable auto-download and generate audio first.')
+            return
+          }
+
+          const folderPath = autoStatus.directoryName || 'folder'
+          const filename = autoRecord.filename
+          alert(`File saved as "${filename}" in "${folderPath}".\n\nNavigate to that folder manually to access the file.`)
         }
 
         return

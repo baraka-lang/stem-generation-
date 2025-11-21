@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const fsPromises = require('fs').promises
@@ -216,5 +216,155 @@ ipcMain.handle('show-item-in-folder', async (event, filePath) => {
   } catch (error) {
     console.error('[Shell] Failed to show item in folder:', error)
     return { success: false, error: error.message }
+  }
+})
+
+ipcMain.handle('show-save-directory-dialog', async (event) => {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender)
+
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory', 'createDirectory'],
+      title: 'Choose folder to save audio files',
+      buttonLabel: 'Select Folder'
+    })
+
+    if (result.canceled) {
+      return { canceled: true }
+    }
+
+    const dirPath = result.filePaths[0]
+    console.log(`[Dialog] Selected save directory: ${dirPath}`)
+
+    return {
+      canceled: false,
+      path: dirPath
+    }
+  } catch (error) {
+    console.error('[Dialog] Failed to show directory picker:', error)
+    return {
+      canceled: true,
+      error: error.message
+    }
+  }
+})
+
+ipcMain.handle('save-wav-file', async (event, { directory, filename, pcmData, sampleRate, numChannels }) => {
+  try {
+    if (!directory || !filename || !pcmData || !sampleRate) {
+      throw new Error('Missing required parameters')
+    }
+
+    const pcmBuffer = Buffer.from(pcmData)
+    const wavBuffer = wrapPCMToWAV(pcmBuffer, sampleRate, numChannels || 2)
+
+    const finalPath = path.join(directory, filename)
+    const tempPath = path.join(directory, `.part-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`)
+
+    console.log(`[SaveWav] Writing ${filename} (${(wavBuffer.length / 1024).toFixed(1)}KB)`)
+    console.log(`[SaveWav] Temp: ${tempPath}`)
+
+    fs.writeFileSync(tempPath, wavBuffer)
+
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    const stats = fs.statSync(tempPath)
+    if (stats.size !== wavBuffer.length) {
+      fs.unlinkSync(tempPath)
+      throw new Error(`File size mismatch: expected ${wavBuffer.length}, got ${stats.size}`)
+    }
+
+    const headerBuffer = Buffer.alloc(44)
+    const fd = fs.openSync(tempPath, 'r')
+    fs.readSync(fd, headerBuffer, 0, 44, 0)
+    fs.closeSync(fd)
+
+    const riff = headerBuffer.toString('ascii', 0, 4)
+    const wave = headerBuffer.toString('ascii', 8, 12)
+    const fmt = headerBuffer.toString('ascii', 12, 16)
+    const data = headerBuffer.toString('ascii', 36, 40)
+
+    if (riff !== 'RIFF' || wave !== 'WAVE' || fmt !== 'fmt ' || data !== 'data') {
+      fs.unlinkSync(tempPath)
+      throw new Error('WAV header validation failed')
+    }
+
+    console.log(`[SaveWav] Temp file verified, renaming to: ${finalPath}`)
+
+    if (fs.existsSync(finalPath)) {
+      fs.unlinkSync(finalPath)
+    }
+
+    fs.renameSync(tempPath, finalPath)
+
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    const finalStats = fs.statSync(finalPath)
+    console.log(`[SaveWav] ✓ File saved: ${finalPath} (${(finalStats.size / 1024).toFixed(1)}KB)`)
+
+    return {
+      success: true,
+      path: finalPath,
+      size: finalStats.size
+    }
+  } catch (error) {
+    console.error('[SaveWav] Failed to save file:', error)
+    return {
+      success: false,
+      error: error.message
+    }
+  }
+})
+
+ipcMain.on('start-native-drag-with-path', (event, { stemId, filePath, filename }) => {
+  try {
+    const startTime = Date.now()
+
+    if (!filePath || !fs.existsSync(filePath)) {
+      console.error('[Drag] File not found:', filePath)
+      event.returnValue = { success: false, error: 'File not found' }
+      return
+    }
+
+    const stats = fs.statSync(filePath)
+    console.log(`[Drag] Starting drag for ${stemId}: ${filename}`)
+    console.log(`[Drag] File: ${filePath} (${(stats.size / 1024).toFixed(1)}KB)`)
+
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) {
+      console.error('[Drag] Could not find window')
+      event.returnValue = { success: false, error: 'Window not found' }
+      return
+    }
+
+    let iconPath = path.join(__dirname, 'public/vite.svg')
+    if (!fs.existsSync(iconPath)) {
+      iconPath = path.join(__dirname, 'dist/vite.svg')
+    }
+    if (!fs.existsSync(iconPath)) {
+      console.warn('[Drag] Icon not found, using empty string')
+      iconPath = ''
+    }
+
+    win.webContents.startDrag({
+      file: filePath,
+      icon: iconPath
+    })
+
+    const elapsed = Date.now() - startTime
+    console.log(`[Drag] ✓ Native drag initiated (${elapsed}ms)`)
+
+    event.returnValue = {
+      success: true,
+      filePath,
+      method: 'native-with-path',
+      elapsed
+    }
+  } catch (error) {
+    console.error('[Drag] Failed:', error)
+    event.returnValue = {
+      success: false,
+      error: error.message
+    }
   }
 })
