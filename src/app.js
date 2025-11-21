@@ -2932,7 +2932,11 @@ async function separateCurrentStem(st) {
     }
 
     // Update waveform visualization
-    drawWaveform(st)
+    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+    if (canvas && aligned.loop) {
+      const cfg = stemConfigs[st]
+      drawWaveform(canvas, aligned.loop, `rgb(${getColorRGB(cfg.color)})`)
+    }
 
     // Update history indicators
     updateHistoryIndicator(st)
@@ -5493,6 +5497,7 @@ function setupEventListeners() {
         // Seamlessly swap in the new audio if playing, or start playback if stopped
         if (isPlaying) {
           restartStemNextBoundary(st)
+          updatePlaybackIndicators()
         } else {
           document.getElementById('playButton')?.click()
         }
