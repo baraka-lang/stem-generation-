@@ -1,332 +1,202 @@
-# DAW Drag and Drop Implementation Guide
+# DAW_DRAG_DROP_IMPLEMENTATION.md
 
-## Overview
+## Summary
 
-This implementation enables direct drag-and-drop of audio stems from the application into DAWs like Ableton Live, Logic Pro, and FL Studio. The solution uses native OS-level drag protocols instead of browser-based drag APIs.
+You’re using an **auto‑save to a user‑chosen folder** and then letting users **drag from your UI**. Dragging into **Explorer/Finder works**, but **Ableton/other DAWs reject the drop**. This document replaces the previous guide with fixes that restore reliability for Ableton, Logic Pro, and FL Studio while keeping the auto‑save workflow.
 
-## Key Changes
+**Key outcome:** DAWs only accept **OS‑level file drops** (real file paths or file promises). A browser‑origin drag, even if the file is already saved to disk, still doesn’t carry an OS file path. To make “drag from our UI → into DAW” dependable, you must originate the drag from a **native context** (Electron/Tauri/native) *or* ensure the user’s drag originates from **Explorer/Finder/DAW Browser**. The sections below make the auto‑save path robust, add native drag where possible, and document Ableton‑specific pitfalls that commonly break mid‑project.
 
-### 1. ElevenLabs Format Optimization
+---
 
-**File**: `supabase/functions/generate-techno-stem/index.ts`
+## 1) Root‑cause recap (why it worked briefly, then failed)
 
-- Implemented format fallback cascade: `pcm_44100` → `pcm_24000` → `pcm_22050` → `pcm_16000`
-- Automatically tries higher quality formats first
-- Falls back gracefully if plan doesn't support higher formats
-- Returns format metadata along with audio data
+1. **Browser drags don’t include OS file paths.** DAWs (Live/Logic/FL) expect drops that resolve to a **local file path** or a **file promise**. Browser data payloads (including Chromium’s `DownloadURL`) are generally ignored by DAWs. citeturn0search12  
+2. **If the file wasn’t fully materialized/closed before the drop, DAWs reject it.** Switching from a synchronous to an async write (or starting the drag before the write completes) produces intermittent “works once, then fails” behavior. Use **atomic writes** (temp file → rename) and close descriptors before exposing the path. citeturn2search3turn2search5turn2search16  
+3. **Windows “Run as Administrator” breaks drag‑in.** If Live runs elevated and your app/browser doesn’t (or vice‑versa), Windows blocks the drop. citeturn0search16turn0search0
 
-**Benefits**:
-- Uses highest quality format available for your ElevenLabs plan
-- Better DAW compatibility with 44.1kHz audio
-- No unnecessary resampling or format conversion
+---
 
-### 2. PCM Data Flow
+## 2) ElevenLabs format policy (formats we actually use)
 
-**New Files**:
-- `src/pcmToWav.js` - Lightweight PCM to WAV wrapper without re-encoding
-- `src/stemDataManager.js` - Manages raw PCM data alongside AudioBuffers
+Your PRD indicates a **24 kHz PCM → WAV** pipeline today. Keep using **exactly what the API returns**; do **not** up‑spec (e.g., to 48 kHz or float). Preferred ladder based on availability/tier:
 
-**Flow**:
+- **`pcm_44100`** (WAV PCM S16LE 44.1 kHz) — if your account/endpoint permits.  
+- **Fallbacks:** `pcm_24000` → `pcm_22050` → `pcm_16000` (all S16LE).  
+
+This matches ElevenLabs’ published PCM options and gating. If 44.1 kHz isn’t allowed on your plan, fall back automatically; **don’t resample** just for drag‑and‑drop. citeturn1search0turn1search6turn1search3  fileciteturn0file0
+
+> **Action:** keep sample rate and bit depth **unchanged** from the API; only **wrap PCM → WAV** at delivery time.
+
+---
+
+## 3) Auto‑save folder flow (browser) — make it robust
+
+This retains your auto‑download to a user‑chosen folder and ensures the file is ready for DAWs **before** users try to drop it.
+
+### 3.1 Save with atomic write semantics
+**Node/Electron main (recommended where available):**
+```ts
+import { promises as fs } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+export async function writeWavAtomic(destPath: string, bytes: Uint8Array) {
+  const dir = dirname(destPath);
+  const tmp = join(dir, `.part-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
+  await fs.writeFile(tmp, bytes);
+  // Optionally: on some setups you may fsync the temp file and parent dir for extra safety.
+  await fs.rename(tmp, destPath); // Atomic on same volume
+}
 ```
-ElevenLabs API (PCM)
-  → Edge Function (wraps to WAV for transport)
-  → Client (extracts PCM, stores separately)
-  → Drag Event (passes raw PCM to Electron)
-  → Native Module (wraps PCM to WAV during fulfillment)
-  → DAW receives proper WAV file
+Use **temp → rename** so DAWs never see a partially written file. citeturn2search3turn2search5
+
+### 3.2 “Ready to drop” gate in the UI
+Only show a “Ready” badge when:
+- `stat(size)` > 0 and **no `.part`** file remains,
+- last write finished <N> ms ago,
+- optional: re‑open/read first bytes (`RIFF`/`WAVE`) as a sanity check.
+
+### 3.3 Drag UX in browser (Chromium)
+Keep **drag‑to‑Explorer/Finder** via `DownloadURL` for convenience, but label it clearly as **“Folder only (not DAWs)”**:
+```js
+tile.draggable = true;
+tile.addEventListener('dragstart', (e) => {
+  e.dataTransfer.setData('DownloadURL', `audio/wav:${fileName}:${httpsUrl}`);
+  e.dataTransfer.effectAllowed = 'copy';
+});
 ```
+This is intentionally **not** used for DAW targets. citeturn0search12
 
-**Key Principle**: Keep original PCM data without re-encoding until the moment DAW requests the file.
-
-### 3. Native Drag Modules
-
-**macOS**: `native/macos/DragHelper.swift`
-- Implements `NSFilePromiseProvider` for file promise-based drag
-- Uses UTType `com.microsoft.waveform-audio` for WAV recognition
-- Fulfills promise by wrapping PCM to WAV when DAW drops
-
-**Windows**: `native/windows/DragHelper.cpp`
-- Implements `CFSTR_FILEDESCRIPTORW` + `CFSTR_FILECONTENTS` for virtual files
-- Creates IStream for on-demand WAV delivery
-- Handles multiple stems per drag operation
-
-**Note**: Native modules need to be compiled as Node.js addons. See Build Instructions below.
-
-### 4. Electron Bridge
-
-**File**: `electron-main.cjs`
-
-- Updated IPC handler to accept raw PCM data instead of WAV blobs
-- Wraps PCM to WAV in main process using Node.js Buffer operations
-- Attempts to load platform-specific native modules
-- Falls back to temp file + `webContents.startDrag()` if native modules unavailable
-
-**File**: `electron-preload.cjs`
-
-- Updated to pass PCM data, sample rate, and channel count
-- Simplified API: `startNativeDrag(stemId, pcmData, sampleRate, numChannels, filename)`
-
-### 5. Client Updates
-
-**File**: `src/app.js`
-
-**Changes**:
-- Imports PCM utilities and data manager
-- Extracts raw PCM from WAV received from edge function
-- Stores PCM separately for drag operations
-- Updated drag handler to use PCM data instead of pre-generated WAV blobs
-- Removed unnecessary pre-computation of WAV files
-
-**Benefits**:
-- Smaller memory footprint (stores compact PCM instead of large WAV)
-- Instant drag preparation (no encoding needed)
-- Preserves exact format from ElevenLabs
-
-### 6. Browser Auto-Download Bridge
-
-**Files**: `src/autoDownloadManager.js`, `src/app.js`
-
-- Adds a “DAW Drop Helper” panel that appears in Chromium browsers. Users can opt in once, pick a destination folder via the File System Access API, and the handle is persisted in IndexedDB.
-- Every time a new PCM payload is cached we queue an on-disk WAV write so the stem already exists locally before the user drags anything.
-- Drag tooltips and the per-stem chips now surface whether the stem is saved, pending, or failed, so users know if it is safe to hop into Finder/Explorer/Live.
-- The helper also warns non-Chromium users that the feature is unavailable and nudges them toward the Electron build for true native drag.
-- On Chrome/Edge versions that expose the File System Access drag-out API we now attach the saved `FileSystemFileHandle` to the drag payload so the OS hands Ableton/Logic the actual on-disk file instead of a transient blob.
-
-**Benefits**:
-- Browser users get a deterministic workflow (file is already on disk) instead of trying to “drop” an in-memory blob straight into Ableton.
-- Consent persists between sessions, so there is no need to reselect the folder on every load.
-- Avoids redundant writes by tracking the PCM timestamp per stem; once a stem is saved it is not rewritten until a new version exists.
-
-## Architecture
-
-### Browser Mode (Limited DAW Support)
+### 3.4 One‑click “Open folder” (Electron recommended)
+From the browser alone you can’t reliably “reveal in Finder/Explorer.” In Electron, use:
+```ts
+import { shell } from 'electron';
+shell.showItemInFolder(destPath);
 ```
-User Drags → PCM wrapped to WAV blob → Browser DataTransfer →
-  → Desktop folder (works) OR DAW (usually rejected)
+This gets the user into Explorer/Finder so the drag **originates from the OS**, which DAWs accept.
+
+### 3.5 DAW browser workflows users should prefer
+- **Ableton Live:** “Add Folder in Places,” then drag from Live’s Browser. citeturn0search1  
+- **Logic Pro:** Drag audio files from Finder into the **Tracks area** (works reliably from OS). citeturn0search6  
+- **FL Studio:** Add your folder under **Browser → Extra search folders**; drag from FL’s Browser. citeturn0search7turn0search15
+
+---
+
+## 4) Native drag (for direct UI → DAW)
+
+If you require “drag from our tile straight into DAW,” use a native context to originate the drag with OS‑level file types.
+
+### 4.1 macOS (file promises)
+- Use **`NSFilePromiseProvider`** with UTType for WAV (`com.microsoft.waveform-audio`).  
+- Fulfill the promise by **wrapping ElevenLabs PCM → WAV** and writing to the destination **after** the drop. citeturn0search2turn0search10
+
+**Sketch:**
+```swift
+let prov = NSFilePromiseProvider(fileType: "com.microsoft.waveform-audio", delegate: self)
+// prov.userInfo carries { bytes, sampleRate, channels, filename }
+func filePromiseProvider(_ provider: NSFilePromiseProvider,
+                         writePromiseTo dst: URL,
+                         completionHandler: @escaping (Error?) -> Void) {
+  // Wrap PCM→WAV with the API’s exact sample rate/bit depth; write to dst
+  completionHandler(nil)
+}
 ```
 
-### Electron Mode with Synchronous Fallback (Current - FIXED)
-```
-User Drags (dragstart event) →
-  → Synchronous IPC to main process →
-  → PCM wrapped to WAV (sync) →
-  → Temp file written (sync, ~5-20ms) →
-  → webContents.startDrag() called immediately →
-  → Native OS drag initiated →
-  → DAW accepts drop →
-  → File delivered to DAW
-```
+### 4.2 Windows (paths or virtual files)
+- **Existing files:** advertise **`CF_HDROP`** (absolute paths).  
+- **Virtual files:** advertise **`CFSTR_FILEDESCRIPTORW` + `CFSTR_FILECONTENTS`**; stream WAV bytes on demand (one stream per item). citeturn0search3
 
-**Key Fix**: Changed from async IPC (handle/invoke) to sync IPC (on/sendSync) to work within the dragstart event timing window. The entire operation completes in < 50ms, allowing the OS drag gesture to proceed naturally.
+### 4.3 Electron bridge
+- Prewritten files: `webContents.startDrag({ file, icon })` from **main** in response to renderer’s dragstart. citeturn0search5  
+- Virtual files/file promises: bridge to native (macOS/Windows) as in 4.1/4.2.
 
-### Electron Mode with Native Modules (Ideal)
-```
-macOS:
-  User Drags → Native module → NSFilePromiseProvider →
-    → DAW drops → Promise fulfilled → PCM wrapped to WAV → Written to destination
+---
 
-Windows:
-  User Drags → Native module → Virtual file drag (IDataObject) →
-    → DAW drops → IStream provides WAV data → DAW reads bytes
-```
+## 5) Ableton‑specific fixes (these often cause regressions)
 
-## Testing
+1) **Windows elevation mismatch** → Disable “Run as administrator” for Live, or run both at the same level. citeturn0search16turn0search0  
+2) **File not fully written** → Use atomic write (temp → rename). Don’t start drag until the rename has completed. citeturn2search3  
+3) **Wrong/odd headers** → Ensure WAV header is valid (`RIFF/WAVE/fmt /data`), PCM S16LE, channel count matches source. Live supports WAV/AIFF/FLAC/OGG, plus MP3/M4A imports. citeturn0search1  
+4) **Massive paths or exotic characters** → Keep filenames ASCII‑safe and paths short (Win long‑path quirks still exist in some setups).  
+5) **Cloud‑sync lag** → If saving into a sync folder, wait for the local file to materialize before the user drags.  
+6) **Security prompts/locks** → Ensure antivirus or indexing isn’t locking the file during the drop; write then rename to minimize lock time.
 
-### Format Testing
+---
 
-1. Check console logs during generation to see which format was used
-2. Look for: `Successfully using format: pcm_44100 (44100Hz)`
-3. Verify fallback occurs if higher formats unavailable
+## 6) ElevenLabs → WAV wrapping (no resample, no re‑encode)
 
-### Drag Testing (Browser)
+Wrap **exact PCM** bytes into a WAV container at the **moment of fulfillment** (native drag) or when saving to disk (auto‑save).
 
-1. Open browser version (limited DAW support expected)
-2. Generate a stem
-3. Drag to desktop folder (should work in Chromium)
-4. Drag to DAW (likely won't work - expected limitation)
-
-### Drag Testing (Electron Synchronous Mode - FIXED)
-
-1. Run `npm run electron:dev`
-2. Generate a stem
-3. Drag to Ableton/Logic/FL Studio
-4. Check console for: `✓ Electron native drag started for kick using temp-file-sync (15ms)`
-5. Verify temp file is created in OS temp directory
-6. Verify DAW accepts the file
-
-**Expected Result**: Should work reliably on both macOS and Windows because:
-- Synchronous IPC completes within dragstart event timing window
-- Temp file is written and ready before drag gesture proceeds
-- Native OS drag protocol is used (not browser APIs)
-- Both webContents.startDrag AND HTML5 DataTransfer are set (hybrid approach)
-
-**Common Issues Fixed**:
-- macOS: Should work in most cases
-- Windows: May fail if elevation mismatch (see Troubleshooting)
-
-### Drag Testing (Electron Native - Once Built)
-
-1. Build native modules (see below)
-2. Run Electron app
-3. Drag to DAW
-4. Check console for: `✓ Loaded macOS native drag helper` or `✓ Loaded Windows native drag helper`
-5. Verify drag works reliably
-
-## Build Instructions
-
-### Building Native Modules
-
-**Prerequisites**:
-- Node.js with node-gyp
-- macOS: Xcode Command Line Tools
-- Windows: Visual Studio Build Tools
-
-**macOS**:
-```bash
-cd native/macos
-# Create binding.gyp configuration
-# Compile Swift to node addon
-node-gyp configure build
-# Output: build/Release/drag-helper.node
+```ts
+export function pcm16leToWav(pcm: ArrayBuffer, sampleRate: number, channels = 2): ArrayBuffer {
+  const pcmBytes = new Uint8Array(pcm);
+  const blockAlign = channels * 2;
+  const byteRate  = sampleRate * blockAlign;
+  const dataSize  = pcmBytes.byteLength;
+  const buf = new ArrayBuffer(44 + dataSize);
+  const v = new DataView(buf);
+  w(v,0,'RIFF'); v.setUint32(4, 36 + dataSize, true);
+  w(v,8,'WAVE'); w(v,12,'fmt '); v.setUint32(16,16,true);
+  v.setUint16(20,1,true); v.setUint16(22,channels,true);
+  v.setUint32(24,sampleRate,true); v.setUint32(28,byteRate,true);
+  v.setUint16(32,blockAlign,true); v.setUint16(34,16,true);
+  w(v,36,'data'); v.setUint32(40,dataSize,true);
+  new Uint8Array(buf,44).set(pcmBytes);
+  return buf; function w(dv: DataView, o: number, s: string){for(let i=0;i<s.length;i++) dv.setUint8(o+i,s.charCodeAt(i));}
+}
 ```
 
-**Windows**:
-```bash
-cd native/windows
-# Create binding.gyp configuration
-# Compile C++ to node addon
-node-gyp configure build
-# Output: build/Release/drag-helper.node
+**Format ladder used:** `pcm_44100` → `pcm_24000` → `pcm_22050` → `pcm_16000` (PCM S16LE), matching official docs/tier gating. citeturn1search6turn1search3
+
+---
+
+## 7) Tests to keep it working
+
+### Functional
+- **Browser auto‑save → Explorer/Finder drag** works on Chromium; label clearly as “Folders only.” citeturn0search12
+- **Explorer/Finder → DAW**: Ableton/Logic/FL accept drop; clip appears and plays. citeturn0search1turn0search6turn0search7
+- **Electron native drag (if enabled)**: drag tile → DAW track works on both macOS and Windows. citeturn0search5turn0search2turn0search3
+
+### Reliability
+- **Atomic write** verified (no `.part` files; rename completed before drag). citeturn2search3
+- **Elevation parity** on Windows verified. citeturn0search16
+- **WAV header check** passes for each saved file (quick validator).
+
+---
+
+## 8) Quick WAV header validator (optional guardrail)
+```ts
+export function isLikelyWav(buf: ArrayBuffer) {
+  const v = new DataView(buf);
+  const sig = (o: number, s: number) => String.fromCharCode(...Array.from({length:s},(_,i)=>v.getUint8(o+i)));
+  try {
+    return sig(0,4)==='RIFF' && sig(8,4)==='WAVE' && sig(12,4)==='fmt ' && sig(36,4)==='data';
+  } catch { return false; }
+}
 ```
 
-**Note**: Full native module build system not yet implemented. Manual compilation required.
+---
 
-### Building Electron App
+## 9) Rollout checklist
 
-```bash
-# Development
-npm run electron:dev
+- [ ] **ElevenLabs format ladder** in place; no resampling; PCM → WAV wrap only. citeturn1search0  
+- [ ] **Atomic writes** (temp → rename); “Ready” badge only after rename. citeturn2search3  
+- [ ] **Ableton elevation** parity documented and enforced in troubleshooting. citeturn0search16  
+- [ ] **Browser labels** clarify: “Drag to folders only.”  
+- [ ] **Explorer/Finder and DAW browser** paths documented (Ableton Places / FL extra folders). citeturn0search1turn0search7  
+- [ ] **Electron/native drag** path implemented or feature‑flagged.
+- [ ] **WAV validator** on save; channel count matches source; filenames ASCII‑safe.
 
-# Production build
-npm run electron:build        # All platforms
-npm run electron:build:mac    # macOS only
-npm run electron:build:win    # Windows only
-npm run electron:build:linux  # Linux only
-```
-
-## Troubleshooting
-
-### Drag Not Working - Check Console Logs
-
-Look for these key indicators:
-
-**Success Pattern**:
-```
-[Drag] Electron mode: calling synchronous IPC for kick
-✓ Electron native drag started for kick using temp-file-sync (15ms)
-[Drag] Temp file: /tmp/343labs-stems/Techno_Kick_130_Am_4bars.wav
-```
-
-**Timing Issue (OLD - FIXED)**:
-```
-[Drag] Using fallback: temp file + webContents.startDrag
-[Drag] Wrote temp file: ... (async)
-```
-This was the old async pattern that didn't work. Should not see this anymore.
-
-### Windows: Drag Works to Folders but Not DAWs
-
-**Cause**: Elevation level mismatch. If Ableton runs as Administrator and your app doesn't (or vice versa), Windows blocks the drag for security.
-
-**Fix**:
-1. Check if Ableton is running as Administrator (Task Manager → Details → Elevated column)
-2. Match elevation levels:
-   - If Ableton elevated: Run app as Administrator
-   - If Ableton normal: Ensure app runs normally (don't elevate)
-
-### Drag Gesture Cancelled Immediately
-
-**Cause**: e.preventDefault() was called before setting up drag data (OLD BUG - FIXED)
-
-**Fix**: The code no longer calls preventDefault() in Electron mode. The drag gesture flows naturally while synchronous IPC sets up the temp file.
-
-### macOS: Drag Not Accepted by DAW
-
-**Possible Causes**:
-1. Native module not loaded (check console for load errors)
-2. UTType not recognized (ensure `com.microsoft.waveform-audio` is used)
-3. File promise delegate not fulfilling quickly enough
-
-**Debug**:
-- Check console logs for native module load status
-- Verify temp file fallback is working first
-- Test with different DAWs to isolate issue
-
-### Audio Plays at Wrong Speed in DAW
-
-**Cause**: Sample rate mismatch or DAW attempting to time-stretch.
-
-**Fix**:
-- Verify sample rate in filename matches actual PCM data
-- Check edge function logs for format used
-- Ensure no resampling happening in client code
-
-### Format Fallback Not Working
-
-**Debug**:
-1. Check edge function logs: `Format pcm_44100 not available, trying fallback...`
-2. Verify API key has access to higher tier formats
-3. Test directly with ElevenLabs API to confirm format support
-
-## Current Limitations
-
-1. **Native Modules**: Swift and C++ code provided but not yet compiled to Node.js addons
-2. **Browser Mode**: DAW drag limited by browser API constraints (expected)
-3. **Multi-Stem Drag**: Single stem only in current implementation (architecture supports multiple)
-4. **Linux**: Not tested, may require additional platform-specific implementation
-
-## Next Steps
-
-### To Enable Full Native Drag
-
-1. Set up node-gyp build configuration (binding.gyp) for both platforms
-2. Create bridge between Swift/C++ and Node.js (N-API or node-addon-api)
-3. Compile native modules as part of Electron build process
-4. Test drag operations with native modules loaded
-5. Implement multi-stem drag support
-
-### To Support Additional DAWs
-
-1. Test with Bitwig, Cubase, Pro Tools, etc.
-2. Verify UTType/MIME type compatibility
-3. Add DAW-specific workarounds if needed
-
-## Technical Reference
-
-### WAV Format
-
-All WAV files use:
-- Format: PCM S16LE (16-bit signed little-endian)
-- Channels: 2 (stereo) for music stems
-- Sample Rate: 44100, 24000, 22050, or 16000 Hz (from ElevenLabs)
-- Header: 44 bytes (standard RIFF/WAVE)
-- Data: Interleaved channel samples
-
-### File Naming
-
-Format: `Techno_{StemName}_{BPM}_{Key}_{Bars}bars.wav`
-
-Example: `Techno_Kick_130_Am_4bars.wav`
-
-### Memory Management
-
-- PCM cache auto-clears on new generation
-- Blob URLs cleaned up after drag completes
-- Temp files deleted 10 seconds after drag (Electron fallback)
+---
 
 ## References
 
-- [ElevenLabs Music API Docs](https://elevenlabs.io/docs)
-- [NSFilePromiseProvider Apple Docs](https://developer.apple.com/documentation/appkit/nsfilepromiseprovider)
-- [Windows Virtual File Dragging](https://docs.microsoft.com/en-us/windows/win32/shell/datascenarios)
-- [Electron webContents.startDrag](https://www.electronjs.org/docs/latest/api/web-contents#contentsstartdragitem)
+- Ableton Live: **Running as Administrator** blocks drag‑and‑drop; **Supported audio file formats** list. citeturn0search16turn0search0turn0search1  
+- Logic Pro: **Create tracks using drag and drop** (Tracks area). citeturn0search6  
+- FL Studio: **File/Browser settings** and **adding folders**. citeturn0search7turn0search15  
+- Browser DnD: **Drag data store / DownloadURL** (Chromium‑only; folder drops). citeturn0search12  
+- macOS native drag: **NSFilePromiseProvider** pattern. citeturn0search2turn0search10  
+- Windows native drag: **Shell data scenarios** (CF_HDROP, FILEDESCRIPTOR/FILECONTENTS). citeturn0search3  
+- Electron: **webContents.startDrag** (native file drags). citeturn0search5  
+- ElevenLabs PCM options & gating; use **PCM S16LE** at **44.1/24/22.05/16 kHz** only. citeturn1search0turn1search6turn1search3  
+- Product baseline: **Your PRD** (24 kHz PCM → WAV). fileciteturn0file0
