@@ -262,19 +262,17 @@ Return only the JSON data with no additional commentary.`;
       response_schema: {
         type: "object",
         properties: {
-          detected_bpm: { type: "number", minimum: 40, maximum: 300 },
-          confidence: { type: "number", minimum: 0, maximum: 1 },
+          detected_bpm: { type: "number" },
+          confidence: { type: "number" },
           downbeat_frames: { type: "array", items: { type: "integer" } },
           beat_frames: { type: "array", items: { type: "integer" } },
           transient_frames: { type: "array", items: { type: "integer" } },
           suggested_start_frame: { type: "integer" },
           seam_frame: { type: "integer" }
         },
-        required: ["detected_bpm", "suggested_start_frame"],
-        additionalProperties: false
+        required: ["detected_bpm", "suggested_start_frame"]
       }
-    },
-    thinking_level: "high"
+    }
   };
 
   const controller = new AbortController();
@@ -282,7 +280,7 @@ Return only the JSON data with no additional commentary.`;
 
   try {
     const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent",
       {
         method: "POST",
         headers: {
