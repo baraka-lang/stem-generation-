@@ -161,3 +161,53 @@ export function generateWavFilename(stemName, tempo, key, sampleRate) {
 
   return `${sanitizedStem}_${tempo}bpm_${sanitizedKey}_${rateLabel}.wav`;
 }
+
+/**
+ * Validate WAV file header structure
+ * Quick sanity check that saved files have proper RIFF/WAVE/fmt/data structure
+ *
+ * @param {ArrayBuffer} arrayBuffer - WAV file buffer (at least first 44 bytes)
+ * @returns {boolean} True if header appears valid
+ */
+export function isValidWavHeader(arrayBuffer) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 44) {
+    return false;
+  }
+
+  try {
+    const view = new DataView(arrayBuffer);
+
+    const riff = String.fromCharCode(
+      view.getUint8(0),
+      view.getUint8(1),
+      view.getUint8(2),
+      view.getUint8(3)
+    );
+
+    const wave = String.fromCharCode(
+      view.getUint8(8),
+      view.getUint8(9),
+      view.getUint8(10),
+      view.getUint8(11)
+    );
+
+    const fmt = String.fromCharCode(
+      view.getUint8(12),
+      view.getUint8(13),
+      view.getUint8(14),
+      view.getUint8(15)
+    );
+
+    const data = String.fromCharCode(
+      view.getUint8(36),
+      view.getUint8(37),
+      view.getUint8(38),
+      view.getUint8(39)
+    );
+
+    return riff === 'RIFF' && wave === 'WAVE' && fmt === 'fmt ' && data === 'data';
+  } catch (err) {
+    console.error('[WAV Validator] Error checking header:', err);
+    return false;
+  }
+}

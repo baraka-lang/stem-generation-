@@ -20,5 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   isElectron: () => ipcRenderer.invoke('is-electron'),
 
-  getPlatform: () => ipcRenderer.invoke('get-platform')
+  getPlatform: () => ipcRenderer.invoke('get-platform'),
+
+  showItemInFolder: (filePath) => ipcRenderer.invoke('show-item-in-folder', filePath)
 })

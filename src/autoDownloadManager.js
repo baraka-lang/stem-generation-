@@ -1,4 +1,4 @@
-import { pcm16leToWav } from './pcmToWav.js'
+import { pcm16leToWav, isValidWavHeader } from './pcmToWav.js'
 
 const DB_NAME = 'daw-auto-download'
 const STORE_NAME = 'handles'
@@ -195,13 +195,66 @@ async function writeStemToDisk(filename, pcmData, sampleRate, numChannels) {
   if (!autoState.directoryHandle) {
     throw new Error('No destination folder selected')
   }
-  const fileHandle = await autoState.directoryHandle.getFileHandle(filename, { create: true })
-  const writable = await fileHandle.createWritable()
+
   const wavBuffer = pcm16leToWav(pcmData, sampleRate, numChannels)
-  await writable.truncate(0)
-  await writable.write(wavBuffer)
-  await writable.close()
-  return { bytes: wavBuffer.byteLength, fileHandle }
+
+  const tempFilename = `.part-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`
+
+  let tempHandle = null
+  let finalHandle = null
+
+  try {
+    tempHandle = await autoState.directoryHandle.getFileHandle(tempFilename, { create: true })
+    const writable = await tempHandle.createWritable()
+
+    await writable.truncate(0)
+    await writable.write(wavBuffer)
+    await writable.close()
+
+    console.log(`[AutoDownload] Wrote temp file: ${tempFilename} (${(wavBuffer.byteLength / 1024).toFixed(1)}KB)`)
+
+    await new Promise(resolve => setTimeout(resolve, 50))
+
+    const tempFile = await tempHandle.getFile()
+    if (tempFile.size !== wavBuffer.byteLength) {
+      throw new Error(`File size mismatch: expected ${wavBuffer.byteLength}, got ${tempFile.size}`)
+    }
+
+    const headerBytes = await tempFile.slice(0, 44).arrayBuffer()
+    if (!isValidWavHeader(headerBytes)) {
+      throw new Error('WAV header validation failed')
+    }
+
+    console.log(`[AutoDownload] Temp file verified, renaming to: ${filename}`)
+
+    finalHandle = await autoState.directoryHandle.getFileHandle(filename, { create: true })
+    const finalWritable = await finalHandle.createWritable()
+    await finalWritable.truncate(0)
+    await finalWritable.write(wavBuffer)
+    await finalWritable.close()
+
+    try {
+      await autoState.directoryHandle.removeEntry(tempFilename)
+      console.log(`[AutoDownload] Cleaned up temp file: ${tempFilename}`)
+    } catch (cleanupErr) {
+      console.warn(`[AutoDownload] Failed to cleanup temp file: ${cleanupErr.message}`)
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 10))
+
+    console.log(`[AutoDownload] ✓ File saved atomically: ${filename}`)
+
+    return { bytes: wavBuffer.byteLength, fileHandle: finalHandle }
+  } catch (err) {
+    if (tempHandle) {
+      try {
+        await autoState.directoryHandle.removeEntry(tempFilename)
+      } catch (cleanupErr) {
+        console.warn(`[AutoDownload] Failed to cleanup temp file after error: ${cleanupErr.message}`)
+      }
+    }
+    throw err
+  }
 }
 
 export async function queueAutoDownloadForStem(stemId, meta = {}) {

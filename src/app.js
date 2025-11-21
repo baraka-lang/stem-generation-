@@ -4251,7 +4251,7 @@ function createBuilderStemCard(st, cfg){
   // Define a drag button for desktop browsers (Chromium only).  This button appears above
   // the Create button and allows users to drag the active sample directly to their DAW or desktop.
   // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to DAW or Desktop (Chrome/Edge only)">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm relative w-full">\n              <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Drag & Drop\n              <span class="absolute right-0 text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n            </span>\n          </button>\n        </div>\n      `;
+  const dragButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <div class="flex gap-2">\n            <button class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                    data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to Folder (for DAWs, drag from Explorer/Finder)">\n              <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm relative w-full">\n                <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n                Drag & Drop\n                <span class="absolute right-0 text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n              </span>\n            </button>\n            <button class="px-3 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/80 to-pink-500/80 hover:from-purple-500 hover:to-pink-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] hidden"\n                    data-action="show-in-folder" data-stem="${st}" title="Reveal file in Explorer/Finder">\n              <i data-lucide="folder-open" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n            </button>\n          </div>\n        </div>\n      `;
 
   // Clean button: allows users to separate stems (remove unwanted instruments) from the current sample
   const cleanButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative" data-clean-container="${st}">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] disabled:opacity-40 disabled:cursor-not-allowed"\n                  data-action="clean-stem" data-stem="${st}" title="Remove unwanted instruments from this sample">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="sparkles" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              <span data-clean-label="${st}">Clean</span>\n            </span>\n          </button>\n        </div>\n      `;
@@ -4655,17 +4655,30 @@ function updateDragButtonState(st) {
     // Calculate approximate WAV file size (16-bit stereo) from PCM data
     const estimatedSize = pcmCache ? (pcmCache.size + 44) : (buf.length * buf.numberOfChannels * 2 + 44)
     const sizeKB = (estimatedSize / 1024).toFixed(1)
-    let tooltip = `Drag & Drop: ${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
-    if (isAutoDownloadSupported() && autoStatus.enabled) {
-      if (autoRecord?.status === 'pending') {
-        tooltip += `\nSaving to ${autoStatus.directoryName || 'selected folder'}…`
-      } else if (autoRecord?.status === 'saved') {
-        tooltip += `\nAuto-saved in ${autoStatus.directoryName || 'your folder'}`
-        if (fileHandleReady) {
-          tooltip += `\nDrag handoff will use the on-disk file`
+    const isElectron = typeof window.electronAPI !== 'undefined'
+
+    let tooltip = `${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
+
+    if (isElectron) {
+      if (autoStatus.enabled && autoRecord?.status === 'saved') {
+        tooltip += `\n\n✓ Saved in ${autoStatus.directoryName}`
+        tooltip += `\n\nFor DAWs: Click 📁 to reveal, then drag from Explorer/Finder`
+      } else if (autoStatus.enabled && autoRecord?.status === 'pending') {
+        tooltip += `\n\nSaving to ${autoStatus.directoryName}...`
+      } else {
+        tooltip += `\n\nEnable auto-download to save files for DAW use`
+      }
+    } else {
+      tooltip += `\n\nDrag to folders only (not DAWs)`
+      if (isAutoDownloadSupported() && autoStatus.enabled) {
+        if (autoRecord?.status === 'pending') {
+          tooltip += `\nSaving to ${autoStatus.directoryName}...`
+        } else if (autoRecord?.status === 'saved') {
+          tooltip += `\n✓ Saved in ${autoStatus.directoryName}`
         }
       }
     }
+
     dragBtn.title = tooltip
   }
 
@@ -4678,6 +4691,19 @@ function updateDragButtonState(st) {
     dragBtn.style.opacity = '0.5'
   } else if (container) {
     dragBtn.style.opacity = '1'
+  }
+
+  const showInFolderBtn = document.querySelector(`[data-action="show-in-folder"][data-stem="${st}"]`)
+  if (showInFolderBtn) {
+    const isElectron = typeof window.electronAPI !== 'undefined'
+    const fileSaved = autoRecord?.status === 'saved'
+
+    if (isElectron && fileSaved && autoStatus.enabled) {
+      showInFolderBtn.classList.remove('hidden')
+      showInFolderBtn.title = `Reveal ${autoRecord.filename} in Explorer/Finder`
+    } else {
+      showInFolderBtn.classList.add('hidden')
+    }
   }
 
   updateAutoDownloadChip(st)
@@ -5288,46 +5314,50 @@ function setupEventListeners() {
 
       // Check if running in Electron environment
       const isElectron = typeof window.electronAPI !== 'undefined'
+      const autoStatus = getAutoDownloadStatus()
+      const autoRecord = getStemAutoDownloadRecord(st)
 
       if (isElectron) {
-        // Use Electron native drag with raw PCM data
-        // IMPORTANT: Do NOT call e.preventDefault() - let the drag gesture flow naturally
-        // The synchronous IPC call will set up the native drag within the timing window
+        console.log(`[Drag] Electron mode detected`)
 
-        console.log(`[Drag] Electron mode: calling synchronous IPC for ${st}`)
+        if (autoStatus.enabled && autoRecord?.status === 'saved') {
+          e.preventDefault()
+          if (btn) btn.style.opacity = '0.5'
 
-        try {
-          // Call Electron API synchronously - returns immediately
-          const result = window.electronAPI.startNativeDrag(st, pcmData, sampleRate, numChannels, filename)
+          const message = `✓ File saved: ${autoRecord.filename}\n\nFor reliable DAW drag-and-drop:\n1. Click the 📁 button to reveal the file\n2. Drag from Explorer/Finder into your DAW\n\nDirect drag from this app doesn't work reliably with DAWs.`
 
-          if (result.success) {
-            console.log(`✓ Electron native drag started for ${st} using ${result.method} (${result.elapsed}ms)`)
-            console.log(`[Drag] Temp file: ${result.filePath}`)
+          console.warn('[Drag] Electron direct drag disabled - use Show in Folder instead')
+          alert(message)
 
-            // Prevent HTML5 drag from interfering with native Electron drag
-            // The webContents.startDrag() call has already initiated the native OS drag
-            // We must prevent the default HTML5 drag behavior to avoid conflicts
-            e.preventDefault()
+          if (btn) btn.style.opacity = '1'
+          return
+        } else if (autoStatus.enabled && autoRecord?.status === 'pending') {
+          e.preventDefault()
+          if (btn) btn.style.opacity = '0.5'
 
-            if (btn) btn.style.opacity = '0.7'
-          } else {
-            console.error('[Drag] Electron drag failed:', result.error)
-            // Don't prevent default - let browser drag work as fallback
-          }
-        } catch (err) {
-          console.error('[Drag] Electron drag error:', err)
-          // Don't prevent default - let browser drag work as fallback
+          alert('File is still being saved. Please wait a moment and try again.')
+
+          if (btn) btn.style.opacity = '1'
+          return
+        } else {
+          e.preventDefault()
+          if (btn) btn.style.opacity = '0.5'
+
+          const message = 'Auto-download is not enabled.\n\nTo use drag-and-drop with DAWs:\n1. Enable auto-download (menu button)\n2. Choose a folder\n3. Generate audio\n4. Use the 📁 button to reveal files\n5. Drag from Explorer/Finder into your DAW'
+
+          console.warn('[Drag] Auto-download not enabled')
+          alert(message)
+
+          if (btn) btn.style.opacity = '1'
+          return
         }
-
-        // Let the drag gesture continue naturally
-        return
       }
 
-      // Fallback to browser-based drag (limited DAW compatibility)
-      // WARNING: This works for drag-to-desktop in Chromium, but most DAWs won't accept it
-      // For proper DAW drag support, use the Electron desktop app
-      console.warn(`[Drag] Using browser fallback mode - DAW compatibility limited`)
-      console.warn(`[Drag] For Ableton/Logic/FL support, use the Electron desktop app`)
+      // Browser-based drag for folders only
+      // This works for drag-to-folder in Chromium, but DAWs won't accept it
+      // DAWs only accept OS-level file drags (from Explorer/Finder)
+      console.log(`[Drag] Browser mode: drag to folders only`)
+      console.log(`[Drag] For DAW drops: enable auto-download and drag from Explorer/Finder`)
 
       // Wrap PCM to WAV for browser drag
       const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
@@ -5498,6 +5528,54 @@ function setupEventListeners() {
       }
       if (action === 'download-stem' && st) { downloadStem(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
+      if (action === 'show-in-folder' && st) {
+        const isElectron = typeof window.electronAPI !== 'undefined'
+        const autoStatus = getAutoDownloadStatus()
+        const autoRecord = getStemAutoDownloadRecord(st)
+
+        if (!autoStatus.enabled || !autoRecord || autoRecord.status !== 'saved') {
+          console.warn('[ShowInFolder] File not saved or auto-download disabled')
+          alert('File has not been saved yet. Enable auto-download and generate a sample first.')
+          return
+        }
+
+        const folderPath = autoStatus.directoryName || 'folder'
+        const filename = autoRecord.filename
+
+        if (isElectron) {
+          console.log(`[ShowInFolder] Electron: Attempting to reveal ${filename}`)
+
+          if (autoRecord.fileHandle && typeof autoRecord.fileHandle.getFile === 'function') {
+            autoRecord.fileHandle.getFile()
+              .then(file => {
+                if (file.path) {
+                  console.log(`[ShowInFolder] File path from handle: ${file.path}`)
+                  return window.electronAPI.showItemInFolder(file.path)
+                } else {
+                  throw new Error('File handle does not have path property')
+                }
+              })
+              .then(result => {
+                if (result.success) {
+                  console.log(`[ShowInFolder] Successfully revealed: ${result.path}`)
+                } else {
+                  console.error('[ShowInFolder] Failed:', result.error)
+                  alert(`Could not reveal file: ${result.error}`)
+                }
+              })
+              .catch(err => {
+                console.error('[ShowInFolder] Error:', err)
+                alert(`Error: ${err.message}\n\nThe file is saved in "${folderPath}". Please navigate there manually.`)
+              })
+          } else {
+            alert(`File saved as "${filename}" in "${folderPath}".\n\nPlease navigate to that folder manually.`)
+          }
+        } else {
+          alert(`File saved as "${filename}" in "${folderPath}".\n\nThis feature requires the Electron desktop app to reveal files. For now, navigate to your chosen folder manually.`)
+        }
+
+        return
+      }
       // Open the takes browser via the "open" button
       if (action === 'open-takes' && st) { toggleHistoryDrawer(st, null); return }
       // Cycle to previous take; wraps around

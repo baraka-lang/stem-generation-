@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const fsPromises = require('fs').promises
@@ -194,5 +194,27 @@ ipcMain.handle('get-platform', () => {
     platform: process.platform,
     arch: process.arch,
     version: process.version
+  }
+})
+
+ipcMain.handle('show-item-in-folder', async (event, filePath) => {
+  try {
+    if (!filePath || typeof filePath !== 'string') {
+      throw new Error('Invalid file path')
+    }
+
+    const absolutePath = path.isAbsolute(filePath) ? filePath : path.resolve(filePath)
+
+    if (!fs.existsSync(absolutePath)) {
+      throw new Error(`File not found: ${absolutePath}`)
+    }
+
+    shell.showItemInFolder(absolutePath)
+    console.log(`[Shell] Revealed in folder: ${absolutePath}`)
+
+    return { success: true, path: absolutePath }
+  } catch (error) {
+    console.error('[Shell] Failed to show item in folder:', error)
+    return { success: false, error: error.message }
   }
 })
