@@ -5489,13 +5489,12 @@ function setupEventListeners() {
       // Handle clean button: directly separate stem (no modal)
       if (action === 'clean-stem' && st) {
         console.log(`[Clean] Clean button clicked for stem: ${st}`)
+        const wasPlaying = stemPlaying[st]
+        if (wasPlaying) stopStem(st)
         await separateCurrentStem(st)
-        // Auto-play the separated stem
-        setTimeout(() => {
-          if (stemLoop[st]) {
-            togglePlayback(st)
-          }
-        }, 500)
+        if (stemLoop[st]) {
+          togglePlayback(st)
+        }
         return
       }
       if (action === 'download-stem' && st) { downloadStem(st); return }
