@@ -9,6 +9,7 @@ import { initAutoDownloadManager, isAutoDownloadSupported, isAutoDownloadEnabled
 import { isElectronMode, isElectronSaveEnabled, getElectronSaveDirectory, chooseElectronSaveDirectory, disableElectronSave, saveWavFileElectron, getSavedFilePath, getSavedFileRecord, subscribeElectronFileEvents, getElectronFileStatus } from './electronFileManager.js'
 import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Utilities/barUtils.js'
 import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper.js'
+import { loopFixConfig } from './Config/environment.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -2611,6 +2612,128 @@ function hideCleanStemModal() {
 }
 
 /**
+ * Apply loop fix to separated audio to ensure correct beat alignment and arrangement
+ * Uses Gemini AI when available, falls back to heuristic methods
+ *
+ * @param {AudioBuffer} audioBuffer The separated audio buffer to fix
+ * @param {string} st The stem identifier
+ * @param {number} targetBpm The target BPM for the loop
+ * @param {number} bars The number of bars for the loop
+ * @returns {Promise<{fixed: AudioBuffer, method: string, diagnostics: object}>}
+ */
+async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars) {
+  console.log(`[LoopFix] Starting loop fix for separated ${st} - BPM: ${targetBpm}, Bars: ${bars}`)
+
+  // Check if Gemini loop fix is enabled
+  const useGemini = loopFixConfig?.isGeminiEnabled?.() || false
+  console.log(`[LoopFix] Gemini enabled: ${useGemini}`)
+
+  let loopFixMethod = 'heuristic'
+  let diagnostics = {}
+
+  if (useGemini) {
+    try {
+      // Convert AudioBuffer to WAV for Gemini API
+      console.log('[LoopFix] Converting audio to WAV for Gemini analysis...')
+      const wavBuffer = audioBufferToWav(audioBuffer, audioBuffer.sampleRate)
+      const audioBase64 = arrayBufferToBase64(wavBuffer)
+
+      console.log(`[LoopFix] Calling loop-fix-gemini function (${(wavBuffer.byteLength / 1024).toFixed(1)}KB)`)
+
+      // Call the Gemini loop fix edge function
+      const response = await supabase.functions.invoke('loop-fix-gemini', {
+        body: {
+          audio_base64: audioBase64,
+          target_bpm: targetBpm,
+          bars: bars,
+          use_gemini: true
+        }
+      })
+
+      if (response.error) {
+        console.warn('[LoopFix] Gemini API error, falling back to heuristic:', response.error)
+        throw new Error('Gemini API failed')
+      }
+
+      if (response.data && response.data.fixed_audio_base64) {
+        console.log('[LoopFix] Gemini loop fix successful, decoding fixed audio...')
+
+        // Decode the fixed audio
+        const fixedAudioData = base64ToArrayBuffer(response.data.fixed_audio_base64)
+        const fixedBuffer = await audioContext.decodeAudioData(fixedAudioData)
+
+        // Parse diagnostics from response headers
+        const diagnosticsHeader = response.headers?.get?.('X-LoopFix-Diagnostics')
+        if (diagnosticsHeader) {
+          try {
+            diagnostics = JSON.parse(diagnosticsHeader)
+            console.log('[LoopFix] Gemini diagnostics:', diagnostics)
+          } catch (e) {
+            console.warn('[LoopFix] Failed to parse diagnostics:', e)
+          }
+        }
+
+        loopFixMethod = 'gemini'
+        console.log(`[LoopFix] Gemini loop fix complete - detected BPM: ${diagnostics.detected_bpm?.toFixed(2) || 'N/A'}`)
+
+        return { fixed: fixedBuffer, method: loopFixMethod, diagnostics }
+      }
+    } catch (geminiError) {
+      console.warn('[LoopFix] Gemini loop fix failed, using heuristic fallback:', geminiError.message)
+    }
+  }
+
+  // Heuristic fallback: rebuild the loop using existing alignment logic
+  console.log('[LoopFix] Using heuristic loop fix method...')
+
+  try {
+    const master = stemControlValues.master || {}
+    const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
+
+    // Create loop intent for alignment
+    const loopIntent = getStemLoopIntent(st, {
+      tempo: targetBpm,
+      promptBars: bars,
+      playbackBars,
+      promptText: `Separated ${st} stem`,
+      sampleRate: audioBuffer.sampleRate,
+      sourceFrames: audioBuffer.length,
+      sourceDurationSec: audioBuffer.duration
+    })
+
+    // Build aligned loop using existing logic
+    const aligned = buildAlignedLoopFromIntent(
+      audioBuffer,
+      loopIntent,
+      0,
+      { stem: st, strategy: getStemAlignmentStrategy(st) }
+    )
+
+    if (aligned && aligned.loop) {
+      console.log('[LoopFix] Heuristic loop fix successful')
+      diagnostics = {
+        method: 'heuristic',
+        detectedHead: aligned.detectedHead,
+        loopDuration: aligned.loop.duration,
+        gemini_used: false
+      }
+
+      return { fixed: aligned.loop, method: loopFixMethod, diagnostics }
+    }
+  } catch (heuristicError) {
+    console.error('[LoopFix] Heuristic loop fix failed:', heuristicError)
+  }
+
+  // If all methods fail, return original buffer
+  console.warn('[LoopFix] All loop fix methods failed, using original audio')
+  return {
+    fixed: audioBuffer,
+    method: 'none',
+    diagnostics: { error: 'Loop fix failed' }
+  }
+}
+
+/**
  * Separate the current stem's audio into individual components using
  * ElevenLabs stem separation API. The separated stem that matches the
  * instrument type will automatically be selected and loaded.
@@ -2854,12 +2977,42 @@ async function separateCurrentStem(st) {
       throw new Error('Decoded audio has no channels. Separation may have failed.');
     }
 
-    // Add the separated stem as a new take in the history
+    // Get master settings for loop fix
     const master = stemControlValues.master || {}
     const tempo = master.tempo ?? DEFAULT_TEMPO
     const bars = master.bars ?? DEFAULT_BARS
     const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
 
+    // Update UI to show loop fix is in progress
+    if (separateHint) {
+      separateHint.textContent = 'Fixing loop arrangement...'
+      separateHint.classList.remove('text-white/50')
+      separateHint.classList.add('text-blue-400')
+    }
+
+    // Apply loop fix to ensure correct beat alignment
+    console.log('[stem-separation] Applying loop fix to separated audio...')
+    let loopFixResult
+    try {
+      loopFixResult = await applyLoopFixToSeparatedAudio(decodedBuffer, st, tempo, bars)
+      console.log(`[stem-separation] Loop fix complete - method: ${loopFixResult.method}`)
+
+      // Use the fixed buffer for further processing
+      if (loopFixResult.fixed && loopFixResult.method !== 'none') {
+        decodedBuffer = loopFixResult.fixed
+        console.log('[stem-separation] Using loop-fixed audio buffer')
+      }
+    } catch (loopFixError) {
+      console.warn('[stem-separation] Loop fix failed, using original audio:', loopFixError.message)
+    }
+
+    // Restore hint styling
+    if (separateHint) {
+      separateHint.classList.remove('text-blue-400')
+      separateHint.classList.add('text-white/50')
+    }
+
+    // Add the separated stem as a new take in the history
     const parentIntent = currentTake.loopIntent && currentTake.loopIntent.__isLoopIntent
       ? currentTake.loopIntent
       : getStemLoopIntent(st, {
@@ -2879,6 +3032,9 @@ async function separateCurrentStem(st) {
     }
 
     console.log('[stem-separation] Loop buffer created - duration:', aligned.loop.duration, 'seconds');
+    if (loopFixResult) {
+      console.log(`[stem-separation] Loop fix diagnostics:`, loopFixResult.diagnostics);
+    }
 
     // Create a new history entry
     const newEntry = {
@@ -2895,7 +3051,9 @@ async function separateCurrentStem(st) {
       tempo,
       bars,
       loopIntent: aligned.intent,
-      isHeadNormalized: true
+      isHeadNormalized: true,
+      loopFixMethod: loopFixResult?.method || 'none',
+      loopFixDiagnostics: loopFixResult?.diagnostics || {}
     }
 
     // Add to history and select it
@@ -2953,10 +3111,12 @@ async function separateCurrentStem(st) {
       await adjustEndpoint(st, preservedEndpointFactor)
     }
 
-    // Show success message
+    // Show success message with loop fix method
     if (separateHint) {
-      separateHint.textContent = `Successfully extracted ${data.stemType} stem!`
-      separateHint.classList.remove('text-white/50')
+      const loopFixInfo = loopFixResult?.method === 'gemini' ? ' (AI-enhanced)' :
+                          loopFixResult?.method === 'heuristic' ? ' (optimized)' : ''
+      separateHint.textContent = `Successfully extracted ${data.stemType} stem${loopFixInfo}!`
+      separateHint.classList.remove('text-white/50', 'text-blue-400')
       separateHint.classList.add('text-green-400')
 
       // Reset hint after 3 seconds
