@@ -2384,11 +2384,11 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   // Invalidate cached WAV since loop has been adjusted
   invalidateStemCache(st)
 
-  // If an offset was previously applied, reapply it now
+  // If an offset was previously applied, reapply it now to the stretched audio
   // This ensures offset is preserved when stretch changes
-  // Note: adjustStartOffset will use the ORIGINAL raw audio, not the stretched output
+  // Pass the stretched buffer (out) as the source so offset operates on stretched audio
   if (preservedOffset > 0 && !skipOffsetReapply) {
-    adjustStartOffset(st, preservedOffset, true) // Pass true to skip endpoint reapply
+    adjustStartOffset(st, preservedOffset, true, out) // Pass stretched buffer and skip endpoint reapply
     // adjustStartOffset handles PCM extraction and waveform redraw
   } else if (!skipOffsetReapply) {
     // No offset to reapply, proceed with normal PCM extraction and rendering
@@ -2423,8 +2423,11 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
  * @param {string} st The stem identifier
  * @param {number} offsetFactor The offset as a fraction (0-1) of available shift range
  */
-function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false) {
-  const raw = stemRaw[st]
+function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, sourceBuffer = null) {
+  // Use explicit source buffer if provided, otherwise fall back to stemRaw
+  // When called from adjustEndpoint, sourceBuffer will be the stretched audio
+  // When called directly (e.g., from knob), sourceBuffer will be null and we use stemRaw
+  const raw = sourceBuffer || stemRaw[st]
   if (!raw) return
 
   // Clamp offset to valid range
@@ -2482,13 +2485,10 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false) {
 
   // If an endpoint/stretch was previously applied AND we're not being called recursively,
   // reapply it to the offset-adjusted audio. This ensures stretch is preserved when offset changes.
-  if (preservedEndpoint !== 1 && !skipEndpointReapply) {
-    // Temporarily store the offset-adjusted audio as raw so endpoint can use it
-    const tempRaw = stemRaw[st]
-    stemRaw[st] = out
-    adjustEndpoint(st, preservedEndpoint, true) // Pass true to skip offset reapply
-    // Restore original raw audio
-    stemRaw[st] = tempRaw
+  // Only do this when called directly (sourceBuffer is null), not when called from adjustEndpoint
+  if (preservedEndpoint !== 1 && !skipEndpointReapply && !sourceBuffer) {
+    // Call adjustEndpoint which will stretch the original raw, then reapply this offset
+    adjustEndpoint(st, preservedEndpoint, false)
   } else {
     // No endpoint to reapply, proceed with normal PCM extraction and rendering
     // Extract PCM from the adjusted AudioBuffer
