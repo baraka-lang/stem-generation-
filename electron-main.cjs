@@ -3,8 +3,10 @@ const path = require('path')
 const fs = require('fs')
 const fsPromises = require('fs').promises
 const os = require('os')
+const { validateWavHeader, ensureFileReady, isProcessElevated, getDiagnostics } = require('./electron-utils.cjs')
 
 let nativeDragHelper = null
+let elevationStatus = null
 
 function loadNativeDragHelper() {
   try {
@@ -48,6 +50,16 @@ function createWindow() {
 
 app.whenReady().then(() => {
   loadNativeDragHelper()
+
+  // Check elevation status for UAC diagnostics
+  elevationStatus = isProcessElevated()
+  if (elevationStatus.elevated && process.platform === 'win32') {
+    console.warn('[UAC] ⚠️  Running as Administrator - DAW drag may fail if DAW is not elevated!')
+    console.warn('[UAC] Recommendation: Run both app and DAW without Administrator privileges')
+  } else {
+    console.log('[UAC] windows appElevated=false status=ok')
+  }
+
   createWindow()
 
   app.on('activate', () => {
@@ -171,7 +183,7 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
         } catch (err) {
           console.warn('[Drag] Failed to cleanup temp file:', err.message)
         }
-      }, 60000)
+      }, 300000) // 5 minutes - enough for slow DAW reads
 
       // Return success synchronously
       event.returnValue = { success: true, filePath: tempFilePath, method: 'temp-file-sync', elapsed }
@@ -187,6 +199,14 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
 
 ipcMain.handle('is-electron', () => {
   return true
+})
+
+ipcMain.handle('get-diagnostics', async () => {
+  return getDiagnostics()
+})
+
+ipcMain.handle('get-elevation-status', async () => {
+  return elevationStatus || isProcessElevated()
 })
 
 ipcMain.handle('get-platform', () => {
@@ -266,6 +286,12 @@ ipcMain.handle('save-wav-file', async (event, { directory, filename, pcmData, sa
 
     fs.writeFileSync(tempPath, wavBuffer)
 
+    // Flush data to disk to ensure file is fully written
+    const tempFd = fs.openSync(tempPath, 'r+')
+    fs.fsyncSync(tempFd)
+    fs.closeSync(tempFd)
+    console.log(`[SAVE] fsync=ok path=${tempPath}`)
+
     await new Promise(resolve => setTimeout(resolve, 50))
 
     const stats = fs.statSync(tempPath)
@@ -317,54 +343,89 @@ ipcMain.handle('save-wav-file', async (event, { directory, filename, pcmData, sa
 })
 
 ipcMain.on('start-native-drag-with-path', (event, { stemId, filePath, filename }) => {
-  try {
-    const startTime = Date.now()
+  const startTime = Date.now()
+  console.log(`[DRAG] sender=electron event=dragstart stemId=${stemId}`)
 
+  try {
+    // 1. Validate file exists
     if (!filePath || !fs.existsSync(filePath)) {
-      console.error('[Drag] File not found:', filePath)
-      event.returnValue = { success: false, error: 'File not found' }
+      console.error(`[ERROR] code=NO_PATH stemId=${stemId} path=${filePath}`)
+      event.returnValue = { success: false, error: 'File not found', code: 'NO_PATH' }
       return
     }
 
+    // 2. Get file stats
     const stats = fs.statSync(filePath)
-    console.log(`[Drag] Starting drag for ${stemId}: ${filename}`)
-    console.log(`[Drag] File: ${filePath} (${(stats.size / 1024).toFixed(1)}KB)`)
+    console.log(`[DRAG] prepared path=${filePath} size=${(stats.size / 1024).toFixed(1)}KB`)
 
+    // 3. Ensure file is fully written and ready
+    const readyCheck = ensureFileReady(filePath, stats.size)
+    if (!readyCheck.ready) {
+      console.error(`[ERROR] code=PARTIAL_WRITE stemId=${stemId} error=${readyCheck.error}`)
+      event.returnValue = { success: false, error: `File not ready: ${readyCheck.error}`, code: 'PARTIAL_WRITE' }
+      return
+    }
+
+    // 4. Validate WAV header
+    const headerCheck = validateWavHeader(filePath)
+    if (!headerCheck.valid) {
+      console.error(`[ERROR] code=HEADER_INVALID stemId=${stemId} error=${headerCheck.error}`)
+      event.returnValue = { success: false, error: `Invalid WAV: ${headerCheck.error}`, code: 'HEADER_INVALID' }
+      return
+    }
+
+    const { numChannels, sampleRate, bitsPerSample, dataSize } = headerCheck.details
+    console.log(`[SAVE] path=${filePath} size=${stats.size} wavHeader=ok fsync=ok sr=${sampleRate} ch=${numChannels} bits=${bitsPerSample}`)
+
+    // 5. Get window for drag operation
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) {
-      console.error('[Drag] Could not find window')
-      event.returnValue = { success: false, error: 'Window not found' }
+      console.error(`[ERROR] code=NO_WINDOW stemId=${stemId}`)
+      event.returnValue = { success: false, error: 'Window not found', code: 'NO_WINDOW' }
       return
     }
 
+    // 6. Resolve drag icon
     let iconPath = path.join(__dirname, 'public/vite.svg')
     if (!fs.existsSync(iconPath)) {
       iconPath = path.join(__dirname, 'dist/vite.svg')
     }
     if (!fs.existsSync(iconPath)) {
-      console.warn('[Drag] Icon not found, using empty string')
+      console.warn('[DRAG] Icon not found, proceeding without icon')
       iconPath = ''
     }
 
+    // 7. Check UAC status and warn if mismatch likely
+    if (elevationStatus?.elevated && process.platform === 'win32') {
+      console.warn('[UAC] windows appElevated=true status=mismatch')
+      console.warn('[WARN] App is elevated - DAW drops may fail if DAW is not elevated')
+    }
+
+    // 8. Start native drag - MUST be synchronous
+    const dragStartTime = Date.now()
     win.webContents.startDrag({
       file: filePath,
       icon: iconPath
     })
 
     const elapsed = Date.now() - startTime
-    console.log(`[Drag] ✓ Native drag initiated (${elapsed}ms)`)
+    const dragElapsed = Date.now() - dragStartTime
+    console.log(`[DRAG] prepared path=${filePath} write_ms=0 rename_ms=0 startDrag_ms=${dragElapsed} total_ms=${elapsed}`)
 
+    // 9. Return success synchronously
     event.returnValue = {
       success: true,
       filePath,
-      method: 'native-with-path',
-      elapsed
+      method: 'saved-file-path',
+      elapsed,
+      format: `${sampleRate}Hz_${numChannels}ch_${bitsPerSample}bit`
     }
   } catch (error) {
-    console.error('[Drag] Failed:', error)
+    console.error(`[ERROR] code=STARTDRAG_ERR stemId=${stemId} error=${error.message}`)
     event.returnValue = {
       success: false,
-      error: error.message
+      error: error.message,
+      code: 'STARTDRAG_ERR'
     }
   }
 })

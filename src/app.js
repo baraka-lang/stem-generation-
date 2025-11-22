@@ -3564,6 +3564,9 @@ async function generateStem(st) {
       const receivedSampleRate = sr || 24000
       const receivedChannels = ch || 2
 
+      // Log format details for diagnostics
+      const audioBytes = audio_b64 ? Math.floor(audio_b64.length * 0.75) : 0
+      console.log(`[FMT] stemId=${st} fmt=${receivedFormat} sr=${receivedSampleRate} ch=${receivedChannels} bytes=${audioBytes}`)
       console.log(`[Gen] Received ${st}: ${receivedFormat} (${receivedSampleRate}Hz, ${receivedChannels}ch)`)
 
       // Decode the base64 audio string for playback
@@ -4918,12 +4921,16 @@ function updateDragButtonState(st) {
         tooltip += `\n\nEnable auto-save to use drag-and-drop`
       }
     } else {
-      tooltip += `\n\nDrag to folders only (not DAWs)`
+      tooltip += `\n\n📁 Folder/Desktop drop only`
+      tooltip += `\n⚠️ Browser can't drag to DAWs directly`
+      tooltip += `\n\nFor Ableton/Logic: Use desktop app`
+      tooltip += `\nOR drag from saved folder in Explorer/Finder`
       if (isAutoDownloadSupported() && autoStatus.enabled) {
         if (autoRecord?.status === 'pending') {
-          tooltip += `\nSaving to ${autoStatus.directoryName}...`
+          tooltip += `\n\nSaving to ${autoStatus.directoryName}...`
         } else if (autoRecord?.status === 'saved') {
-          tooltip += `\n✓ Saved in ${autoStatus.directoryName}`
+          tooltip += `\n\n✓ Saved in ${autoStatus.directoryName}`
+          tooltip += `\nClick 📁 to reveal and drag from there`
         }
       }
     }
@@ -5646,11 +5653,14 @@ function setupEventListeners() {
         }
       }
 
-      // Browser-based drag for folders only
-      // This works for drag-to-folder in Chromium, but DAWs won't accept it
-      // DAWs only accept OS-level file drags (from Explorer/Finder)
-      console.log(`[Drag] Browser mode: drag to folders only`)
-      console.log(`[Drag] For DAW drops: enable auto-download and drag from Explorer/Finder`)
+      // Browser-based drag for FOLDERS ONLY - DAWs won't accept this!
+      console.warn(`[DRAG] sender=browser event=dragstart stemId=${st}`)
+      console.warn(`[DRAG] ⚠️  BROWSER MODE: This drag works for FOLDERS/DESKTOP only`)
+      console.warn(`[DRAG] For DAW drops: Use Electron desktop app with auto-save enabled`)
+      console.warn(`[DRAG] OR: Drag from Explorer/Finder after auto-saving to folder`)
+
+      // Show visual warning banner
+      showBrowserDragWarning()
 
       // Wrap PCM to WAV for browser drag
       const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
@@ -6456,6 +6466,82 @@ function initTechnoGenerator(){
   console.log('✅ App ready (session ' + SESSION_TAG + ')')
 }
 
+/**
+ * Check Windows UAC elevation status and warn if running as Administrator
+ */
+async function checkWindowsUACStatus() {
+  if (!isElectronMode()) return
+
+  try {
+    const diagnostics = await window.electronAPI.getDiagnostics()
+    const elevationStatus = await window.electronAPI.getElevationStatus()
+
+    if (elevationStatus.elevated && diagnostics.platform === 'win32') {
+      console.warn('[UAC] ⚠️  Running as Administrator - DAW drag may fail!')
+
+      // Show warning banner
+      const uacWarning = document.createElement('div')
+      uacWarning.id = 'uac-warning'
+      uacWarning.innerHTML = `
+        <div style="position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:10000;
+                    background:#ff3b30; color:white; padding:16px 24px; border-radius:12px;
+                    box-shadow:0 4px 20px rgba(0,0,0,0.5); max-width:700px; text-align:center;">
+          <strong>⚠️ Administrator Mode Detected</strong><br>
+          <span style="font-size:13px; margin-top:8px; display:block">
+            This app is running as Administrator. Drag-and-drop to Ableton Live may fail if Live is NOT running as Administrator.
+            <br><strong>Recommendation:</strong> Close this app and restart WITHOUT "Run as Administrator"
+          </span>
+          <button onclick="this.parentElement.parentElement.remove()"
+                  style="margin-top:12px; padding:6px 16px; background:white; color:#ff3b30;
+                  border:none; border-radius:6px; cursor:pointer; font-weight:600">
+            Dismiss
+          </button>
+        </div>
+      `
+      document.body.appendChild(uacWarning)
+    }
+  } catch (err) {
+    console.warn('[UAC] Could not check elevation status:', err)
+  }
+}
+
+/**
+ * Add browser drag warning banner to DOM
+ */
+function addBrowserDragWarningBanner() {
+  if (isElectronMode()) return // Only for browser mode
+
+  const banner = document.createElement('div')
+  banner.id = 'browser-drag-warning'
+  banner.style.cssText = `
+    display:none; position:fixed; top:80px; left:50%; transform:translateX(-50%);
+    z-index:9999; background:#ff6b00; color:white; padding:16px 24px; border-radius:12px;
+    box-shadow:0 4px 20px rgba(0,0,0,0.4); max-width:600px; text-align:center;
+  `
+  banner.innerHTML = `
+    <strong>📁 Folder Drop Only</strong><br>
+    <span style="font-size:13px">
+      Browser mode can't drag to DAWs. Use the desktop app for direct Ableton/Logic drag,
+      or drag from your auto-saved folder using Explorer/Finder.
+    </span>
+    <button onclick="this.parentElement.style.display='none'"
+            style="margin-left:12px; padding:4px 12px; background:white; color:#ff6b00; border:none;
+            border-radius:6px; cursor:pointer; font-weight:600">Got it</button>
+  `
+  document.body.appendChild(banner)
+}
+
+/**
+ * Show browser drag warning banner temporarily
+ */
+function showBrowserDragWarning() {
+  const banner = document.getElementById('browser-drag-warning')
+  if (banner) {
+    banner.style.display = 'block'
+    setTimeout(() => banner.style.display = 'none', 8000)
+  }
+}
+
 export async function initApp(){
   console.log('🎬 Initializing App Navigation System…')
 
@@ -6470,6 +6556,13 @@ export async function initApp(){
   setupHelpModal()
   // Initialise the user menu in the header
   setupUserMenu()
+
+  // Check for Windows UAC elevation and warn if needed
+  await checkWindowsUACStatus()
+
+  // Add browser drag warning banner to DOM
+  addBrowserDragWarningBanner()
+
   console.log('✅ Navigation system ready')
 
   // Cleanup on page unload

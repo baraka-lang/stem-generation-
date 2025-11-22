@@ -30,5 +30,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   startNativeDragWithPath: (stemId, filePath, filename) => {
     return ipcRenderer.sendSync('start-native-drag-with-path', { stemId, filePath, filename })
-  }
+  },
+
+  // Get diagnostic information
+  getDiagnostics: () => ipcRenderer.invoke('get-diagnostics'),
+
+  // Get elevation status
+  getElevationStatus: () => ipcRenderer.invoke('get-elevation-status')
 })
