@@ -5937,9 +5937,9 @@ function setupEventListeners() {
       const cardEl = e.target.closest('[data-stem]')
       if (cardEl) {
         // Do not toggle if the click is on a button, an element with a data-action,
-        // a form element, or an infinite dial.  This prevents the volume and
-        // endpoint dials from muting/unmuting the stem when clicked.
-        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
+        // a form element, or a rotary knob.  This prevents the knobs from
+        // muting/unmuting the stem when clicked.
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .rotary-knob')
         const isWaveform = e.target.closest('.waveform-canvas')
         if (!isInteractive && !isWaveform) {
           const st = cardEl.getAttribute('data-stem')
@@ -5956,7 +5956,7 @@ function setupEventListeners() {
       const mixCardEl = e.target.closest('[data-mix-card]')
       if (mixCardEl) {
         // Prevent toggling if the click is on a slider, button or other interactive element
-        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .infinite-dial')
+        const isInteractive = e.target.closest('button, [data-action], input, label, select, textarea, .rotary-knob')
         if (!isInteractive) {
           const st = mixCardEl.getAttribute('data-mix-card')
           if (st) {
