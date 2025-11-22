@@ -2441,9 +2441,11 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
   const channels = raw.numberOfChannels
   const rawLength = raw.length
 
-  // Calculate desired loop length (use existing loop or raw length)
+  // Calculate desired loop length
+  // When sourceBuffer is provided (from adjustEndpoint), use its full length
+  // When sourceBuffer is null (direct call), preserve existing loop length
   const existing = stemLoop[st]
-  const loopLength = existing ? existing.length : rawLength
+  const loopLength = sourceBuffer ? rawLength : (existing ? existing.length : rawLength)
 
   // Calculate start frame based on offset
   // If offset is 0, start at frame 0. If offset is 1, start as far right as possible
