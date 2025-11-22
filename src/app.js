@@ -5926,9 +5926,9 @@ function setupEventListeners() {
 
   // Click actions (Generate / Download / Filter mode / options overlay / history / waveform navigation)
   document.addEventListener('click', async e => {
-    // If a dial drag has just completed, ignore the immediate click to avoid unintended muting.
-    if (dialIgnoreClick) {
-      dialIgnoreClick = false
+    // If a knob drag has just completed, ignore the immediate click to avoid unintended muting.
+    if (knobIgnoreClick) {
+      knobIgnoreClick = false
       return
     }
 
