@@ -2305,8 +2305,14 @@ function handleEndpointSlider(st, val) {
  * @param {number} factor The stretch factor (>0).
  */
 function adjustEndpoint(st, factor) {
-  const raw = stemRaw[st] || stemLoop[st]
+  // Always use the original raw audio as the source for stretching
+  // This ensures we don't apply stretch on already-stretched audio
+  const raw = stemRaw[st]
   if (!raw) return
+
+  // Preserve the offset factor if one was set
+  const preservedOffset = startOffsetFactors[st] || 0
+
   const existing = stemLoop[st]
   // Preserve the current loop length if we have one; otherwise use the raw length
   const length = existing ? existing.length : raw.length
@@ -2378,28 +2384,40 @@ function adjustEndpoint(st, factor) {
   // Invalidate cached WAV since loop has been adjusted
   invalidateStemCache(st)
 
-  // Extract PCM from the adjusted AudioBuffer for drag-and-drop
-  try {
-    clearStemPCM(st) // Clear any existing PCM data before storing new
-    const pcmData = extractPCMFromAudioBuffer(out)
-    storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
-    console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    scheduleAutoDownloadForStem(st)
-  } catch (pcmErr) {
-    console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
-  }
-  // Redraw waveform
-  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
-  if (canvas) {
-    const cfg = stemConfigs[st]
-    drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
-    // Do not scale the waveform on the card when adjusting the endpoint.
-    // Keeping the canvas at a consistent height ensures the user can
-    // always click the waveform, even if the volume is very low.
-  }
-  // Restart playback of this stem on the next boundary if currently playing
-  if (isPlaying) {
-    restartStemNextBoundary(st)
+  // If an offset was previously applied, reapply it to the stretched audio
+  // This ensures offset is preserved when stretch changes
+  if (preservedOffset > 0) {
+    // Temporarily store the stretched audio as raw so offset can use it
+    const tempRaw = stemRaw[st]
+    stemRaw[st] = out
+    adjustStartOffset(st, preservedOffset)
+    // Restore original raw audio
+    stemRaw[st] = tempRaw
+  } else {
+    // No offset to reapply, proceed with normal PCM extraction and rendering
+    // Extract PCM from the adjusted AudioBuffer for drag-and-drop
+    try {
+      clearStemPCM(st) // Clear any existing PCM data before storing new
+      const pcmData = extractPCMFromAudioBuffer(out)
+      storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
+      console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+      scheduleAutoDownloadForStem(st)
+    } catch (pcmErr) {
+      console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
+    }
+    // Redraw waveform
+    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+    if (canvas) {
+      const cfg = stemConfigs[st]
+      drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
+      // Do not scale the waveform on the card when adjusting the endpoint.
+      // Keeping the canvas at a consistent height ensures the user can
+      // always click the waveform, even if the volume is very low.
+    }
+    // Restart playback of this stem on the next boundary if currently playing
+    if (isPlaying) {
+      restartStemNextBoundary(st)
+    }
   }
 }
 
