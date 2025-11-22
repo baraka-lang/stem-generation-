@@ -2436,6 +2436,9 @@ function adjustStartOffset(st, offsetFactor) {
   offsetFactor = Math.max(0, Math.min(1, offsetFactor))
   startOffsetFactors[st] = offsetFactor
 
+  // Preserve the endpoint factor if one was set
+  const preservedEndpoint = endpointFactors[st] || 1
+
   const sr = raw.sampleRate
   const channels = raw.numberOfChannels
   const rawLength = raw.length
@@ -2482,27 +2485,39 @@ function adjustStartOffset(st, offsetFactor) {
     stemHistory[st][idx].startOffset = offsetFactor
   }
 
-  // Extract PCM from the adjusted AudioBuffer
-  try {
-    clearStemPCM(st)
-    const pcmData = extractPCMFromAudioBuffer(out)
-    storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
-    console.log(`[Offset] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    scheduleAutoDownloadForStem(st)
-  } catch (pcmErr) {
-    console.warn(`[Offset] Failed to extract PCM for ${st}:`, pcmErr.message)
-  }
+  // If an endpoint/stretch was previously applied, reapply it to the offset-adjusted audio
+  // This ensures stretch is preserved when offset changes
+  if (preservedEndpoint !== 1) {
+    // Temporarily store the offset-adjusted audio as raw so endpoint can use it
+    const tempRaw = stemRaw[st]
+    stemRaw[st] = out
+    adjustEndpoint(st, preservedEndpoint)
+    // Restore original raw audio
+    stemRaw[st] = tempRaw
+  } else {
+    // No endpoint to reapply, proceed with normal PCM extraction and rendering
+    // Extract PCM from the adjusted AudioBuffer
+    try {
+      clearStemPCM(st)
+      const pcmData = extractPCMFromAudioBuffer(out)
+      storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
+      console.log(`[Offset] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+      scheduleAutoDownloadForStem(st)
+    } catch (pcmErr) {
+      console.warn(`[Offset] Failed to extract PCM for ${st}:`, pcmErr.message)
+    }
 
-  // Redraw waveform
-  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
-  if (canvas) {
-    const cfg = stemConfigs[st]
-    drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
-  }
+    // Redraw waveform
+    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+    if (canvas) {
+      const cfg = stemConfigs[st]
+      drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
+    }
 
-  // Restart playback if currently playing
-  if (isPlaying) {
-    restartStemNextBoundary(st)
+    // Restart playback if currently playing
+    if (isPlaying) {
+      restartStemNextBoundary(st)
+    }
   }
 }
 
