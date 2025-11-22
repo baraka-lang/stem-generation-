@@ -2389,13 +2389,14 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   // Note: adjustStartOffset will use the ORIGINAL raw audio, not the stretched output
   if (preservedOffset > 0 && !skipOffsetReapply) {
     adjustStartOffset(st, preservedOffset, true) // Pass true to skip endpoint reapply
-  } else {
+    // adjustStartOffset handles PCM extraction and waveform redraw
+  } else if (!skipOffsetReapply) {
     // No offset to reapply, proceed with normal PCM extraction and rendering
     // Extract PCM from the adjusted AudioBuffer for drag-and-drop
     try {
       clearStemPCM(st) // Clear any existing PCM data before storing new
-      const pcmData = extractPCMFromAudioBuffer(out)
-      storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
+      const pcmData = extractPCMFromAudioBuffer(stemLoop[st])
+      storeStemPCM(st, pcmData, stemLoop[st].sampleRate, stemLoop[st].numberOfChannels, `pcm_${stemLoop[st].sampleRate}`)
       console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
       scheduleAutoDownloadForStem(st)
     } catch (pcmErr) {
@@ -2405,7 +2406,7 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
       const cfg = stemConfigs[st]
-      drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
+      drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
       // Do not scale the waveform on the card when adjusting the endpoint.
       // Keeping the canvas at a consistent height ensures the user can
       // always click the waveform, even if the volume is very low.
@@ -2701,6 +2702,11 @@ function openWaveformEditModal(st) {
         drawWaveform(prevCanvas2, stemLoop[st], `rgb(${getColorRGB(cfg2.color)})`)
         prevCanvas2.style.transform = `scaleY(0.8)`
       }
+
+      // Restart audio with default values if playing
+      if (isPlaying) {
+        restartStemNextBoundary(st)
+      }
     }
   }
   // Clicking on the semi‑transparent overlay should discard changes and close the modal
@@ -2727,15 +2733,18 @@ function openWaveformEditModal(st) {
 function closeWaveformEditModal(save) {
   if (!waveformEditState.isOpen) return
   const st = waveformEditState.stem
-  if (!save && st) {
-    // Revert to previous values
-    setVolumeUnified(st, waveformEditState.prevVolume)
-    endpointFactors[st] = waveformEditState.prevEndpointFactor
-    adjustEndpoint(st, waveformEditState.prevEndpointFactor)
-    startOffsetFactors[st] = waveformEditState.prevStartOffset
-    adjustStartOffset(st, waveformEditState.prevStartOffset)
 
-    // Restart audio with reverted values if playing
+  if (st) {
+    if (!save) {
+      // Revert to previous values
+      setVolumeUnified(st, waveformEditState.prevVolume)
+      endpointFactors[st] = waveformEditState.prevEndpointFactor
+      adjustEndpoint(st, waveformEditState.prevEndpointFactor)
+      startOffsetFactors[st] = waveformEditState.prevStartOffset
+      adjustStartOffset(st, waveformEditState.prevStartOffset)
+    }
+
+    // Restart audio with current values (saved or reverted) if playing
     if (isPlaying) {
       restartStemNextBoundary(st)
     }
