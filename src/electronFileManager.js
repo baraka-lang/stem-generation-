@@ -14,7 +14,6 @@
  */
 
 const electronState = {
-  isElectron: typeof window !== 'undefined' && typeof window.electronAPI !== 'undefined',
   saveDirectory: null,
   savedFiles: new Map(),
   listeners: new Set()
@@ -31,11 +30,11 @@ function emit(event, payload) {
 }
 
 export function isElectronMode() {
-  return electronState.isElectron
+  return typeof window !== 'undefined' && typeof window.electronAPI !== 'undefined'
 }
 
 export function isElectronSaveEnabled() {
-  return electronState.isElectron && electronState.saveDirectory !== null
+  return isElectronMode() && electronState.saveDirectory !== null
 }
 
 export function getElectronSaveDirectory() {
@@ -43,7 +42,7 @@ export function getElectronSaveDirectory() {
 }
 
 export async function chooseElectronSaveDirectory() {
-  if (!electronState.isElectron) {
+  if (!isElectronMode()) {
     throw new Error('Not running in Electron')
   }
 
@@ -78,7 +77,7 @@ export function disableElectronSave() {
 }
 
 export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChannels, filename) {
-  if (!electronState.isElectron) {
+  if (!isElectronMode()) {
     throw new Error('Not running in Electron')
   }
 
@@ -177,7 +176,7 @@ export function subscribeElectronFileEvents(callback) {
 
 export function getElectronFileStatus() {
   return {
-    isElectron: electronState.isElectron,
+    isElectron: isElectronMode(),
     enabled: electronState.saveDirectory !== null,
     directory: electronState.saveDirectory,
     savedCount: electronState.savedFiles.size,
