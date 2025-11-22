@@ -2519,45 +2519,30 @@ function openWaveformEditModal(st) {
   waveformEditState.prevStartOffset = startOffsetFactors[st] ?? 0
 
   // Configure all three knobs - retrieve and set stem attribute immediately
-  console.log('[Knob] Looking for knob elements...')
   const offsetKnob = document.getElementById('waveformEditOffsetKnob')
-  console.log('[Knob] Offset knob:', offsetKnob)
   if (offsetKnob) {
     offsetKnob.setAttribute('data-stem', st)
-    console.log('[Knob] Offset knob data-stem set to:', st)
-  } else {
-    console.warn('[Knob] Offset knob NOT FOUND')
   }
 
   const endpointKnob = document.getElementById('waveformEditEndpointKnob')
-  console.log('[Knob] Endpoint knob:', endpointKnob)
   if (endpointKnob) {
     endpointKnob.setAttribute('data-stem', st)
-    console.log('[Knob] Endpoint knob data-stem set to:', st)
-  } else {
-    console.warn('[Knob] Endpoint knob NOT FOUND')
   }
 
   const volumeKnob = document.getElementById('waveformEditVolumeKnob')
-  console.log('[Knob] Volume knob:', volumeKnob)
   if (volumeKnob) {
     volumeKnob.setAttribute('data-stem', st)
-    console.log('[Knob] Volume knob data-stem set to:', st)
-  } else {
-    console.warn('[Knob] Volume knob NOT FOUND')
   }
 
   // Initialize offset knob
   if (offsetKnob) {
     const offsetVal = startOffsetFactors[st] ?? 0
     const offsetAngle = offsetVal * 270 - 135
-    console.log('[Knob] Initializing offset - value:', offsetVal, 'angle:', offsetAngle)
     offsetKnob.style.setProperty('--knob-angle', `${offsetAngle}deg`)
 
     const offsetValueEl = document.getElementById('waveformEditOffsetValue')
     if (offsetValueEl) {
       offsetValueEl.textContent = Math.round(offsetVal * 100) + '%'
-      console.log('[Knob] Offset value display updated to:', offsetValueEl.textContent)
     }
   }
 
@@ -2566,13 +2551,11 @@ function openWaveformEditModal(st) {
     const endpointVal = endpointFactors[st] ?? 1
     const normalizedEnd = (endpointVal - 0.1) / 2.9
     const endpointAngle = normalizedEnd * 270 - 135
-    console.log('[Knob] Initializing endpoint - value:', endpointVal, 'angle:', endpointAngle)
     endpointKnob.style.setProperty('--knob-angle', `${endpointAngle}deg`)
 
     const endpointValueEl = document.getElementById('waveformEditEndpointValue')
     if (endpointValueEl) {
       endpointValueEl.textContent = endpointVal.toFixed(2) + 'x'
-      console.log('[Knob] Endpoint value display updated to:', endpointValueEl.textContent)
     }
   }
 
@@ -2580,13 +2563,11 @@ function openWaveformEditModal(st) {
   if (volumeKnob) {
     const volumeVal = stemControlValues[st]?.volume ?? 80
     const volumeAngle = (volumeVal / 100) * 270 - 135
-    console.log('[Knob] Initializing volume - value:', volumeVal, 'angle:', volumeAngle)
     volumeKnob.style.setProperty('--knob-angle', `${volumeAngle}deg`)
 
     const volumeValueEl = document.getElementById('waveformEditVolumeValue')
     if (volumeValueEl) {
       volumeValueEl.textContent = Math.round(volumeVal)
-      console.log('[Knob] Volume value display updated to:', volumeValueEl.textContent)
     }
   }
   // Draw initial preview waveform and apply volume scaling
@@ -7107,17 +7088,15 @@ function applySessionSettingsToUI() {
 ========================================================= */
 
 // Internal state for the currently active knob interaction.  When
-// active is true, the pointermove handler computes angle changes from the
-// stored start position and value.
+// active is true, the pointermove handler computes vertical movement
+// to adjust values (drag up = increase, drag down = decrease).
 const knobState = {
   active: false,
   knob: null,
   type: '',
   stem: '',
-  startAngle: 0,
-  startVal: 0,
-  centerX: 0,
-  centerY: 0
+  startY: 0,
+  startVal: 0
 }
 
 // When a user drags a knob and releases the pointer, a click event
@@ -7128,28 +7107,15 @@ const knobState = {
 let knobIgnoreClick = false
 
 function handleKnobPointerDown(e) {
-  console.log('[Knob Event] Pointer down on:', e.target)
   const knob = e.target.closest('.rotary-knob')
-  console.log('[Knob Event] Closest .rotary-knob:', knob)
   if (!knob) return
 
   const type = knob.getAttribute('data-knob-type')
   const st = knob.getAttribute('data-stem')
-  console.log('[Knob Event] Type:', type, 'Stem:', st)
-  if (!type || !st) {
-    console.warn('[Knob Event] Missing type or stem attribute!')
-    return
-  }
+  if (!type || !st) return
 
-  // Calculate knob center for angle calculations
-  const rect = knob.getBoundingClientRect()
-  knobState.centerX = rect.left + rect.width / 2
-  knobState.centerY = rect.top + rect.height / 2
-
-  // Calculate initial angle from pointer position
-  const dx = e.clientX - knobState.centerX
-  const dy = e.clientY - knobState.centerY
-  knobState.startAngle = Math.atan2(dy, dx) * (180 / Math.PI)
+  // Store initial Y position for vertical drag
+  knobState.startY = e.clientY
 
   knobState.active = true
   knobState.knob = knob
@@ -7175,24 +7141,21 @@ function handleKnobPointerDown(e) {
 function handleKnobPointerMove(e) {
   if (!knobState.active) return
 
-  // Calculate current angle
-  const dx = e.clientX - knobState.centerX
-  const dy = e.clientY - knobState.centerY
-  const currentAngle = Math.atan2(dy, dx) * (180 / Math.PI)
+  // Calculate vertical movement (inverted: drag up = negative delta = increase)
+  const deltaY = knobState.startY - e.clientY
 
-  // Calculate angle delta
-  let angleDelta = currentAngle - knobState.startAngle
-
-  // Normalize angle delta to -180 to 180 range
-  while (angleDelta > 180) angleDelta -= 360
-  while (angleDelta < -180) angleDelta += 360
+  // Apply shift/ctrl modifiers for fine control
+  let sensitivityMultiplier = 1.0
+  if (e.shiftKey) sensitivityMultiplier = 0.1
+  if (e.ctrlKey || e.metaKey) sensitivityMultiplier = 0.01
 
   let newVal = knobState.startVal
 
   if (knobState.type === 'volume') {
-    // Map 270 degrees of rotation to 0-100 range
-    const sensitivity = 100 / 270
-    newVal = knobState.startVal + angleDelta * sensitivity
+    // 150 pixels for 0-100 range
+    const baseSensitivity = 100 / 150
+    const sensitivity = baseSensitivity * sensitivityMultiplier
+    newVal = knobState.startVal + deltaY * sensitivity
     newVal = Math.max(0, Math.min(100, newVal))
     setVolumeUnified(knobState.stem, newVal)
 
@@ -7211,9 +7174,10 @@ function handleKnobPointerMove(e) {
     }
 
   } else if (knobState.type === 'endpoint') {
-    // Map 270 degrees to 0.1-3.0 range
-    const sensitivity = 2.9 / 270
-    newVal = knobState.startVal + angleDelta * sensitivity
+    // 200 pixels for 0.1-3.0 range
+    const baseSensitivity = 2.9 / 200
+    const sensitivity = baseSensitivity * sensitivityMultiplier
+    newVal = knobState.startVal + deltaY * sensitivity
     newVal = Math.max(0.1, Math.min(3.0, newVal))
     endpointFactors[knobState.stem] = newVal
 
@@ -7245,9 +7209,10 @@ function handleKnobPointerMove(e) {
     }
 
   } else if (knobState.type === 'offset') {
-    // Map 270 degrees to 0-1 range
-    const sensitivity = 1 / 270
-    newVal = knobState.startVal + angleDelta * sensitivity
+    // 150 pixels for 0-1 range
+    const baseSensitivity = 1.0 / 150
+    const sensitivity = baseSensitivity * sensitivityMultiplier
+    newVal = knobState.startVal + deltaY * sensitivity
     newVal = Math.max(0, Math.min(1, newVal))
     adjustStartOffset(knobState.stem, newVal)
 
@@ -7268,10 +7233,6 @@ function handleKnobPointerMove(e) {
       canvas.style.transform = `scaleY(${volVal / 100})`
     }
   }
-
-  // Update start position for next move
-  knobState.startAngle = currentAngle
-  knobState.startVal = newVal
 }
 
 function handleKnobPointerUp() {
