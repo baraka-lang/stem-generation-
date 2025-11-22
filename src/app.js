@@ -2304,14 +2304,14 @@ function handleEndpointSlider(st, val) {
  * @param {string} st The stem identifier.
  * @param {number} factor The stretch factor (>0).
  */
-function adjustEndpoint(st, factor) {
+function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   // Always use the original raw audio as the source for stretching
   // This ensures we don't apply stretch on already-stretched audio
   const raw = stemRaw[st]
   if (!raw) return
 
-  // Preserve the offset factor if one was set
-  const preservedOffset = startOffsetFactors[st] || 0
+  // Preserve the offset factor if one was set (but only if not being called recursively)
+  const preservedOffset = skipOffsetReapply ? 0 : (startOffsetFactors[st] || 0)
 
   const existing = stemLoop[st]
   // Preserve the current loop length if we have one; otherwise use the raw length
@@ -2390,7 +2390,7 @@ function adjustEndpoint(st, factor) {
     // Temporarily store the stretched audio as raw so offset can use it
     const tempRaw = stemRaw[st]
     stemRaw[st] = out
-    adjustStartOffset(st, preservedOffset)
+    adjustStartOffset(st, preservedOffset, true) // Pass true to skip endpoint reapply
     // Restore original raw audio
     stemRaw[st] = tempRaw
   } else {
@@ -2428,7 +2428,7 @@ function adjustEndpoint(st, factor) {
  * @param {string} st The stem identifier
  * @param {number} offsetFactor The offset as a fraction (0-1) of available shift range
  */
-function adjustStartOffset(st, offsetFactor) {
+function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false) {
   const raw = stemRaw[st]
   if (!raw) return
 
@@ -2436,8 +2436,8 @@ function adjustStartOffset(st, offsetFactor) {
   offsetFactor = Math.max(0, Math.min(1, offsetFactor))
   startOffsetFactors[st] = offsetFactor
 
-  // Preserve the endpoint factor if one was set
-  const preservedEndpoint = endpointFactors[st] || 1
+  // Preserve the endpoint factor if one was set (but only if not being called recursively)
+  const preservedEndpoint = skipEndpointReapply ? 1 : (endpointFactors[st] || 1)
 
   const sr = raw.sampleRate
   const channels = raw.numberOfChannels
@@ -2491,7 +2491,7 @@ function adjustStartOffset(st, offsetFactor) {
     // Temporarily store the offset-adjusted audio as raw so endpoint can use it
     const tempRaw = stemRaw[st]
     stemRaw[st] = out
-    adjustEndpoint(st, preservedEndpoint)
+    adjustEndpoint(st, preservedEndpoint, true) // Pass true to skip offset reapply
     // Restore original raw audio
     stemRaw[st] = tempRaw
   } else {
