@@ -2531,6 +2531,14 @@ function openWaveformEditModal(st) {
   waveformEditState.stem = st
   // Prevent background scrolling and interaction while the modal is open
   document.body.style.overflow = 'hidden'
+
+  // Update modal title with stem name
+  const stemNameEl = document.getElementById('waveformEditStemName')
+  if (stemNameEl) {
+    const cfg = stemConfigs[st]
+    stemNameEl.textContent = cfg?.label || st
+  }
+
   // Store current values so we can revert on discard
   waveformEditState.prevVolume = stemControlValues[st]?.volume ?? 80
   waveformEditState.prevEndpointFactor = endpointFactors[st] ?? 1
@@ -2592,8 +2600,18 @@ function openWaveformEditModal(st) {
   const prevCanvas = document.getElementById('waveformEditCanvas')
   if (prevCanvas) {
     const cfg = stemConfigs[st]
-    drawWaveform(prevCanvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
-    prevCanvas.style.transform = `scaleY(${(waveformEditState.prevVolume || 80) / 100})`
+    // Only draw waveform if this stem has audio data
+    if (stemLoop[st]) {
+      drawWaveform(prevCanvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+      prevCanvas.style.transform = `scaleY(${(waveformEditState.prevVolume || 80) / 100})`
+    } else {
+      // Clear the canvas for empty tracks
+      const ctx = prevCanvas.getContext('2d')
+      if (ctx) {
+        ctx.clearRect(0, 0, prevCanvas.width, prevCanvas.height)
+      }
+      prevCanvas.style.transform = 'scaleY(1)'
+    }
   }
 
   // Draw bar grid lines on the preview.  The grid divides the width
