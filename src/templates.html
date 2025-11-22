@@ -164,16 +164,39 @@
       <canvas id="waveformEditCanvas" class="w-full h-20 bg-white/5 rounded-md border border-white/10"></canvas>
       <div id="waveformEditGrid" class="absolute inset-0 pointer-events-none flex"></div>
     </div>
-    <!-- Endpoint infinite dial (horizontal wheel) -->
-    <div class="mb-4">
-      <!-- Wrap the dial in a flex container with minus/plus buttons.  These buttons use the dial-btn
-           class so JS can attach handlers for continuous adjustments.  The data-dial-type attribute
-           indicates whether they control volume or endpoint.  The data-stem attribute will be
-           populated when the modal opens. -->
-      <div class="flex items-center">
-        <span class="dial-btn text-white/60 text-sm sm:text-xl font-extrabold mr-2" data-dial-type="endpoint" data-dial-step="-1" data-stem="">-</span>
-        <div id="waveformEditEndpointDial" class="flex-1 infinite-dial" data-dial-type="endpoint" data-stem="" data-offset="0"></div>
-        <span class="dial-btn text-white/60 text-sm sm:text-xl font-extrabold ml-2" data-dial-type="endpoint" data-dial-step="1" data-stem="">+</span>
+    <!-- Three rotary knobs for offset, stretch, and volume -->
+    <div class="mb-4 grid grid-cols-3 gap-4">
+      <!-- Knob 1: Start Offset -->
+      <div class="rotary-knob-container">
+        <div class="rotary-knob"
+             id="waveformEditOffsetKnob"
+             data-knob-type="offset"
+             data-stem=""
+             style="--knob-angle: -135deg"></div>
+        <div class="rotary-knob-label">Offset</div>
+        <div class="rotary-knob-value" id="waveformEditOffsetValue">0%</div>
+      </div>
+
+      <!-- Knob 2: Endpoint Stretch -->
+      <div class="rotary-knob-container">
+        <div class="rotary-knob"
+             id="waveformEditEndpointKnob"
+             data-knob-type="endpoint"
+             data-stem=""
+             style="--knob-angle: -4deg"></div>
+        <div class="rotary-knob-label">Stretch</div>
+        <div class="rotary-knob-value" id="waveformEditEndpointValue">1.00x</div>
+      </div>
+
+      <!-- Knob 3: Volume -->
+      <div class="rotary-knob-container">
+        <div class="rotary-knob"
+             id="waveformEditVolumeKnob"
+             data-knob-type="volume"
+             data-stem=""
+             style="--knob-angle: 81deg"></div>
+        <div class="rotary-knob-label">Volume</div>
+        <div class="rotary-knob-value" id="waveformEditVolumeValue">80</div>
       </div>
     </div>
     <!-- Stem Separation Section -->

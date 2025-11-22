@@ -167,6 +167,77 @@
       transform: translateX(-50%);
     }
 
+    /* Rotary knob styles for edit modal controls */
+    .rotary-knob-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .rotary-knob {
+      position: relative;
+      width: 4rem;
+      height: 4rem;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05));
+      border: 2px solid rgba(255,255,255,0.3);
+      cursor: pointer;
+      user-select: none;
+      touch-action: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .rotary-knob::before {
+      content: '';
+      position: absolute;
+      top: 10%;
+      left: 50%;
+      width: 3px;
+      height: 35%;
+      background: rgba(255, 255, 255, 0.9);
+      transform-origin: bottom center;
+      transform: translateX(-50%) rotate(var(--knob-angle, 0deg));
+      border-radius: 2px;
+      transition: transform 0.05s linear;
+    }
+
+    .rotary-knob::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 8px;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.6);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .rotary-knob:hover {
+      border-color: rgba(139, 92, 246, 0.5);
+    }
+
+    .rotary-knob.active {
+      border-color: rgba(139, 92, 246, 0.8);
+      box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+    }
+
+    .rotary-knob-label {
+      font-size: 0.75rem;
+      color: rgba(255, 255, 255, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .rotary-knob-value {
+      font-size: 0.875rem;
+      color: rgba(255, 255, 255, 0.9);
+      font-weight: 500;
+      min-width: 4rem;
+      text-align: center;
+    }
+
     /* Mobile-specific adjustments */
     @media (max-width: 640px) {
       /* Prevent bottom player controls from wrapping so play and volume stay on the same row */
@@ -180,6 +251,18 @@
       [data-action="open-create-settings"] {
         padding-top: 0.4rem !important;
         padding-bottom: 0.4rem !important;
+      }
+      /* Smaller rotary knobs on mobile */
+      .rotary-knob {
+        width: 3rem;
+        height: 3rem;
+      }
+      .rotary-knob-label {
+        font-size: 0.65rem;
+      }
+      .rotary-knob-value {
+        font-size: 0.75rem;
+        min-width: 3rem;
       }
     }
     /* Comment */

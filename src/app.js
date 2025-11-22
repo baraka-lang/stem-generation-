@@ -177,13 +177,15 @@ function getCurrentPlayerState() {
     const eq = { ...(stemEqValues[st] || {}) }
     const filt = { ...(stemFilterValues[st] || {}) }
     const endpoint = endpointFactors[st] ?? 1
+    const offset = startOffsetFactors[st] ?? 0
     snapshot.stems[st] = {
       activeIndex,
       mute,
       volume: vol,
       eq,
       filter: filt,
-      endpoint
+      endpoint,
+      offset
     }
   })
   return snapshot
@@ -305,6 +307,10 @@ async function applyPlayerState(snapshot) {
     if (typeof saved.endpoint === 'number') {
       endpointFactors[st] = saved.endpoint
       adjustEndpoint(st, saved.endpoint)
+    }
+    // Start offset factor
+    if (typeof saved.offset === 'number') {
+      startOffsetFactors[st] = saved.offset
     }
   }
   // After restoring all stems, update session info display since tempo/bars
@@ -740,6 +746,11 @@ const waveformEditingState = {}
 // it (the sound plays back slower) without changing the loop duration.
 const endpointFactors = {}
 
+// Start offset factors: controls where the loop starts within the audio.
+// Values range from 0 (start at beginning) to 1 (start at end).
+// This allows selecting which portion of generated audio to use for the loop.
+const startOffsetFactors = {}
+
 // State for the waveform edit popup.  When a waveform is tapped, we open
 // a modal with its own controls for volume and endpoint.  We store
 // the stem being edited along with its previous volume and endpoint
@@ -749,7 +760,8 @@ const waveformEditState = {
   isOpen: false,
   stem: null,
   prevVolume: 0,
-  prevEndpointFactor: 1
+  prevEndpointFactor: 1,
+  prevStartOffset: 0
 }
 
 let loopStartTime  = 0
@@ -2392,6 +2404,91 @@ function adjustEndpoint(st, factor) {
 }
 
 /**
+ * Shift the loop start position within the audio without changing duration.
+ * This allows selecting which portion of the audio is used for the loop.
+ *
+ * @param {string} st The stem identifier
+ * @param {number} offsetFactor The offset as a fraction (0-1) of available shift range
+ */
+function adjustStartOffset(st, offsetFactor) {
+  const raw = stemRaw[st]
+  if (!raw) return
+
+  // Clamp offset to valid range
+  offsetFactor = Math.max(0, Math.min(1, offsetFactor))
+  startOffsetFactors[st] = offsetFactor
+
+  const sr = raw.sampleRate
+  const channels = raw.numberOfChannels
+  const rawLength = raw.length
+
+  // Calculate desired loop length (use existing loop or raw length)
+  const existing = stemLoop[st]
+  const loopLength = existing ? existing.length : rawLength
+
+  // Calculate start frame based on offset
+  // If offset is 0, start at frame 0. If offset is 1, start as far right as possible
+  const maxStartFrame = Math.max(0, rawLength - loopLength)
+  const startFrame = Math.floor(offsetFactor * maxStartFrame)
+
+  // Create new buffer with selected portion
+  const out = new AudioBuffer({
+    length: loopLength,
+    numberOfChannels: channels,
+    sampleRate: sr
+  })
+
+  for (let c = 0; c < channels; c++) {
+    const src = raw.getChannelData(c)
+    const dst = out.getChannelData(c)
+
+    // Copy from selected start position
+    for (let i = 0; i < loopLength; i++) {
+      const srcIdx = (startFrame + i) % rawLength  // Wrap around if needed
+      dst[i] = src[srcIdx]
+    }
+  }
+
+  // Apply edge ramps and crossfade
+  applyEdgeRamps(out, EDGE_RAMP_MS)
+  applySeamCrossfade(out, LOOP_XFADE_MS)
+
+  // Update loop buffer
+  stemLoop[st] = out
+  stemLoopDuration[st] = out.duration
+  invalidateStemCache(st)
+
+  // Persist on active take
+  const idx = stemActiveIndex[st]
+  if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
+    stemHistory[st][idx].startOffset = offsetFactor
+  }
+
+  // Extract PCM from the adjusted AudioBuffer
+  try {
+    clearStemPCM(st)
+    const pcmData = extractPCMFromAudioBuffer(out)
+    storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
+    console.log(`[Offset] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    scheduleAutoDownloadForStem(st)
+  } catch (pcmErr) {
+    console.warn(`[Offset] Failed to extract PCM for ${st}:`, pcmErr.message)
+  }
+
+  // Redraw waveform
+  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  if (canvas) {
+    const cfg = stemConfigs[st]
+    drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
+  }
+
+  // Restart playback if currently playing
+  if (isPlaying) {
+    restartStemNextBoundary(st)
+  }
+}
+
+/**
  * Open the waveform edit modal for a specific stem.  This modal
  * displays a preview of the current loop and provides full‑width
  * controls for adjusting volume and endpoint stretch.  Changes take
@@ -2410,26 +2507,47 @@ function openWaveformEditModal(st) {
   // Store current values so we can revert on discard
   waveformEditState.prevVolume = stemControlValues[st]?.volume ?? 80
   waveformEditState.prevEndpointFactor = endpointFactors[st] ?? 1
-  // Configure the new endpoint dial for this stem.  The dial uses
-  // pointer and wheel events to adjust the endpoint factor.  Set the
-  // data-stem attribute so generic dial handlers know which stem to
-  // modify.  Reset its pattern offset to zero for a consistent
-  // starting position when opening the modal.
-  const endDial = document.getElementById('waveformEditEndpointDial')
-  if (endDial) {
-    endDial.setAttribute('data-stem', st)
-    endDial.setAttribute('data-dial-type', 'endpoint')
-    endDial.setAttribute('data-offset', '0')
-    endDial.style.backgroundPosition = '0px 50%'
+  waveformEditState.prevStartOffset = startOffsetFactors[st] ?? 0
+
+  // Configure all three knobs
+  const offsetKnob = document.getElementById('waveformEditOffsetKnob')
+  const endpointKnob = document.getElementById('waveformEditEndpointKnob')
+  const volumeKnob = document.getElementById('waveformEditVolumeKnob')
+
+  // Set stem attribute on all knobs
+  [offsetKnob, endpointKnob, volumeKnob].forEach(knob => {
+    if (knob) knob.setAttribute('data-stem', st)
+  })
+
+  // Initialize offset knob
+  if (offsetKnob) {
+    const offsetVal = startOffsetFactors[st] ?? 0
+    const offsetAngle = offsetVal * 270 - 135
+    offsetKnob.style.setProperty('--knob-angle', `${offsetAngle}deg`)
+
+    const offsetValueEl = document.getElementById('waveformEditOffsetValue')
+    if (offsetValueEl) offsetValueEl.textContent = Math.round(offsetVal * 100) + '%'
   }
 
-  // Also update any plus/minus buttons associated with the endpoint dial so they know
-  // which stem to adjust.  These buttons have the .dial-btn class and data-dial-type="endpoint".
-  {
-    const endpointBtns = modal.querySelectorAll('.dial-btn[data-dial-type="endpoint"]')
-    endpointBtns.forEach(btn => {
-      btn.setAttribute('data-stem', st)
-    })
+  // Initialize endpoint knob
+  if (endpointKnob) {
+    const endpointVal = endpointFactors[st] ?? 1
+    const normalizedEnd = (endpointVal - 0.1) / 2.9
+    const endpointAngle = normalizedEnd * 270 - 135
+    endpointKnob.style.setProperty('--knob-angle', `${endpointAngle}deg`)
+
+    const endpointValueEl = document.getElementById('waveformEditEndpointValue')
+    if (endpointValueEl) endpointValueEl.textContent = endpointVal.toFixed(2) + 'x'
+  }
+
+  // Initialize volume knob
+  if (volumeKnob) {
+    const volumeVal = stemControlValues[st]?.volume ?? 80
+    const volumeAngle = (volumeVal / 100) * 270 - 135
+    volumeKnob.style.setProperty('--knob-angle', `${volumeAngle}deg`)
+
+    const volumeValueEl = document.getElementById('waveformEditVolumeValue')
+    if (volumeValueEl) volumeValueEl.textContent = Math.round(volumeVal)
   }
   // Draw initial preview waveform and apply volume scaling
   const prevCanvas = document.getElementById('waveformEditCanvas')
@@ -2474,28 +2592,50 @@ function openWaveformEditModal(st) {
   }
   if (defaultBtn) {
     defaultBtn.onclick = () => {
-      // Reset endpoint factor to original (1.0) for this take
+      // Reset offset to 0
+      startOffsetFactors[st] = 0
+      const offsetKnobEl = document.getElementById('waveformEditOffsetKnob')
+      if (offsetKnobEl) {
+        offsetKnobEl.style.setProperty('--knob-angle', '-135deg')
+        const valueEl = document.getElementById('waveformEditOffsetValue')
+        if (valueEl) valueEl.textContent = '0%'
+      }
+
+      // Reset endpoint to 1.0
       endpointFactors[st] = 1
-      // Persist the reset factor on the active take
+      adjustEndpoint(st, 1)
+      const endpointKnobEl = document.getElementById('waveformEditEndpointKnob')
+      if (endpointKnobEl) {
+        const normalizedEnd = (1.0 - 0.1) / 2.9
+        const angle = normalizedEnd * 270 - 135
+        endpointKnobEl.style.setProperty('--knob-angle', `${angle}deg`)
+        const valueEl = document.getElementById('waveformEditEndpointValue')
+        if (valueEl) valueEl.textContent = '1.00x'
+      }
+
+      // Reset volume to 80
+      setVolumeUnified(st, 80)
+      const volumeKnobEl = document.getElementById('waveformEditVolumeKnob')
+      if (volumeKnobEl) {
+        const angle = (80 / 100) * 270 - 135
+        volumeKnobEl.style.setProperty('--knob-angle', `${angle}deg`)
+        const valueEl = document.getElementById('waveformEditVolumeValue')
+        if (valueEl) valueEl.textContent = '80'
+      }
+
+      // Persist defaults on active take
       const idx = stemActiveIndex[st]
       if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
+        stemHistory[st][idx].startOffset = 0
         stemHistory[st][idx].endpointFactor = 1
       }
-      // Rebuild the loop and update waveform
-      adjustEndpoint(st, 1)
-      // Reset dial pattern offset to neutral position
-      const endDialEl = document.getElementById('waveformEditEndpointDial')
-      if (endDialEl) {
-        endDialEl.setAttribute('data-offset', '0')
-        endDialEl.style.backgroundPosition = '0px 50%'
-      }
-      // Redraw preview waveform with current volume scaling
+
+      // Redraw preview waveform
       const prevCanvas2 = document.getElementById('waveformEditCanvas')
       if (prevCanvas2) {
         const cfg2 = stemConfigs[st]
         drawWaveform(prevCanvas2, stemLoop[st], `rgb(${getColorRGB(cfg2.color)})`)
-        const volVal2 = stemControlValues[st]?.volume ?? 80
-        prevCanvas2.style.transform = `scaleY(${volVal2 / 100})`
+        prevCanvas2.style.transform = `scaleY(0.8)`
       }
     }
   }
@@ -2528,8 +2668,8 @@ function closeWaveformEditModal(save) {
     setVolumeUnified(st, waveformEditState.prevVolume)
     endpointFactors[st] = waveformEditState.prevEndpointFactor
     adjustEndpoint(st, waveformEditState.prevEndpointFactor)
-    // The card's waveform height is no longer scaled for volume, so there is
-    // nothing to revert in terms of the canvas transform.
+    startOffsetFactors[st] = waveformEditState.prevStartOffset
+    adjustStartOffset(st, waveformEditState.prevStartOffset)
   }
   // Hide modal
   const modal = document.getElementById('waveformEditModal')
@@ -6922,164 +7062,232 @@ function applySessionSettingsToUI() {
    in the audio engine and any relevant UI.
 ========================================================= */
 
-// Internal state for the currently active dial interaction.  When
-// active is true, the pointermove handler computes deltas from the
-// stored start position and value.  patternOffset tracks the
-// horizontal shift of the dial's background pattern in pixels.
-const dialState = {
+// Internal state for the currently active knob interaction.  When
+// active is true, the pointermove handler computes angle changes from the
+// stored start position and value.
+const knobState = {
   active: false,
-  dial: null,
+  knob: null,
   type: '',
   stem: '',
-  startX: 0,
+  startAngle: 0,
   startVal: 0,
-  patternOffset: 0
+  centerX: 0,
+  centerY: 0
 }
 
-// When a user drags a dial and releases the pointer, a click event
+// When a user drags a knob and releases the pointer, a click event
 // often fires on whatever element the pointer is over at the time of
-// release.  This can cause accidental mute/unmute when the dial is
+// release.  This can cause accidental mute/unmute when the knob is
 // positioned over a card.  Use this flag to ignore the next click
-// after finishing a dial drag.
-let dialIgnoreClick = false
+// after finishing a knob drag.
+let knobIgnoreClick = false
 
-function handleDialPointerDown(e) {
-  // Only initiate a dial drag on elements with the .infinite-dial class
-  const dial = e.target.closest('.infinite-dial')
-  if (!dial) return
-  const type = dial.getAttribute('data-dial-type')
-  const st   = dial.getAttribute('data-stem')
+function handleKnobPointerDown(e) {
+  const knob = e.target.closest('.rotary-knob')
+  if (!knob) return
+
+  const type = knob.getAttribute('data-knob-type')
+  const st = knob.getAttribute('data-stem')
   if (!type || !st) return
-  dialState.active = true
-  dialState.dial = dial
-  dialState.type = type
-  dialState.stem = st
-  dialState.startX = e.clientX
+
+  // Calculate knob center for angle calculations
+  const rect = knob.getBoundingClientRect()
+  knobState.centerX = rect.left + rect.width / 2
+  knobState.centerY = rect.top + rect.height / 2
+
+  // Calculate initial angle from pointer position
+  const dx = e.clientX - knobState.centerX
+  const dy = e.clientY - knobState.centerY
+  knobState.startAngle = Math.atan2(dy, dx) * (180 / Math.PI)
+
+  knobState.active = true
+  knobState.knob = knob
+  knob.classList.add('active')
+  knobState.type = type
+  knobState.stem = st
+
+  // Get current value
   if (type === 'volume') {
-    dialState.startVal = stemControlValues[st]?.volume ?? 80
+    knobState.startVal = stemControlValues[st]?.volume ?? 80
   } else if (type === 'endpoint') {
-    dialState.startVal = endpointFactors[st] ?? 1
-  } else {
-    dialState.startVal = 0
+    knobState.startVal = endpointFactors[st] ?? 1
+  } else if (type === 'offset') {
+    knobState.startVal = startOffsetFactors[st] ?? 0
   }
-  // patternOffset is stored on the dial element; parse or fallback to 0
-  const offAttr = dial.getAttribute('data-offset')
-  dialState.patternOffset = offAttr ? parseFloat(offAttr) || 0 : 0
-  // Capture pointer move/up on the window to continue tracking outside the dial
-  window.addEventListener('pointermove', handleDialPointerMove)
-  window.addEventListener('pointerup', handleDialPointerUp)
-  // Prevent text selection and other default behaviours
+
+  window.addEventListener('pointermove', handleKnobPointerMove)
+  window.addEventListener('pointerup', handleKnobPointerUp)
   e.preventDefault()
-  // Reset the ignore click flag: starting a drag means any upcoming click should be processed normally
-  dialIgnoreClick = false
+  knobIgnoreClick = false
 }
 
-function handleDialPointerMove(e) {
-  if (!dialState.active) return
-  const dx = e.clientX - dialState.startX
-  let newVal = dialState.startVal
-  if (dialState.type === 'volume') {
-    // Sensitivity factor for volume adjustments.  Smaller values
-    // produce finer control; larger values accelerate the change.
-    const sensitivity = 0.2
-    newVal = dialState.startVal + dx * sensitivity
-    // Clamp between 0 and 100
+function handleKnobPointerMove(e) {
+  if (!knobState.active) return
+
+  // Calculate current angle
+  const dx = e.clientX - knobState.centerX
+  const dy = e.clientY - knobState.centerY
+  const currentAngle = Math.atan2(dy, dx) * (180 / Math.PI)
+
+  // Calculate angle delta
+  let angleDelta = currentAngle - knobState.startAngle
+
+  // Normalize angle delta to -180 to 180 range
+  while (angleDelta > 180) angleDelta -= 360
+  while (angleDelta < -180) angleDelta += 360
+
+  let newVal = knobState.startVal
+
+  if (knobState.type === 'volume') {
+    // Map 270 degrees of rotation to 0-100 range
+    const sensitivity = 100 / 270
+    newVal = knobState.startVal + angleDelta * sensitivity
     newVal = Math.max(0, Math.min(100, newVal))
-    setVolumeUnified(dialState.stem, newVal)
-  } else if (dialState.type === 'endpoint') {
-    // Finer sensitivity for endpoint adjustments.  A small delta
-    // produces a small change to the stretch factor.
-    const sensitivity = 0.005
-    newVal = dialState.startVal + dx * sensitivity
-    newVal = Math.max(0.1, Math.min(3, newVal))
-    endpointFactors[dialState.stem] = newVal
-    // Persist this endpoint factor on the active take so switching takes remembers the adjustment
-    {
-      const stName = dialState.stem
-      const idx = stemActiveIndex[stName]
-      if (idx != null && idx >= 0 && stemHistory[stName] && stemHistory[stName][idx]) {
-        stemHistory[stName][idx].endpointFactor = newVal
-      }
-    }
-    // Rebuild loop for the new factor and redraw the card waveform
-    adjustEndpoint(dialState.stem, newVal)
-    // Update preview waveform in the edit modal
+    setVolumeUnified(knobState.stem, newVal)
+
+    // Update visual angle (0-100 maps to 0-270 degrees, offset by -135)
+    const visualAngle = (newVal / 100) * 270 - 135
+    knobState.knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+
+    // Update value display
+    const valueEl = document.getElementById('waveformEditVolumeValue')
+    if (valueEl) valueEl.textContent = Math.round(newVal)
+
+    // Update preview waveform canvas scaling
     const canvas = document.getElementById('waveformEditCanvas')
     if (canvas) {
-      const cfg = stemConfigs[dialState.stem]
-      drawWaveform(canvas, stemLoop[dialState.stem], `rgb(${getColorRGB(cfg.color)})`)
-      // Apply the current volume scaling to the preview canvas only
-      const volVal = stemControlValues[dialState.stem]?.volume ?? 80
+      canvas.style.transform = `scaleY(${newVal / 100})`
+    }
+
+  } else if (knobState.type === 'endpoint') {
+    // Map 270 degrees to 0.1-3.0 range
+    const sensitivity = 2.9 / 270
+    newVal = knobState.startVal + angleDelta * sensitivity
+    newVal = Math.max(0.1, Math.min(3.0, newVal))
+    endpointFactors[knobState.stem] = newVal
+
+    // Persist on active take
+    const stName = knobState.stem
+    const idx = stemActiveIndex[stName]
+    if (idx != null && idx >= 0 && stemHistory[stName] && stemHistory[stName][idx]) {
+      stemHistory[stName][idx].endpointFactor = newVal
+    }
+
+    adjustEndpoint(knobState.stem, newVal)
+
+    // Update visual angle
+    const normalizedVal = (newVal - 0.1) / 2.9
+    const visualAngle = normalizedVal * 270 - 135
+    knobState.knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+
+    // Update value display
+    const valueEl = document.getElementById('waveformEditEndpointValue')
+    if (valueEl) valueEl.textContent = newVal.toFixed(2) + 'x'
+
+    // Update preview waveform
+    const canvas = document.getElementById('waveformEditCanvas')
+    if (canvas) {
+      const cfg = stemConfigs[knobState.stem]
+      drawWaveform(canvas, stemLoop[knobState.stem], `rgb(${getColorRGB(cfg.color)})`)
+      const volVal = stemControlValues[knobState.stem]?.volume ?? 80
+      canvas.style.transform = `scaleY(${volVal / 100})`
+    }
+
+  } else if (knobState.type === 'offset') {
+    // Map 270 degrees to 0-1 range
+    const sensitivity = 1 / 270
+    newVal = knobState.startVal + angleDelta * sensitivity
+    newVal = Math.max(0, Math.min(1, newVal))
+    adjustStartOffset(knobState.stem, newVal)
+
+    // Update visual angle
+    const visualAngle = newVal * 270 - 135
+    knobState.knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+
+    // Update value display
+    const valueEl = document.getElementById('waveformEditOffsetValue')
+    if (valueEl) valueEl.textContent = Math.round(newVal * 100) + '%'
+
+    // Update preview waveform
+    const canvas = document.getElementById('waveformEditCanvas')
+    if (canvas) {
+      const cfg = stemConfigs[knobState.stem]
+      drawWaveform(canvas, stemLoop[knobState.stem], `rgb(${getColorRGB(cfg.color)})`)
+      const volVal = stemControlValues[knobState.stem]?.volume ?? 80
       canvas.style.transform = `scaleY(${volVal / 100})`
     }
   }
-  // Update pattern offset for the tick marks.  To keep the offset
-  // bounded, wrap it by the pattern width (8 px).  This ensures the
-  // background-position stays within a manageable range while still
-  // conveying continuous movement.
-  const patternWidth = 8
-  const newOffset = dialState.patternOffset + dx
-  dialState.patternOffset = ((newOffset % patternWidth) + patternWidth) % patternWidth
-  // Set the dial background position and persist offset on the element
-  dialState.dial.style.backgroundPosition = `${dialState.patternOffset}px 50%`
-  dialState.dial.setAttribute('data-offset', String(dialState.patternOffset))
-  // Prepare for next move: reset the starting point and value
-  dialState.startX = e.clientX
-  dialState.startVal = newVal
+
+  // Update start position for next move
+  knobState.startAngle = currentAngle
+  knobState.startVal = newVal
 }
 
-function handleDialPointerUp() {
-  if (!dialState.active) return
-  dialState.active = false
-  window.removeEventListener('pointermove', handleDialPointerMove)
-  window.removeEventListener('pointerup', handleDialPointerUp)
-
-  // After releasing the dial, ignore the next click event to prevent
-  // accidental mute/unmute when the pointer is over a non-interactive area
-  dialIgnoreClick = true
+function handleKnobPointerUp() {
+  if (!knobState.active) return
+  knobState.active = false
+  if (knobState.knob) {
+    knobState.knob.classList.remove('active')
+  }
+  window.removeEventListener('pointermove', handleKnobPointerMove)
+  window.removeEventListener('pointerup', handleKnobPointerUp)
+  knobIgnoreClick = true
 }
 
-function handleDialWheel(e) {
-  // Respond to wheel events on a dial to allow quicker adjustments.
-  const dial = e.target.closest('.infinite-dial')
-  if (!dial) return
-  const type = dial.getAttribute('data-dial-type')
-  const st   = dial.getAttribute('data-stem')
+function handleKnobWheel(e) {
+  const knob = e.target.closest('.rotary-knob')
+  if (!knob) return
+
+  const type = knob.getAttribute('data-knob-type')
+  const st = knob.getAttribute('data-stem')
   if (!type || !st) return
+
+  e.preventDefault()
+
   let currentVal, newVal
+  const wheelDelta = -e.deltaY * 0.01
+
   if (type === 'volume') {
     currentVal = stemControlValues[st]?.volume ?? 80
-    // Each wheel step adjusts the volume by a small amount; deltaY is inverted
-    newVal = currentVal - e.deltaY * 0.2
+    newVal = currentVal + wheelDelta * 2
     newVal = Math.max(0, Math.min(100, newVal))
     setVolumeUnified(st, newVal)
+
+    const visualAngle = (newVal / 100) * 270 - 135
+    knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+
+    const valueEl = document.getElementById('waveformEditVolumeValue')
+    if (valueEl) valueEl.textContent = Math.round(newVal)
+
   } else if (type === 'endpoint') {
     currentVal = endpointFactors[st] ?? 1
-    newVal = currentVal - e.deltaY * 0.01
-    newVal = Math.max(0.1, Math.min(3, newVal))
+    newVal = currentVal + wheelDelta * 0.05
+    newVal = Math.max(0.1, Math.min(3.0, newVal))
     endpointFactors[st] = newVal
     adjustEndpoint(st, newVal)
-    // Update preview waveform if visible
-    const canvas = document.getElementById('waveformEditCanvas')
-    if (canvas) {
-      const cfg = stemConfigs[st]
-      drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
-      const volVal = stemControlValues[st]?.volume ?? 80
-      canvas.style.transform = `scaleY(${volVal / 100})`
-    }
+
+    const normalizedVal = (newVal - 0.1) / 2.9
+    const visualAngle = normalizedVal * 270 - 135
+    knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+
+    const valueEl = document.getElementById('waveformEditEndpointValue')
+    if (valueEl) valueEl.textContent = newVal.toFixed(2) + 'x'
+
+  } else if (type === 'offset') {
+    currentVal = startOffsetFactors[st] ?? 0
+    newVal = currentVal + wheelDelta * 0.02
+    newVal = Math.max(0, Math.min(1, newVal))
+    adjustStartOffset(st, newVal)
+
+    const visualAngle = newVal * 270 - 135
+    knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+
+    const valueEl = document.getElementById('waveformEditOffsetValue')
+    if (valueEl) valueEl.textContent = Math.round(newVal * 100) + '%'
   }
-  // Advance the tick pattern offset so the dial visually moves with the scroll
-  const offAttr = dial.getAttribute('data-offset')
-  let off = offAttr ? parseFloat(offAttr) || 0 : 0
-  off += -e.deltaY
-  const patternWidth = 8
-  off = ((off % patternWidth) + patternWidth) % patternWidth
-  dial.style.backgroundPosition = `${off}px 50%`
-  dial.setAttribute('data-offset', String(off))
-  // Prevent the page from scrolling when interacting with the dial
-  e.preventDefault()
 }
 
-// Global listeners for dial interactions
-document.addEventListener('pointerdown', handleDialPointerDown)
-document.addEventListener('wheel', handleDialWheel, { passive: false })
+// Global listeners for knob interactions
+document.addEventListener('pointerdown', handleKnobPointerDown)
+document.addEventListener('wheel', handleKnobWheel, { passive: false })
