@@ -2384,15 +2384,11 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   // Invalidate cached WAV since loop has been adjusted
   invalidateStemCache(st)
 
-  // If an offset was previously applied, reapply it to the stretched audio
+  // If an offset was previously applied, reapply it now
   // This ensures offset is preserved when stretch changes
-  if (preservedOffset > 0) {
-    // Temporarily store the stretched audio as raw so offset can use it
-    const tempRaw = stemRaw[st]
-    stemRaw[st] = out
+  // Note: adjustStartOffset will use the ORIGINAL raw audio, not the stretched output
+  if (preservedOffset > 0 && !skipOffsetReapply) {
     adjustStartOffset(st, preservedOffset, true) // Pass true to skip endpoint reapply
-    // Restore original raw audio
-    stemRaw[st] = tempRaw
   } else {
     // No offset to reapply, proceed with normal PCM extraction and rendering
     // Extract PCM from the adjusted AudioBuffer for drag-and-drop
@@ -2483,9 +2479,9 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false) {
     stemHistory[st][idx].startOffset = offsetFactor
   }
 
-  // If an endpoint/stretch was previously applied, reapply it to the offset-adjusted audio
-  // This ensures stretch is preserved when offset changes
-  if (preservedEndpoint !== 1) {
+  // If an endpoint/stretch was previously applied AND we're not being called recursively,
+  // reapply it to the offset-adjusted audio. This ensures stretch is preserved when offset changes.
+  if (preservedEndpoint !== 1 && !skipEndpointReapply) {
     // Temporarily store the offset-adjusted audio as raw so endpoint can use it
     const tempRaw = stemRaw[st]
     stemRaw[st] = out
@@ -7149,7 +7145,8 @@ const knobState = {
   stem: '',
   startY: 0,
   startVal: 0,
-  cumulativeAngle: 0  // Track cumulative rotation in degrees for infinite visual rotation
+  startAngle: 0,  // Starting angle when drag begins
+  lastY: 0  // Last Y position to calculate frame-by-frame delta
 }
 
 // When a user drags a knob and releases the pointer, a click event
@@ -7169,6 +7166,7 @@ function handleKnobPointerDown(e) {
 
   // Store initial Y position for vertical drag
   knobState.startY = e.clientY
+  knobState.lastY = e.clientY
 
   knobState.active = true
   knobState.knob = knob
@@ -7176,17 +7174,17 @@ function handleKnobPointerDown(e) {
   knobState.type = type
   knobState.stem = st
 
-  // Get current value and compute current visual angle
+  // Get current value and store current visual angle
   if (type === 'volume') {
     knobState.startVal = stemControlValues[st]?.volume ?? 80
-    knobState.cumulativeAngle = (knobState.startVal / 100) * 270 - 135
+    knobState.startAngle = (knobState.startVal / 100) * 270 - 135
   } else if (type === 'endpoint') {
     knobState.startVal = endpointFactors[st] ?? 1
     const normalizedVal = (knobState.startVal - 0.1) / 9.9
-    knobState.cumulativeAngle = normalizedVal * 270 - 135
+    knobState.startAngle = normalizedVal * 270 - 135
   } else if (type === 'offset') {
     knobState.startVal = startOffsetFactors[st] ?? 0
-    knobState.cumulativeAngle = knobState.startVal * 270 - 135
+    knobState.startAngle = knobState.startVal * 270 - 135
   }
 
   window.addEventListener('pointermove', handleKnobPointerMove)
@@ -7202,8 +7200,9 @@ function handleKnobPointerMove(e) {
   const deltaY = knobState.startY - e.clientY
 
   // Apply shift/ctrl modifiers for fine control
-  let sensitivityMultiplier = 1.0
-  if (e.shiftKey) sensitivityMultiplier = 0.1
+  // Default is 10x finer (0.1), shift for normal speed (1.0), ctrl for ultra-fine (0.01)
+  let sensitivityMultiplier = 0.1
+  if (e.shiftKey) sensitivityMultiplier = 1.0
   if (e.ctrlKey || e.metaKey) sensitivityMultiplier = 0.01
 
   let newVal = knobState.startVal
@@ -7255,10 +7254,10 @@ function handleKnobPointerMove(e) {
       restartStemNextBoundary(knobState.stem)
     }
 
-    // Update cumulative visual angle (allows infinite rotation)
-    const angleDelta = deltaY * (270 / 400) * sensitivityMultiplier
-    knobState.cumulativeAngle = knobState.cumulativeAngle + angleDelta
-    knobState.knob.style.setProperty('--knob-angle', `${knobState.cumulativeAngle}deg`)
+    // Update visual angle based on total drag distance (allows infinite rotation)
+    const totalAngleDelta = deltaY * (270 / 400) * sensitivityMultiplier
+    const currentAngle = knobState.startAngle + totalAngleDelta
+    knobState.knob.style.setProperty('--knob-angle', `${currentAngle}deg`)
 
     // Update value display
     const valueEl = document.getElementById('waveformEditEndpointValue')
@@ -7289,10 +7288,10 @@ function handleKnobPointerMove(e) {
       restartStemNextBoundary(knobState.stem)
     }
 
-    // Update cumulative visual angle (allows infinite 360° rotation)
-    const angleDelta = deltaY * (270 / 150) * sensitivityMultiplier
-    knobState.cumulativeAngle = knobState.cumulativeAngle + angleDelta
-    knobState.knob.style.setProperty('--knob-angle', `${knobState.cumulativeAngle}deg`)
+    // Update visual angle based on total drag distance (allows infinite 360° rotation)
+    const totalAngleDelta = deltaY * (270 / 150) * sensitivityMultiplier
+    const currentAngle = knobState.startAngle + totalAngleDelta
+    knobState.knob.style.setProperty('--knob-angle', `${currentAngle}deg`)
 
     // Update value display
     const valueEl = document.getElementById('waveformEditOffsetValue')
