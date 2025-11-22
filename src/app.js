@@ -2497,9 +2497,18 @@ function adjustStartOffset(st, offsetFactor) {
  * @param {string} st The stem identifier
  */
 function openWaveformEditModal(st) {
-  if (!st) return
+  console.log('[Modal] openWaveformEditModal called with stem:', st)
+  if (!st) {
+    console.warn('[Modal] No stem provided')
+    return
+  }
   const modal = document.getElementById('waveformEditModal')
-  if (!modal) return
+  console.log('[Modal] Modal element:', modal)
+  if (!modal) {
+    console.error('[Modal] waveformEditModal not found!')
+    return
+  }
+  console.log('[Modal] Opening modal for stem:', st)
   waveformEditState.isOpen = true
   waveformEditState.stem = st
   // Prevent background scrolling and interaction while the modal is open
@@ -5970,6 +5979,7 @@ function setupEventListeners() {
     if (btn) {
       const action = btn.dataset.action
       const st = btn.dataset.stem
+      console.log('[Click] Button action clicked:', action, 'stem:', st)
       if (action === 'generate' && st) { await generateStem(st); return }
       // When clicking the new generate button, open the settings modal instead of generating immediately
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
@@ -6149,11 +6159,14 @@ function setupEventListeners() {
         return
       }
     } else {
+      console.log('[Click] Not a button action, checking for waveform click')
       const cw = e.target.closest('.waveform-canvas')
+      console.log('[Click] Waveform canvas found:', cw, 'stem:', cw?.dataset.stem)
       if (cw?.dataset.stem) {
         // Open the waveform edit modal instead of toggling an overlay or
         // opening the history drawer.  This modal allows the user to
         // adjust volume and endpoint with full controls and save/discard.
+        console.log('[Click] Opening waveform edit modal for:', cw.dataset.stem)
         openWaveformEditModal(cw.dataset.stem)
         return
       }
