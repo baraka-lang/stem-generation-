@@ -4903,7 +4903,7 @@ function updateDragButtonState(st) {
     // Calculate approximate WAV file size (16-bit stereo) from PCM data
     const estimatedSize = pcmCache ? (pcmCache.size + 44) : (buf.length * buf.numberOfChannels * 2 + 44)
     const sizeKB = (estimatedSize / 1024).toFixed(1)
-    const isElectron = typeof window.electronAPI !== 'undefined'
+    const isElectron = isElectronMode()
 
     let tooltip = `${filename} (~${sizeKB}KB, ${buf.duration.toFixed(1)}s)`
 
@@ -4913,17 +4913,20 @@ function updateDragButtonState(st) {
 
       if (savedRecord?.status === 'saved') {
         tooltip += `\n\n✓ Saved to ${saveDir || 'disk'}`
-        tooltip += `\n\nDrag directly to your DAW!`
+        tooltip += `\n\n🎯 Drag directly to Ableton/Logic/FL!`
         tooltip += `\nOr click 📁 to reveal in Explorer/Finder`
       } else if (savedRecord?.status === 'pending') {
         tooltip += `\n\nSaving to ${saveDir}...`
+        tooltip += `\nPlease wait, then drag to DAW`
       } else {
-        tooltip += `\n\nEnable auto-save to use drag-and-drop`
+        tooltip += `\n\n⚙️ Enable auto-save first`
+        tooltip += `\n(Menu → Choose folder)`
+        tooltip += `\nThen you can drag to your DAW!`
       }
     } else {
       tooltip += `\n\n📁 Folder/Desktop drop only`
       tooltip += `\n⚠️ Browser can't drag to DAWs directly`
-      tooltip += `\n\nFor Ableton/Logic: Use desktop app`
+      tooltip += `\n\nFor Ableton/Logic: Download desktop app`
       tooltip += `\nOR drag from saved folder in Explorer/Finder`
       if (isAutoDownloadSupported() && autoStatus.enabled) {
         if (autoRecord?.status === 'pending') {
@@ -4951,7 +4954,7 @@ function updateDragButtonState(st) {
 
   const showInFolderBtn = document.querySelector(`[data-action="show-in-folder"][data-stem="${st}"]`)
   if (showInFolderBtn) {
-    const isElectron = typeof window.electronAPI !== 'undefined'
+    const isElectron = isElectronMode()
 
     if (isElectron) {
       const savedRecord = getSavedFileRecord(st)
@@ -5604,7 +5607,7 @@ function setupEventListeners() {
       const filename = generateWavFilename(st)
 
       // Check if running in Electron environment
-      const isElectron = typeof window.electronAPI !== 'undefined'
+      const isElectron = isElectronMode()
       const autoStatus = getAutoDownloadStatus()
       const autoRecord = getStemAutoDownloadRecord(st)
 
@@ -5613,6 +5616,14 @@ function setupEventListeners() {
 
         const savedPath = getSavedFilePath(st)
         const savedRecord = getSavedFileRecord(st)
+        const saveDir = getElectronSaveDirectory()
+        const saveEnabled = isElectronSaveEnabled()
+
+        console.log(`[Drag] Debug state:`)
+        console.log(`  - savedPath:`, savedPath)
+        console.log(`  - savedRecord:`, savedRecord)
+        console.log(`  - saveDir:`, saveDir)
+        console.log(`  - auto-save enabled:`, saveEnabled)
 
         if (savedPath && savedRecord?.status === 'saved') {
           console.log(`[Drag] Using saved file: ${savedPath}`)
@@ -5646,7 +5657,15 @@ function setupEventListeners() {
         } else {
           e.preventDefault()
           if (btn) btn.style.opacity = '0.5'
-          const message = 'File not saved yet.\n\nTo enable drag-and-drop:\n1. Enable auto-save (menu button)\n2. Choose a folder\n3. Generate audio\n4. Drag will work automatically!'
+          const message = '⚙️ Auto-save not enabled yet.\n\n' +
+            '✓ You\'re in the desktop app (good!)\n' +
+            '✗ But auto-save is not configured\n\n' +
+            'To enable drag-and-drop:\n' +
+            '1. Click menu button (☰)\n' +
+            '2. Choose "Select Save Folder"\n' +
+            '3. Pick a local folder\n' +
+            '4. Generate audio\n' +
+            '5. Drag to your DAW!'
           alert(message)
           if (btn) btn.style.opacity = '1'
           return
@@ -5832,7 +5851,7 @@ function setupEventListeners() {
       if (action === 'download-stem' && st) { downloadStem(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       if (action === 'show-in-folder' && st) {
-        const isElectron = typeof window.electronAPI !== 'undefined'
+        const isElectron = isElectronMode()
 
         if (isElectron) {
           const savedPath = getSavedFilePath(st)
