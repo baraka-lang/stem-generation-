@@ -2518,15 +2518,15 @@ function openWaveformEditModal(st) {
   waveformEditState.prevEndpointFactor = endpointFactors[st] ?? 1
   waveformEditState.prevStartOffset = startOffsetFactors[st] ?? 0
 
-  // Configure all three knobs
+  // Configure all three knobs - retrieve and set stem attribute immediately
   const offsetKnob = document.getElementById('waveformEditOffsetKnob')
-  const endpointKnob = document.getElementById('waveformEditEndpointKnob')
-  const volumeKnob = document.getElementById('waveformEditVolumeKnob')
+  if (offsetKnob) offsetKnob.setAttribute('data-stem', st)
 
-  // Set stem attribute on all knobs
-  [offsetKnob, endpointKnob, volumeKnob].forEach(knob => {
-    if (knob) knob.setAttribute('data-stem', st)
-  })
+  const endpointKnob = document.getElementById('waveformEditEndpointKnob')
+  if (endpointKnob) endpointKnob.setAttribute('data-stem', st)
+
+  const volumeKnob = document.getElementById('waveformEditVolumeKnob')
+  if (volumeKnob) volumeKnob.setAttribute('data-stem', st)
 
   // Initialize offset knob
   if (offsetKnob) {
