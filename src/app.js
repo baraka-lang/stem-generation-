@@ -2414,10 +2414,8 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
       // Keeping the canvas at a consistent height ensures the user can
       // always click the waveform, even if the volume is very low.
     }
-    // Restart playback of this stem on the next boundary if currently playing
-    if (isPlaying) {
-      restartStemNextBoundary(st)
-    }
+    // Don't restart during adjustment - changes will take effect on next natural loop boundary
+    // This prevents jarring position jumps while the user is fine-tuning parameters
   }
 }
 
@@ -2514,10 +2512,8 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false) {
       drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
     }
 
-    // Restart playback if currently playing
-    if (isPlaying) {
-      restartStemNextBoundary(st)
-    }
+    // Don't restart during adjustment - changes will take effect on next natural loop boundary
+    // This prevents jarring position jumps while the user is fine-tuning parameters
   }
 }
 
@@ -7225,11 +7221,18 @@ function handleKnobPointerMove(e) {
     }
 
   } else if (knobState.type === 'endpoint') {
-    // 200 pixels for 0.1-3.0 range
-    const baseSensitivity = 2.9 / 200
+    // 200 pixels for extended range 0.1-10.0 (infinitely rotating)
+    const baseSensitivity = 9.9 / 200
     const sensitivity = baseSensitivity * sensitivityMultiplier
     newVal = knobState.startVal + deltaY * sensitivity
-    newVal = Math.max(0.1, Math.min(3.0, newVal))
+
+    // Clamp to extended range (0.1-10.0) but allow wrapping
+    if (newVal > 10.0) {
+      newVal = 0.1 + (newVal - 10.0) % 9.9
+    } else if (newVal < 0.1) {
+      newVal = 10.0 - ((0.1 - newVal) % 9.9)
+    }
+
     endpointFactors[knobState.stem] = newVal
 
     // Persist on active take
@@ -7241,8 +7244,8 @@ function handleKnobPointerMove(e) {
 
     adjustEndpoint(knobState.stem, newVal)
 
-    // Update visual angle
-    const normalizedVal = (newVal - 0.1) / 2.9
+    // Update visual angle (map extended range to knob rotation)
+    const normalizedVal = (newVal - 0.1) / 9.9
     const visualAngle = normalizedVal * 270 - 135
     knobState.knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
 
@@ -7260,14 +7263,17 @@ function handleKnobPointerMove(e) {
     }
 
   } else if (knobState.type === 'offset') {
-    // 150 pixels for 0-1 range
+    // 150 pixels for 0-1 range (infinitely rotating)
     const baseSensitivity = 1.0 / 150
     const sensitivity = baseSensitivity * sensitivityMultiplier
     newVal = knobState.startVal + deltaY * sensitivity
-    newVal = Math.max(0, Math.min(1, newVal))
+
+    // Wrap around instead of clamping (infinite rotation)
+    newVal = ((newVal % 1) + 1) % 1
+
     adjustStartOffset(knobState.stem, newVal)
 
-    // Update visual angle
+    // Update visual angle (allow multiple rotations)
     const visualAngle = newVal * 270 - 135
     knobState.knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
 
@@ -7324,12 +7330,19 @@ function handleKnobWheel(e) {
 
   } else if (type === 'endpoint') {
     currentVal = endpointFactors[st] ?? 1
-    newVal = currentVal + wheelDelta * 0.05
-    newVal = Math.max(0.1, Math.min(3.0, newVal))
+    newVal = currentVal + wheelDelta * 0.1
+
+    // Wrap around for infinite rotation (0.1-10.0 range)
+    if (newVal > 10.0) {
+      newVal = 0.1 + (newVal - 10.0) % 9.9
+    } else if (newVal < 0.1) {
+      newVal = 10.0 - ((0.1 - newVal) % 9.9)
+    }
+
     endpointFactors[st] = newVal
     adjustEndpoint(st, newVal)
 
-    const normalizedVal = (newVal - 0.1) / 2.9
+    const normalizedVal = (newVal - 0.1) / 9.9
     const visualAngle = normalizedVal * 270 - 135
     knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
 
@@ -7339,7 +7352,10 @@ function handleKnobWheel(e) {
   } else if (type === 'offset') {
     currentVal = startOffsetFactors[st] ?? 0
     newVal = currentVal + wheelDelta * 0.02
-    newVal = Math.max(0, Math.min(1, newVal))
+
+    // Wrap around for infinite rotation (0-1 range)
+    newVal = ((newVal % 1) + 1) % 1
+
     adjustStartOffset(st, newVal)
 
     const visualAngle = newVal * 270 - 135
