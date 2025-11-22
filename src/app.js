@@ -2519,23 +2519,46 @@ function openWaveformEditModal(st) {
   waveformEditState.prevStartOffset = startOffsetFactors[st] ?? 0
 
   // Configure all three knobs - retrieve and set stem attribute immediately
+  console.log('[Knob] Looking for knob elements...')
   const offsetKnob = document.getElementById('waveformEditOffsetKnob')
-  if (offsetKnob) offsetKnob.setAttribute('data-stem', st)
+  console.log('[Knob] Offset knob:', offsetKnob)
+  if (offsetKnob) {
+    offsetKnob.setAttribute('data-stem', st)
+    console.log('[Knob] Offset knob data-stem set to:', st)
+  } else {
+    console.warn('[Knob] Offset knob NOT FOUND')
+  }
 
   const endpointKnob = document.getElementById('waveformEditEndpointKnob')
-  if (endpointKnob) endpointKnob.setAttribute('data-stem', st)
+  console.log('[Knob] Endpoint knob:', endpointKnob)
+  if (endpointKnob) {
+    endpointKnob.setAttribute('data-stem', st)
+    console.log('[Knob] Endpoint knob data-stem set to:', st)
+  } else {
+    console.warn('[Knob] Endpoint knob NOT FOUND')
+  }
 
   const volumeKnob = document.getElementById('waveformEditVolumeKnob')
-  if (volumeKnob) volumeKnob.setAttribute('data-stem', st)
+  console.log('[Knob] Volume knob:', volumeKnob)
+  if (volumeKnob) {
+    volumeKnob.setAttribute('data-stem', st)
+    console.log('[Knob] Volume knob data-stem set to:', st)
+  } else {
+    console.warn('[Knob] Volume knob NOT FOUND')
+  }
 
   // Initialize offset knob
   if (offsetKnob) {
     const offsetVal = startOffsetFactors[st] ?? 0
     const offsetAngle = offsetVal * 270 - 135
+    console.log('[Knob] Initializing offset - value:', offsetVal, 'angle:', offsetAngle)
     offsetKnob.style.setProperty('--knob-angle', `${offsetAngle}deg`)
 
     const offsetValueEl = document.getElementById('waveformEditOffsetValue')
-    if (offsetValueEl) offsetValueEl.textContent = Math.round(offsetVal * 100) + '%'
+    if (offsetValueEl) {
+      offsetValueEl.textContent = Math.round(offsetVal * 100) + '%'
+      console.log('[Knob] Offset value display updated to:', offsetValueEl.textContent)
+    }
   }
 
   // Initialize endpoint knob
@@ -2543,20 +2566,28 @@ function openWaveformEditModal(st) {
     const endpointVal = endpointFactors[st] ?? 1
     const normalizedEnd = (endpointVal - 0.1) / 2.9
     const endpointAngle = normalizedEnd * 270 - 135
+    console.log('[Knob] Initializing endpoint - value:', endpointVal, 'angle:', endpointAngle)
     endpointKnob.style.setProperty('--knob-angle', `${endpointAngle}deg`)
 
     const endpointValueEl = document.getElementById('waveformEditEndpointValue')
-    if (endpointValueEl) endpointValueEl.textContent = endpointVal.toFixed(2) + 'x'
+    if (endpointValueEl) {
+      endpointValueEl.textContent = endpointVal.toFixed(2) + 'x'
+      console.log('[Knob] Endpoint value display updated to:', endpointValueEl.textContent)
+    }
   }
 
   // Initialize volume knob
   if (volumeKnob) {
     const volumeVal = stemControlValues[st]?.volume ?? 80
     const volumeAngle = (volumeVal / 100) * 270 - 135
+    console.log('[Knob] Initializing volume - value:', volumeVal, 'angle:', volumeAngle)
     volumeKnob.style.setProperty('--knob-angle', `${volumeAngle}deg`)
 
     const volumeValueEl = document.getElementById('waveformEditVolumeValue')
-    if (volumeValueEl) volumeValueEl.textContent = Math.round(volumeVal)
+    if (volumeValueEl) {
+      volumeValueEl.textContent = Math.round(volumeVal)
+      console.log('[Knob] Volume value display updated to:', volumeValueEl.textContent)
+    }
   }
   // Draw initial preview waveform and apply volume scaling
   const prevCanvas = document.getElementById('waveformEditCanvas')
@@ -7097,12 +7128,18 @@ const knobState = {
 let knobIgnoreClick = false
 
 function handleKnobPointerDown(e) {
+  console.log('[Knob Event] Pointer down on:', e.target)
   const knob = e.target.closest('.rotary-knob')
+  console.log('[Knob Event] Closest .rotary-knob:', knob)
   if (!knob) return
 
   const type = knob.getAttribute('data-knob-type')
   const st = knob.getAttribute('data-stem')
-  if (!type || !st) return
+  console.log('[Knob Event] Type:', type, 'Stem:', st)
+  if (!type || !st) {
+    console.warn('[Knob Event] Missing type or stem attribute!')
+    return
+  }
 
   // Calculate knob center for angle calculations
   const rect = knob.getBoundingClientRect()
