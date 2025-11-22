@@ -2744,6 +2744,13 @@ function closeWaveformEditModal(save) {
       adjustStartOffset(st, waveformEditState.prevStartOffset)
     }
 
+    // Update the card waveform to reflect final changes (saved or reverted)
+    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+    if (canvas && stemLoop[st]) {
+      const cfg = stemConfigs[st]
+      drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+    }
+
     // Restart audio with current values (saved or reverted) if playing
     if (isPlaying) {
       restartStemNextBoundary(st)
@@ -6415,13 +6422,16 @@ function selectStemVersion(st, index){
   const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
   if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${formatBarsForDisplay(bars, DEFAULT_BARS)} bars)`
   renderHistoryDrawer(st)
-  // Restore the saved endpoint factor for this take (if present).  If not present, default to 1.
+  // Restore the saved endpoint factor and start offset for this take
   {
     const takes = stemHistory[st] || []
     const entry = takes[index]
     const factor = entry?.endpointFactor ?? 1
+    const offset = entry?.startOffset ?? 0
     endpointFactors[st] = factor
+    startOffsetFactors[st] = offset
     // Rebuild the loop with the stored factor
+    // adjustEndpoint will automatically reapply the offset if it's > 0
     adjustEndpoint(st, factor)
   }
   // No need to reset or update obsolete overlay slider inputs, since endpoint control is now via infinite dial.
@@ -7258,11 +7268,6 @@ function handleKnobPointerMove(e) {
 
     adjustEndpoint(knobState.stem, newVal)
 
-    // Real-time audio preview: restart stem immediately if playing
-    if (isPlaying) {
-      restartStemNextBoundary(knobState.stem)
-    }
-
     // Update visual angle based on total drag distance (allows infinite rotation)
     const totalAngleDelta = deltaY * (270 / 400) * sensitivityMultiplier
     const currentAngle = knobState.startAngle + totalAngleDelta
@@ -7281,6 +7286,13 @@ function handleKnobPointerMove(e) {
       canvas.style.transform = `scaleY(${volVal / 100})`
     }
 
+    // Real-time audio preview: restart stem after buffer is fully updated
+    // This is placed AFTER waveform redraw to ensure the buffer chain is complete
+    // (especially important when offset needs to be reapplied to stretched audio)
+    if (isPlaying) {
+      restartStemNextBoundary(knobState.stem)
+    }
+
   } else if (knobState.type === 'offset') {
     // 150 pixels for 0-1 range
     const baseSensitivity = 1.0 / 150
@@ -7291,11 +7303,6 @@ function handleKnobPointerMove(e) {
     newVal = Math.max(0, Math.min(1, newVal))
 
     adjustStartOffset(knobState.stem, newVal)
-
-    // Real-time audio preview: restart stem immediately if playing
-    if (isPlaying) {
-      restartStemNextBoundary(knobState.stem)
-    }
 
     // Update visual angle based on total drag distance (allows infinite 360° rotation)
     const totalAngleDelta = deltaY * (270 / 150) * sensitivityMultiplier
@@ -7313,6 +7320,13 @@ function handleKnobPointerMove(e) {
       drawWaveform(canvas, stemLoop[knobState.stem], `rgb(${getColorRGB(cfg.color)})`)
       const volVal = stemControlValues[knobState.stem]?.volume ?? 80
       canvas.style.transform = `scaleY(${volVal / 100})`
+    }
+
+    // Real-time audio preview: restart stem after buffer is fully updated
+    // This is placed AFTER waveform redraw to ensure the buffer chain is complete
+    // (especially important when stretch needs to be reapplied to offset audio)
+    if (isPlaying) {
+      restartStemNextBoundary(knobState.stem)
     }
   }
 }
