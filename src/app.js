@@ -2738,6 +2738,11 @@ function closeWaveformEditModal(save) {
     adjustEndpoint(st, waveformEditState.prevEndpointFactor)
     startOffsetFactors[st] = waveformEditState.prevStartOffset
     adjustStartOffset(st, waveformEditState.prevStartOffset)
+
+    // Restart audio with reverted values if playing
+    if (isPlaying) {
+      restartStemNextBoundary(st)
+    }
   }
   // Hide modal
   const modal = document.getElementById('waveformEditModal')
@@ -7143,7 +7148,8 @@ const knobState = {
   type: '',
   stem: '',
   startY: 0,
-  startVal: 0
+  startVal: 0,
+  cumulativeAngle: 0  // Track cumulative rotation in degrees for infinite visual rotation
 }
 
 // When a user drags a knob and releases the pointer, a click event
@@ -7170,13 +7176,17 @@ function handleKnobPointerDown(e) {
   knobState.type = type
   knobState.stem = st
 
-  // Get current value
+  // Get current value and compute current visual angle
   if (type === 'volume') {
     knobState.startVal = stemControlValues[st]?.volume ?? 80
+    knobState.cumulativeAngle = (knobState.startVal / 100) * 270 - 135
   } else if (type === 'endpoint') {
     knobState.startVal = endpointFactors[st] ?? 1
+    const normalizedVal = (knobState.startVal - 0.1) / 9.9
+    knobState.cumulativeAngle = normalizedVal * 270 - 135
   } else if (type === 'offset') {
     knobState.startVal = startOffsetFactors[st] ?? 0
+    knobState.cumulativeAngle = knobState.startVal * 270 - 135
   }
 
   window.addEventListener('pointermove', handleKnobPointerMove)
@@ -7221,17 +7231,13 @@ function handleKnobPointerMove(e) {
     }
 
   } else if (knobState.type === 'endpoint') {
-    // 200 pixels for extended range 0.1-10.0 (infinitely rotating)
-    const baseSensitivity = 9.9 / 200
+    // Much more precise: 400 pixels for 0.1-10.0 range (half the sensitivity)
+    const baseSensitivity = 9.9 / 400
     const sensitivity = baseSensitivity * sensitivityMultiplier
     newVal = knobState.startVal + deltaY * sensitivity
 
-    // Clamp to extended range (0.1-10.0) but allow wrapping
-    if (newVal > 10.0) {
-      newVal = 0.1 + (newVal - 10.0) % 9.9
-    } else if (newVal < 0.1) {
-      newVal = 10.0 - ((0.1 - newVal) % 9.9)
-    }
+    // Clamp to range (0.1-10.0)
+    newVal = Math.max(0.1, Math.min(10.0, newVal))
 
     endpointFactors[knobState.stem] = newVal
 
@@ -7244,10 +7250,15 @@ function handleKnobPointerMove(e) {
 
     adjustEndpoint(knobState.stem, newVal)
 
-    // Update visual angle (map extended range to knob rotation)
-    const normalizedVal = (newVal - 0.1) / 9.9
-    const visualAngle = normalizedVal * 270 - 135
-    knobState.knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+    // Real-time audio preview: restart stem immediately if playing
+    if (isPlaying) {
+      restartStemNextBoundary(knobState.stem)
+    }
+
+    // Update cumulative visual angle (allows infinite rotation)
+    const angleDelta = deltaY * (270 / 400) * sensitivityMultiplier
+    knobState.cumulativeAngle = knobState.cumulativeAngle + angleDelta
+    knobState.knob.style.setProperty('--knob-angle', `${knobState.cumulativeAngle}deg`)
 
     // Update value display
     const valueEl = document.getElementById('waveformEditEndpointValue')
@@ -7263,19 +7274,25 @@ function handleKnobPointerMove(e) {
     }
 
   } else if (knobState.type === 'offset') {
-    // 150 pixels for 0-1 range (infinitely rotating)
+    // 150 pixels for 0-1 range
     const baseSensitivity = 1.0 / 150
     const sensitivity = baseSensitivity * sensitivityMultiplier
     newVal = knobState.startVal + deltaY * sensitivity
 
-    // Wrap around instead of clamping (infinite rotation)
-    newVal = ((newVal % 1) + 1) % 1
+    // Clamp audio offset to 0-1 range (audio reaches its end/beginning)
+    newVal = Math.max(0, Math.min(1, newVal))
 
     adjustStartOffset(knobState.stem, newVal)
 
-    // Update visual angle (allow multiple rotations)
-    const visualAngle = newVal * 270 - 135
-    knobState.knob.style.setProperty('--knob-angle', `${visualAngle}deg`)
+    // Real-time audio preview: restart stem immediately if playing
+    if (isPlaying) {
+      restartStemNextBoundary(knobState.stem)
+    }
+
+    // Update cumulative visual angle (allows infinite 360° rotation)
+    const angleDelta = deltaY * (270 / 150) * sensitivityMultiplier
+    knobState.cumulativeAngle = knobState.cumulativeAngle + angleDelta
+    knobState.knob.style.setProperty('--knob-angle', `${knobState.cumulativeAngle}deg`)
 
     // Update value display
     const valueEl = document.getElementById('waveformEditOffsetValue')
