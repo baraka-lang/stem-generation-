@@ -1118,12 +1118,15 @@ Deno.serve(async (req)=>{
     const master = body.master || {
       tempo: 130,
       bars: 4,
+      generationBars: 16,
       rootBase: 'A',
       accidental: 'natural',
       mode: 'Minor'
     };
     const tempo = Math.max(40, Math.min(300, Math.round(Number(master.tempo) || 130)));
     const bars = Math.max(1, Math.min(32, Math.round(Number(master.bars) || 4)));
+    const generationBars = Math.max(1, Math.min(32, Math.round(Number(master.generationBars) || 16)));
+    console.log(`[GenerateStem] Target: ${bars} bars, Generation: ${generationBars} bars`);
     const rootText = getRootText(master);
     const masterForPrompt = {
       tempo,
@@ -1157,7 +1160,8 @@ Deno.serve(async (req)=>{
 
     for(strictness = 0; strictness < 3; strictness++){
       usedPrompt = buildStemPrompt(stem, controls, masterForPrompt, strictness);
-      const beats = bars * 4;
+      // Use generationBars (16) for audio generation, not target bars
+      const beats = generationBars * 4;
       const seconds = beats * (60 / tempo);
       musicLengthMs = Math.round(seconds * 1000) + 200;
       musicLengthMs = Math.max(10000, Math.min(300000, musicLengthMs));
@@ -1310,7 +1314,7 @@ Deno.serve(async (req)=>{
         sampleRate,
         sourceFrames: pcm.length,
         audioDurationSec,
-        generationBars: bars
+        generationBars: generationBars  // Pass actual generation bars (16)
       });
 
       if (geminiFixed) {

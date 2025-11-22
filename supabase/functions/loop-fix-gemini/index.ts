@@ -78,6 +78,139 @@ function toPositiveInt(value: number | undefined | null, fallback: number): numb
 }
 
 // ============================================================================
+// SEGMENT SELECTION UTILITIES
+// ============================================================================
+
+interface AudioSegment {
+  index: number;
+  startFrame: number;
+  endFrame: number;
+  data: Float32Array[];
+  score?: number;
+}
+
+function computeTargetFrames(sr: number, bpm: number, bars: number): number {
+  const beats = bars * 4;
+  const seconds = beats * (60 / bpm);
+  return Math.round(seconds * sr);
+}
+
+function extractCandidateSegments(
+  pcmData: Float32Array[],
+  sr: number,
+  bpm: number,
+  targetBars: number,
+  generationBars: number
+): AudioSegment[] {
+  const targetFrames = computeTargetFrames(sr, bpm, targetBars);
+  const totalFrames = pcmData[0].length;
+  const numSegments = Math.floor(generationBars / targetBars);
+
+  const segments: AudioSegment[] = [];
+
+  for (let i = 0; i < numSegments; i++) {
+    const startFrame = i * targetFrames;
+    const endFrame = Math.min(startFrame + targetFrames, totalFrames);
+
+    if (endFrame - startFrame >= targetFrames * 0.95) {
+      const segmentData = pcmData.map(ch => ch.slice(startFrame, endFrame));
+      segments.push({
+        index: i,
+        startFrame,
+        endFrame,
+        data: segmentData
+      });
+    }
+  }
+
+  console.log(`[SegmentSelection] Extracted ${segments.length} candidate segments from ${generationBars} bars`);
+  return segments;
+}
+
+function scoreSegmentQuality(segment: AudioSegment, sr: number, bpm: number, bars: number): number {
+  const audio = segment.data[0];
+  let score = 100;
+
+  // 1. Check for clipping (max penalty: 30 points)
+  let clippedSamples = 0;
+  for (let i = 0; i < audio.length; i++) {
+    if (Math.abs(audio[i]) >= 0.99) clippedSamples++;
+  }
+  const clippingRatio = clippedSamples / audio.length;
+  score -= clippingRatio * 300;
+
+  // 2. Check for silence/dropout (max penalty: 40 points)
+  const silenceThreshold = 0.01;
+  let consecutiveSilent = 0;
+  let maxSilentStreak = 0;
+  for (let i = 0; i < audio.length; i++) {
+    if (Math.abs(audio[i]) < silenceThreshold) {
+      consecutiveSilent++;
+      maxSilentStreak = Math.max(maxSilentStreak, consecutiveSilent);
+    } else {
+      consecutiveSilent = 0;
+    }
+  }
+  const minSilenceFrames = Math.round(0.05 * sr); // 50ms
+  if (maxSilentStreak > minSilenceFrames) {
+    score -= 40;
+  }
+
+  // 3. Check energy consistency (bonus: up to 20 points)
+  const chunkSize = Math.round(sr * 0.1); // 100ms chunks
+  const energies: number[] = [];
+  for (let i = 0; i < audio.length; i += chunkSize) {
+    let energy = 0;
+    for (let j = i; j < Math.min(i + chunkSize, audio.length); j++) {
+      energy += audio[j] * audio[j];
+    }
+    energies.push(Math.sqrt(energy / chunkSize));
+  }
+  if (energies.length > 1) {
+    const meanEnergy = energies.reduce((a, b) => a + b, 0) / energies.length;
+    const variance = energies.reduce((a, b) => a + Math.pow(b - meanEnergy, 2), 0) / energies.length;
+    const consistency = Math.max(0, 1 - variance / (meanEnergy * meanEnergy + 0.01));
+    score += consistency * 20;
+  }
+
+  // 4. Check seam quality (bonus: up to 15 points)
+  const seamLength = Math.min(1000, audio.length / 10);
+  const start = audio.slice(0, seamLength);
+  const end = audio.slice(-seamLength);
+  let seamDiff = 0;
+  for (let i = 0; i < seamLength; i++) {
+    seamDiff += Math.abs(start[i] - end[i]);
+  }
+  const avgSeamDiff = seamDiff / seamLength;
+  const seamScore = Math.max(0, 1 - avgSeamDiff * 10);
+  score += seamScore * 15;
+
+  return Math.max(0, Math.min(100, score));
+}
+
+function selectBestSegment(
+  segments: AudioSegment[],
+  sr: number,
+  bpm: number,
+  bars: number
+): AudioSegment {
+  const scored = segments.map(seg => ({
+    ...seg,
+    score: scoreSegmentQuality(seg, sr, bpm, bars)
+  }));
+
+  scored.sort((a, b) => (b.score || 0) - (a.score || 0));
+
+  console.log('[SegmentSelection] Segment scores:', scored.map(s => ({
+    index: s.index,
+    score: s.score?.toFixed(2),
+    frames: `${s.startFrame}-${s.endFrame}`
+  })));
+
+  return scored[0];
+}
+
+// ============================================================================
 // MAIN HANDLER
 // ============================================================================
 
@@ -156,7 +289,37 @@ Deno.serve(async (req: Request) => {
       ? Math.max(1, Math.round((sourceDurationSeconds * target_bpm) / (60 * 4)))
       : null;
 
-    // Calculate audio hash for caching
+    // Segment selection: if we generated more bars than needed, select the best segment
+    let selectedSegment: AudioSegment | null = null;
+    let segmentSelectionUsed = false;
+    let selectedPcmData = pcmData;
+
+    if (generationBarsNormalized > bars && generationBarsNormalized >= bars * 2) {
+      console.log(`[SegmentSelection] Analyzing ${generationBarsNormalized} bars to select best ${bars}-bar segment`);
+      const candidateSegments = extractCandidateSegments(
+        pcmData,
+        header.sampleRate,
+        target_bpm,
+        bars,
+        generationBarsNormalized
+      );
+
+      if (candidateSegments.length > 1) {
+        selectedSegment = selectBestSegment(candidateSegments, header.sampleRate, target_bpm, bars);
+        selectedPcmData = selectedSegment.data;
+        segmentSelectionUsed = true;
+        console.log(`[SegmentSelection] Selected segment ${selectedSegment.index} with score ${selectedSegment.score?.toFixed(2)}`);
+      } else {
+        console.log('[SegmentSelection] Not enough segments for selection, using full audio');
+      }
+    } else {
+      console.log(`[SegmentSelection] Skipping segment selection (generation=${generationBarsNormalized}, target=${bars})`);
+    }
+
+    // Use selected segment for further processing
+    const processingPcmData = selectedPcmData;
+
+    // Calculate audio hash for caching (use original for cache key)
     const audioHash = await calculateAudioHash(audioBuffer);
 
     let geminiAnalysis: GeminiAnalysisResponse | null = null;
@@ -167,7 +330,7 @@ Deno.serve(async (req: Request) => {
       `[LoopFix] Context → promptBars=${promptBarsNormalized}, playbackBars=${playbackBarsNormalized}, generationBars=${generationBarsNormalized}, duration=${sourceDurationSeconds?.toFixed(2) || 'n/a'}s, frames=${sourceFramesCount}`
     );
     let geminiError: string | undefined;
-    let stretchedPcm = pcmData;
+    let stretchedPcm = processingPcmData;
     let modelUsed = "heuristic";
     let cacheHit = false;
     let retryCount = 0;
@@ -189,10 +352,10 @@ Deno.serve(async (req: Request) => {
       try {
         const geminiStart = performance.now();
         const result = await analyzeWithGeminiMultiModel(
-          pcmData,
+          processingPcmData,  // Use selected segment
           header.sampleRate,
           target_bpm,
-          generationBarsNormalized,
+          bars,  // Use target bars for analysis, not generation bars
           stem_type,
           prompt_text,
           playbackBarsNormalized,
@@ -234,7 +397,7 @@ Deno.serve(async (req: Request) => {
       if (stretchRatio >= 0.75 && stretchRatio <= 1.25) {
         const wsolaStart = performance.now();
         const wsolaParams = getAdaptiveWSOLAParams(stem_type, target_bpm, stretchRatio);
-        stretchedPcm = wsolaChannels(pcmData, header.sampleRate, stretchRatio, wsolaParams);
+        stretchedPcm = wsolaChannels(processingPcmData, header.sampleRate, stretchRatio, wsolaParams);
         wsolaProcessMs = performance.now() - wsolaStart;
 
         console.log(`[LoopFix] WSOLA applied: ${geminiAnalysis.detected_bpm} → ${target_bpm} BPM, ratio: ${stretchRatio.toFixed(3)}`);

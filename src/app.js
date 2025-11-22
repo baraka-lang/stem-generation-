@@ -2994,7 +2994,7 @@ async function separateCurrentStem(st) {
       promptText: currentTake?.prompt || stemControlValues.master?.prompt || '',
       promptBars,
       playbackBars,
-      generationBars: currentTake?.bars ?? promptBars,
+      generationBars: 16,  // Always 16 bars for segment selection
       sourceFrames: decodedBuffer.length,
       sampleRate: decodedBuffer.sampleRate,
       sourceDurationSec: decodedBuffer.duration
@@ -3487,10 +3487,13 @@ async function composeOnce(payload, signal, statusEl = null){
   throw lastErr || new Error('composeOnce failed with all formats')
 }
 async function composeWithRetries(st, tempo, bars, signal, statusEl){
-  const beats=bars*4
+  // Always generate 16 bars for better segment selection
+  const generationBars = 16
+  const beats=generationBars*4
   const seconds=beats*(60/tempo)
   let music_length_ms=Math.round(seconds*1000)+GEN_TAIL_PAD_MS
   music_length_ms=Math.max(10000, Math.min(300000, music_length_ms))
+  console.log(`[Generation] User requested: ${bars} bars, Generating: ${generationBars} bars (${music_length_ms}ms)`)
   const master=getMasterForPrompt()
   const controls=stemControlValues[st]||{}
   for(let tier=0;tier<3;tier++){
@@ -3545,6 +3548,7 @@ async function generateStem(st) {
         master: {
           tempo,
           bars,
+          generationBars: 16,  // Always generate 16 bars for segment selection
           rootBase: stemControlValues.master?.rootBase || 'A',
           accidental: stemControlValues.master?.accidental || 'natural',
           mode: stemControlValues.master?.mode || 'Minor'
@@ -3622,10 +3626,13 @@ async function generateStem(st) {
         failedValidation = !!res.failedValidation
       } else {
         const prompt = buildStemPrompt(st).trim()
-        const beats = bars * 4
+        // Always generate 16 bars for better segment selection
+        const generationBars = 16
+        const beats = generationBars * 4
         const seconds = beats * (60 / tempo)
         let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
         music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
+        console.log(`[Generation] User requested: ${bars} bars, Generating: ${generationBars} bars (${music_length_ms}ms)`)
         const body = USE_COMPOSITION_PLAN
           ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
           : { prompt, music_length_ms }
