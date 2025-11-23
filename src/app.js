@@ -4221,6 +4221,13 @@ async function setupAutoDownloadPanel() {
 function updateAutoDownloadPanel(status = null) {
   if (!autoDownloadPanelEl) return
 
+  // Hide on mobile devices
+  const isMobile = window.innerWidth < 640
+  if (isMobile) {
+    autoDownloadPanelEl.classList.add('hidden')
+    return
+  }
+
   if (isElectronMode()) {
     const electronStatus = getElectronFileStatus()
     autoDownloadPanelEl.classList.remove('hidden')
