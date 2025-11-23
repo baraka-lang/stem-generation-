@@ -1,332 +1,257 @@
-# DAW Drag-and-Drop — Master Implementation Document
 
-**Last updated:** 2025-11-23  
-**Applies to:** 343 Labs AI Music Studio (web + Electron wrapper)  
-**Goal:** Restore and harden **drag from app → drop into DAWs** (Ableton Live, Logic Pro, FL Studio) while keeping browser mode as **folder-only drag**.
+# UPDATED DAW Drag‑and‑Drop Implementation Guide (Ableton Live · Logic Pro · FL Studio)
 
----
-
-## 0) TL;DR (what must be true)
-
-- **Browser mode (Chromium)** can drag to **folders/desktop only** using `DownloadURL`/blob techniques; DAWs will ignore these payloads. This is by design. Use it only as a helper to save files, then drag from Explorer/Finder/DAW browsers. citeturn0search13turn0search3turn0search8  
-- **Desktop app (Electron)** must initiate an **OS-native file drag** from the **main process** via `webContents.startDrag(...)` as a **direct response to the renderer’s `ondragstart`**. Do all preparation **synchronously** (or pre‑warm), then call `startDrag`. citeturn0search5  
-- **Windows:** Drag & drop fails if the DAW and our app run at **different UAC/elevation levels** due to **UIPI**. Run both **without Administrator**. citeturn1search6turn1search1turn1search5  
-- **Files must be fully flushed and valid WAV** before `startDrag`: write to `*.part`, `fsync`, validate RIFF/WAVE header, atomic rename.  
-- **ElevenLabs formats:** keep **PCM S16LE** and the **sample rate provided by your plan**; do not resample in the client. Prefer `pcm_44100` when available; otherwise fall back to `pcm_24000`, `pcm_22050`, `pcm_16000` (and optionally `mp3_44100_128` for compatibility). citeturn3search1turn3search0turn3search8
-
-> **Why this doc?** It consolidates every iteration from prior guides plus the current `app.js` behavior into one exact, testable implementation. fileciteturn1file4turn1file8
+**Status:** Replacement implementation guide focused on restoring _reliable_ “drag from app → drop into DAW”.  
+**Short answer on auto‑download:** Keep it, but **only** as quality‑of‑life for **browser → folder** and for pre‑materializing files that Electron will drag. It **won’t** make **browser → DAW** work by itself. Use **Electron/native** for DAW drops. citeturn0search8turn0search3turn0search18
 
 ---
 
-## 1) Current baseline (what we already have)
+## 0) Why your working build regressed
 
-- **Generation & audio pipeline**: ElevenLabs → PCM (commonly 24 kHz) → WAV wrapper → playback + saving. fileciteturn1file1  
-- **Renderer (`app.js`)**: When not in Electron, it wraps PCM→WAV, sets **DataTransferItem** and **`DownloadURL`** for browser drags (works to folders, not DAWs). It also shows the “Folder-only” banner. fileciteturn1file8  
-- **Earlier fixes**: Dynamic Electron detection, atomic write patterns, log lines, UAC guidance, smoke tests, and UI copy already drafted in the previous implementation docs. fileciteturn1file0turn1file6turn1file7turn1file9
+1) **Browser payloads are not OS file drops.** Chromium’s `DownloadURL` can drag to Desktop/folders, but DAWs expect **native file paths or file promises**, not web payloads. This is by design and unchanged. citeturn0search8turn0search3  
+2) **Electron must start native drag during `ondragstart`.** If file creation/validation is not fully finished (or is async) before calling `startDrag`, the OS gesture can race ahead and the DAW ignores the drop. citeturn0search0  
+3) **Windows elevation (UAC) mismatches block drag/drop.** If Live is run **as Administrator** and your app is not (or vice versa), drag from *any* app—including Electron—fails. citeturn0search19turn0search4  
+4) **Electron requires real files or native virtualization.** `webContents.startDrag()` needs an **existing path**; otherwise you must supply native **file promises** (macOS) or **virtual files** (Windows). citeturn0search5turn0search1turn0search2
 
-**Gap:** Ableton/Logic/FL require a **real file path** via the OS drag system. Browser drags (blob URLs, `DownloadURL`) don’t meet that requirement, hence rejection by DAWs. Electron’s `startDrag` does. citeturn0search5turn0search13
-
----
-
-## 2) Architecture (final shape)
-
-### A) Browser (Chromium) — **Folder-only**
-```
-Renderer: dragstart → DataTransferItem + DownloadURL → Explorer/Finder (OK) → DAW (ignored)
-```
-- Keep this path but **label it clearly** as “Folder/Desktop only; not for DAWs.” citeturn0search3turn0search8
-
-### B) Electron — **Native OS drag → DAW (required)**
-```
-Renderer dragstart → sync IPC → Main:
-  1) Ensure file exists, is flushed, and RIFF/WAVE-valid
-  2) Call webContents.startDrag({ file: /absolute/path.wav })
-→ OS drag cursor → Drop into DAW → DAW imports
-```
-- Must be **in response to `ondragstart`** to avoid timing issues. citeturn0search5
-
-### C) Optional “virtual file” / streaming
-- **macOS:** `NSFilePromiseProvider` (UTType **com.microsoft.waveform-audio**). citeturn0search1turn4search3  
-- **Windows:** `FILEGROUPDESCRIPTOR` + `CFSTR_FILECONTENTS` if you need to stream on drop. citeturn0search2turn0search12
+**Implication:** Auto‑download helps you **have the file on disk** (good), but **direct web→DAW** still won’t work. Your desktop runtime (Electron) must originate the native drag and guarantee the file is ready. citeturn0search0
 
 ---
 
-## 3) Implementation steps (do these exactly)
+## 1) What your codebase already has (and should keep)
 
-### 3.1 Renderer (`src/app.js`)
-
-1) **Detect Electron dynamically** every time (no cached flags).  
-   Use `typeof window !== 'undefined' && !!window.electronAPI`. Ensure all checks call a function like `isElectronMode()` (no module‑time eval). fileciteturn1file14
-
-2) **Pre‑warm on pointerdown**: if a stem has PCM in memory but no file on disk, kick off **save‑to‑disk** immediately so the file is ready by `dragstart`. (Show “Preparing… → Ready to Drag”.) fileciteturn1file6
-
-3) **Electron dragstart path** (when auto‑save is enabled & file ready):
-   - Call `window.electronAPI.startNativeDragWithPath({ stemId, filePath, filename })` **synchronously** (ipc `sendSync` style under the hood). Expect `{success, error, elapsed}`.  
-   - If it returns an error, **prevent default**, show an actionable alert, and stop the drag.  
-   - **Do not** call `preventDefault()` before the sync IPC; let the OS gesture proceed. fileciteturn1file9
-
-4) **Browser dragstart path** (not Electron): keep the current code that sets `DataTransferItem`, `text/uri-list`, and `DownloadURL` for folder/desktop drags, but always show the **orange “Folder Drop Only”** banner. fileciteturn1file8
-
-> **Note:** Your current `app.js` already sets `DataTransferItem` and `DownloadURL` correctly for browser drags; that’s fine for folders but **won’t** work for DAWs by design. fileciteturn1file8
+- **Auto‑save/auto‑download panel & workflow** in the renderer, used for pre‑saving stems and reflecting status, including Electron save selection and File System Access. fileciteturn1file6turn1file9turn1file12turn1file13  
+- **Native helper stubs** for macOS (file promises) and Windows (virtual files) to support DAW‑grade outputs without pre‑writing to disk. fileciteturn1file0turn1file14turn1file19  
+- **Prior combined guide** with atomic writes, sync IPC, validation, and UAC advice—reuse those patterns verbatim. fileciteturn1file4turn1file8turn1file10turn1file16  
+- **Diagnostic log format** (FMT/SAVE/DRAG/UAC) you can turn on to isolate failures. fileciteturn1file5turn1file15
 
 ---
 
-### 3.2 Main process (`electron-main.cjs`)
+## 2) The three supported flows (pick at least B; add C when ready)
 
-**Add a robust synchronous handler** that validates and drags a **real path**:
+### A) Browser (Chromium) — **Folder/Desktop only** (always limited)
+- Keep **auto‑download** & **“Reveal in folder”**. Dragging from the **OS file manager** (Finder/Explorer) or the **DAW’s own browser** works.  
+- If you expose web‑drag, set `DownloadURL` and label it **“Folder drop only — not DAWs.”** citeturn0search8
 
-```js
-// electron-main.cjs
-const { app, BrowserWindow, ipcMain } = require('electron')
-const fs = require('fs'), os = require('os'), path = require('path')
-const { validateWavHeader, ensureFileReady, checkElevation } = require('./electron-utils.cjs')
+> **Not viable** for direct DAW drops due to web security & non‑standard payloads. Use Electron for native DAW drags. citeturn0search8turn0search3
 
-let elevationStatus = null
+### B) Electron Desktop — **Saved‑path drag (baseline, recommended)**
+- Pre‑save the WAV to disk (atomic write + header check).  
+- In **renderer `ondragstart`**, call a **sync IPC** that:
+  1) verifies the destination file **exists** and is **ready**, then  
+  2) calls `webContents.startDrag({ file, icon })` **immediately**. citeturn0search0
 
-app.whenReady().then(() => {
-  elevationStatus = checkElevation()
-  if (process.platform === 'win32') {
-    if (elevationStatus.elevated) {
-      console.warn('[UAC] App is elevated — DAW drops may fail if DAW is not elevated')
-    } else {
-      console.log('[UAC] Not elevated (recommended)')
-    }
-  }
-  createWindow() // your existing factory
-})
+This is the quickest stable path that works on Windows & macOS today.
 
-// Optional: expose diagnostics
-ipcMain.handle('get-elevation-status', async () => elevationStatus || checkElevation())
+### C) Electron + Native Modules — **Virtual file/file‑promise (advanced)**
+- **macOS:** `NSFilePromiseProvider` → write the WAV during **promise fulfillment**. citeturn0search1turn0search6  
+- **Windows:** advertise `CFSTR_FILEDESCRIPTORW` + `CFSTR_FILECONTENTS` (one IStream per file). citeturn0search2turn0search12
 
-// The synchronous drag — called during renderer's `ondragstart`
-ipcMain.on('start-native-drag-with-path', (event, { stemId, filePath, filename }) => {
-  const start = Date.now()
-  try {
-    if (!filePath || !fs.existsSync(filePath)) {
-      event.returnValue = { success: false, error: 'File not found' }
-      return
-    }
-    const stats = fs.statSync(filePath)
-    const ready = ensureFileReady(filePath, stats.size)
-    if (!ready.ready) {
-      event.returnValue = { success: false, error: `File not ready: ${ready.error}` }
-      return
-    }
-    const hdr = validateWavHeader(filePath)
-    if (!hdr.valid) {
-      event.returnValue = { success: false, error: `Invalid WAV: ${hdr.error}` }
-      return
-    }
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) {
-      event.returnValue = { success: false, error: 'No window for drag' }
-      return
-    }
-    let dragIcon = path.join(app.getAppPath(), 'assets', 'drag-icon.png')
-    if (!fs.existsSync(dragIcon)) dragIcon = undefined
-
-    // MUST be called here, synchronously
-    win.webContents.startDrag({ file: filePath, icon: dragIcon }) // ← native OS drag
-    event.returnValue = { success: true, filePath, elapsed: Date.now() - start }
-  } catch (err) {
-    event.returnValue = { success: false, error: err.message }
-  }
-})
-```
-
-- **Why sync?** `startDrag` must directly correspond to the OS drag gesture (`ondragstart`) or the drop target may never receive a real file reference. citeturn0search5
+Your repo already includes starter code for both; wire them up after B is green. fileciteturn1file0turn1file14turn1file19
 
 ---
 
-### 3.3 Utilities (`electron-utils.cjs`)
+## 3) Audio format policy (align with your PRD & ElevenLabs)
 
-Implement three critical checks (header, readiness, elevation): the following mirrors our prior drafts:
-
-```js
-// electron-utils.cjs
-const fs = require('fs'), os = require('os')
-function validateWavHeader(filePath) {
-  try {
-    const header = Buffer.alloc(44)
-    const fd = fs.openSync(filePath, 'r')
-    fs.readSync(fd, header, 0, 44, 0); fs.closeSync(fd)
-    const riff = header.toString('ascii', 0, 4)
-    const wave = header.toString('ascii', 8, 12)
-    const fmt  = header.toString('ascii',12, 16)
-    const data = header.toString('ascii',36, 40)
-    const audioFormat = header.readUInt16LE(20)
-    if (riff!=='RIFF' || wave!=='WAVE' || fmt!=='fmt ' || data!=='data') return { valid:false, error:'RIFF/WAVE/fmt/data missing' }
-    if (audioFormat !== 1) return { valid:false, error:`Not PCM (audioFormat=${audioFormat})` }
-    return { valid:true }
-  } catch (e) { return { valid:false, error:e.message } }
-}
-
-function ensureFileReady(filePath, expectedSize) {
-  try {
-    if (!fs.existsSync(filePath)) return { ready:false, error:'Not found' }
-    const st = fs.statSync(filePath)
-    if (st.size <= 0) return { ready:false, error:'Empty file' }
-    if (expectedSize && st.size !== expectedSize) return { ready:false, error:`Size mismatch (${st.size} != ${expectedSize})` }
-    const fd = fs.openSync(filePath, 'r'); fs.closeSync(fd) // can open for read
-    return { ready:true }
-  } catch (e) { return { ready:false, error:e.message } }
-}
-
-function checkElevation() {
-  if (process.platform !== 'win32') return { elevated:false, method:'n/a' }
-  try {
-    const probe = `${os.tmpdir()}\elev_probe.tmp`
-    try { require('fs').writeFileSync(probe, 'x'); require('fs').unlinkSync(probe); return { elevated:true, method:'write-test' } }
-    catch { return { elevated:false, method:'write-test' } }
-  } catch { return { elevated:false, method:'fallback' } }
-}
-
-module.exports = { validateWavHeader, ensureFileReady, checkElevation }
-```
-
-> These utility responsibilities are already described and used across earlier drafts. Keep them small and sync. fileciteturn1file4
+- Preserve **source PCM S16LE**; don’t resample—just wrap to WAV. Your PRD baseline is **PCM 24 kHz → WAV**; if your tier allows, use **44.1 kHz → fallback to 24k/22.05k/16k**. fileciteturn1file7turn1file3  
+- Use filename hints (BPM/key/bars/rate) to help DAWs avoid stretch assumptions. *(UI only; don’t modify audio data.)*
 
 ---
 
-### 3.4 Atomic save (before any drag)
+## 4) Implementation: step‑by‑step
 
-When saving a generated WAV to disk (auto‑save or pre‑warm), write atomically and **flush**:
+### 4.1 Browser: keep auto‑download, constrain expectations
+1) **Continue** writing stems to a chosen folder via File System Access (Chromium). Show clear state: _disabled → pending → saved_. fileciteturn1file6turn1file12  
+2) **Expose** “Reveal in Finder/Explorer” and a **DAW browser setup** hint (Ableton **Places**, FL **extra search folders**).  
+3) **If** you keep web‑drag, set `DownloadURL` and label it **“folders only”**. citeturn0search8
 
-```js
-// pseudo in main (or Node sidecar called by preload)
-fs.writeFileSync(tempPath, wavBytes)      // write *.part
-const fd = fs.openSync(tempPath, 'r+')
-fs.fsyncSync(fd); fs.closeSync(fd)        // flush to disk
-fs.renameSync(tempPath, finalPath)        // atomic rename (same volume)
-```
-- Only **enable** drag when `finalPath` exists, size > 0, header valid.  
-- Keep cleanup timeouts **≥ 5 minutes** to avoid deleting a file while DAW is still reading it. fileciteturn1file9
+> **No change** will make pure‑browser **→ DAW** reliable; this is a platform constraint. citeturn0search8
 
----
+### 4.2 Electron (baseline): saved‑path native drag
+**Renderer (`app.js`)**  
+- On `dragstart` (or `pointerdown` pre‑warm), call a **sync IPC** (not `invoke`) so the main process can finish file validation **before** the OS drag proceeds. fileciteturn1file4turn1file10  
+- If the file isn’t saved yet, the IPC handler should create it **synchronously** (pre‑warm makes this fast).
 
-## 4) ElevenLabs format policy (no resampling)
+**Main (`electron-main.*`)**  
+- Implement a handler like `ipcMain.on('drag:do', (ev, { stemId }) => { … })` that:
+  1. Resolves `filePath` from your Electron file manager.  
+  2. **Ensures readiness**: exists, non‑zero size, **valid WAV header**, and recent timestamp.  
+  3. Calls `win.webContents.startDrag({ file: filePath, icon })` immediately.  
+  4. Returns `{success:true}` via **`event.returnValue`**.
 
-- Use the **best PCM rate** your plan allows (Pro+ can use `pcm_44100`; lower tiers use `pcm_24000` / `pcm_22050` / `pcm_16000`). Build a **fallback ladder** and log the chosen format. citeturn3search1turn3search8  
-- The client wrapper should **only** add a WAV header (RIFF/WAVE **PCM S16LE**), never resample. Your wrapper already does this. fileciteturn1file4  
-- DAWs accept WAV/AIFF natively; MP3/M4A will be decoded on import (Ableton). Prefer WAV for drag. citeturn2search0
+**Utilities** (Node side)  
+- `validateWavHeader(path)` — read first 44 bytes; verify `RIFF/WAVE/fmt /data`, PCM=1, bits=16.  
+- `ensureFileReady(path, expectedSize?)` — `stat>0`, not locked, matches size if known.  
+- Add `fsync` after writing `.part` file; then `rename` to final for **atomic** visibility.  
+- Keep a **5‑minute** cleanup delay for temp files.
 
-> The project’s PRD already specifies a **24 kHz PCM → WAV** pipeline; keep it unless your subscription allows 44.1 kHz. fileciteturn1file2
+> **Why:** Electron requires a real path at drag time. Doing the prep in `ondragstart` avoids races. citeturn0search0turn0search5
 
----
+### 4.3 Electron (advanced): native virtualization
+- **macOS**: implement `NSFilePromiseProvider` (`UTType` = `com.microsoft.waveform-audio`) and fulfill by wrapping the exact ElevenLabs PCM to WAV at drop time. citeturn0search1  (Your `draghelper.swift` already sketches this.) fileciteturn1file0turn1file14  
+- **Windows**: use `CFSTR_FILEDESCRIPTORW` to describe each file and `CFSTR_FILECONTENTS` with an `IStream` that emits the WAV bytes on demand. citeturn0search2turn0search12  (Your `draghelper.cpp` shows an `IStream` wrapper.) fileciteturn1file19
 
-## 5) DAW expectations & platform gotchas
-
-- **Ableton Live**: Imports WAV/AIFF/FLAC/OGG; MP3/M4A decoded on import. If **running as Administrator**, **drag & drop is disabled**; don’t run elevated. citeturn2search0turn1search6  
-- **Logic Pro (macOS)**: Dragging audio into the **Tracks area** creates tracks or sampler content; native OS drag works when you provide a real file path. citeturn2search4  
-- **FL Studio**: Add your auto‑save folder to the **Browser → Extra search folders**; users can then drag from the FL Browser into Playlist/Channel Rack. citeturn2search13  
-- **Windows path length**: Keep paths < **260 chars** (unless your app declares long-path aware and the OS is configured). Use short filenames. citeturn4search0  
-- **macOS UTType**: Prefer `com.microsoft.waveform-audio` as the promised type for WAV when using file promises. citeturn4search3
-
----
-
-## 6) Diagnostics & logs (what to print)
-
-Keep these lines; they are already drafted across prior docs and help support debug:
-
-```
-[FMT] ElevenLabs -> pcm_44100 (or pcm_24000, ...) chosen
-[SAVE] writeWavAtomic OK path=... size=... fsync=ok hdr=ok
-[DRAG] sender=electron event=dragstart stemId=...
-[DRAG] main startDrag path=... elapsedMs=...
-[UAC] windows appElevated=false status=ok   // or mismatch warning
-```
-
-> The combined guide includes concrete examples and troubleshooting banners; reuse them verbatim. fileciteturn1file9turn1file13
+> This path removes pre‑writes for large files and is the closest to DAW‑native UX.
 
 ---
 
-## 7) QA matrix (run every release)
+## 5) Pseudocode & snippets (drop‑in ready)
 
-- **Environments**: Win10/11 + Live 11/12, FL 21; macOS 13–15 + Live 11/12, Logic 11.x.  
-- **Senders**: Browser (folder‑only), Electron (native drag).  
-- **Payloads**: Small/large WAV, mono/stereo, different sample rates (per ElevenLabs tier).  
-- **Pass if**: DAW creates a clip on drop; audio plays; no UAC block; no “partial file” errors; cleanup happens after reading. fileciteturn1file12
-
-> Use the **smoke test** (`test-drag-smoke.cjs`) to verify atomic writes & headers without a DAW. fileciteturn1file15
-
----
-
-## 8) Troubleshooting (fast path)
-
-1) **Windows: drag does nothing in Live** → Quit all; relaunch both **not** as Admin; verify in console `[UAC] ... status=ok`. citeturn1search6  
-2) **Drop rejected** → Confirm file exists, is non‑zero, header valid, and rename finished before drag.  
-3) **Works to folders but not DAW** → You’re in browser path (`DownloadURL`); switch to Electron or drag from Explorer/Finder/DAW browser. citeturn0search3  
-4) **Large files** → Increase cleanup timeout (≥ 5 min) and avoid deleting temp files while DAW is reading. fileciteturn1file9
-
----
-
-## 9) Appendix — code references you can copy/paste
-
-### 9.1 WAV wrapper (no resample)
+### 5.1 WAV wrapper (no resample, S16LE only)
 ```ts
 export function pcm16leToWav(pcm: ArrayBuffer, sampleRate: number, channels = 2): ArrayBuffer {
-  const src = new Uint8Array(pcm)
-  const blockAlign = channels * 2, byteRate = sampleRate * blockAlign, dataSize = src.byteLength
-  const buf = new ArrayBuffer(44 + dataSize), v = new DataView(buf)
-  write(v,0,'RIFF'); v.setUint32(4, 36 + dataSize, true)
-  write(v,8,'WAVE'); write(v,12,'fmt '); v.setUint32(16,16,true)
-  v.setUint16(20,1,true); v.setUint16(22,channels,true)
-  v.setUint32(24,sampleRate,true); v.setUint32(28,byteRate,true)
-  v.setUint16(32,blockAlign,true); v.setUint16(34,16,true)
-  write(v,36,'data'); v.setUint32(40,dataSize,true)
-  new Uint8Array(buf,44).set(src); return buf
-  function write(d:DataView,o:number,s:string){for(let i=0;i<s.length;i++) d.setUint8(o+i, s.charCodeAt(i))}
+  const src = new Uint8Array(pcm);
+  const blockAlign = channels * 2, byteRate = sampleRate * blockAlign, dataSize = src.byteLength;
+  const buf = new ArrayBuffer(44 + dataSize), v = new DataView(buf);
+  write(v,0,'RIFF'); v.setUint32(4, 36 + dataSize, true);
+  write(v,8,'WAVE'); write(v,12,'fmt '); v.setUint32(16,16,true);
+  v.setUint16(20,1,true); v.setUint16(22,channels,true);
+  v.setUint32(24,sampleRate,true); v.setUint32(28,byteRate,true);
+  v.setUint16(32,blockAlign,true); v.setUint16(34,16,true);
+  write(v,36,'data'); v.setUint32(40,dataSize,true);
+  new Uint8Array(buf,44).set(src); return buf;
+  function write(d:DataView,o:number,s:string){for(let i=0;i<s.length;i++) d.setUint8(o+i, s.charCodeAt(i));}
 }
 ```
-fileciteturn1file4
 
-### 9.2 Browser drag (folder‑only)
-```js
-e.dataTransfer.items.add(wavFile)              // best effort
-e.dataTransfer.setData('DownloadURL', `audio/wav:${filename}:${blobUrl}`)
-e.dataTransfer.setData('text/uri-list', blobUrl)
-e.dataTransfer.setData('text/plain', filename)
+### 5.2 Atomic write (Node)
+```ts
+import { promises as fs } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+export async function writeWavAtomic(destPath: string, bytes: Uint8Array) {
+  const tmp = join(dirname(destPath), `.part-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
+  await fs.writeFile(tmp, bytes);
+  const fd = await fs.open(tmp, 'r+'); await fd.sync(); await fd.close();
+  await fs.rename(tmp, destPath); // atomic on same volume
+}
 ```
-fileciteturn1file8
 
-### 9.3 Electron sync startDrag (main)
-```js
-win.webContents.startDrag({ file: filePath, icon })
+### 5.3 Renderer → Main (sync) for native drag
+```ts
+// renderer.ts
+tile.addEventListener('dragstart', (e) => {
+  const ok = window.electron.ipc.sendSync('drag:do', { stemId }); // blocks until main returns
+  if (!ok) e.preventDefault();
+});
+
+// main.ts
+ipcMain.on('drag:do', (ev, { stemId }) => {
+  const { filePath, icon } = ensureOnDisk(stemId); // atomic write & header validate if needed
+  const win = BrowserWindow.fromWebContents(ev.sender);
+  win.webContents.startDrag({ file: filePath, icon }); // must be called during ondragstart
+  ev.returnValue = true;
+});
 ```
-> Must be called as a direct consequence of the renderer’s `ondragstart`. citeturn0search5
+*Electron requires calling `startDrag()` in response to `ondragstart`.* citeturn0search0
 
-### 9.4 macOS / Windows virtual files (future)
-- macOS promise: **NSFilePromiseProvider** (+ delegate to write the WAV). citeturn0search1turn0search6turn0search11turn0search21  
-- Windows virtual: **FILEGROUPDESCRIPTOR + CFSTR_FILECONTENTS**. citeturn0search2turn0search12
+### 5.4 macOS file promise (later)
+```swift
+let provider = NSFilePromiseProvider(fileType: "com.microsoft.waveform-audio", delegate: self)
+provider.userInfo = /* {pcmBytes, sampleRate, channels, filename} */
 
----
+func filePromiseProvider(_ p: NSFilePromiseProvider,
+                         writePromiseTo url: URL,
+                         completionHandler: @escaping (Error?) -> Void) {
+  // Wrap ElevenLabs PCM → WAV (no resample), then write to `url`
+  completionHandler(nil)
+}
+```
+*Use promises to indicate intent and fulfill on drop.* citeturn0search1
 
-## 10) Acceptance checklist
-
-- [ ] Browser path labeled **Folder-only**; Electron path used for DAWs. fileciteturn1file5  
-- [ ] Renderer uses **dynamic Electron detection** everywhere. fileciteturn1file7  
-- [ ] Main handler validates file, **fsyncs**, atomic renames, and calls **`startDrag` synchronously**. citeturn0search5  
-- [ ] Windows shows UAC warnings when elevated; doc instructs to run both processes at same level. citeturn1search6  
-- [ ] ElevenLabs format ladder in place; no resampling in client; WAV header correct. citeturn3search1  
-- [ ] QA matrix passes; smoke test green. fileciteturn1file15
-
----
-
-## 11) Source notes (what this master merges)
-
-- **Combined internal guidance**: atomic writes, utility checks, UI banners, logs, and test plan. fileciteturn1file4  
-- **Product baseline**: PRD indicates 24 kHz PCM→WAV flow today; compatible with DAWs. fileciteturn1file2  
-- **Live code**: `app.js` shows current browser drag (`DataTransferItem`, `DownloadURL`) and warning banners; this remains for folder-only drags. fileciteturn1file8
+### 5.5 Windows virtual file (later)
+- Publish **one** `CFSTR_FILEDESCRIPTORW` per item + **one** `CFSTR_FILECONTENTS` stream per descriptor; set `TYMED_ISTREAM`. citeturn0search2turn0search12
 
 ---
 
-### Appendix: DAW references
+## 6) Guardrails & platform quirks
 
-- **Electron native drag** (must call in `ondragstart`). citeturn0search5  
-- **MDN DataTransfer** (web drags). citeturn0search13  
-- **Chrome `DownloadURL`** (Chrome‑specific, used for folder/desktop). citeturn0search3turn0search8  
-- **macOS file promises** (`NSFilePromiseProvider` + UTType WAV). citeturn0search1turn4search3  
-- **Windows virtual file drags** (`FILEDESCRIPTOR`/`FILECONTENTS`). citeturn0search2turn0search12  
-- **Ableton formats & admin warning**. citeturn2search0turn1search6  
-- **Logic Pro drag behavior**. citeturn2search4  
-- **FL Studio extra folders**. citeturn2search13
+- **Windows UAC:** Never run Live as Administrator unless unavoidable; if you must, run your app **with the same elevation** or DAW drops silently fail. citeturn0search19  
+- **Path length (Windows):** keep paths <260 chars or enable long‑path support; warn users when save folder is very deep. (Reflected in your Attempt #2 logs.) fileciteturn1file11  
+- **macOS drag‑end timing:** `startDrag` may trigger drag‑end handlers earlier than you expect; don’t rely on a drag‑end callback for cleanup. citeturn0search20  
+- **Cloud‑sync folders:** delay “Ready” until the local write is complete to avoid partial reads. fileciteturn1file17
+
+---
+
+## 7) Logs to keep (copy/paste)
+
+```
+[FMT] ElevenLabs -> {pcm_44100|pcm_24000|...}
+[SAVE] path=… size=… wavHeader=ok fsync=ok sr=… ch=… bits=16
+[DRAG] renderer dragstart stem=…
+[DRAG] main startDrag path=… elapsedMs=…
+[UAC] windows appElevated=…
+```
+
+Your previous reports already standardize these. fileciteturn1file5turn1file15
+
+---
+
+## 8) Test matrix (must‑pass)
+
+- **Envs:** Win 10/11 + Live 11/12, FL 21; macOS 13–15 + Live 11/12, Logic 11.x.  
+- **Flows:** A: Browser → folder; B: Electron → DAW; C: Native (when implemented).  
+- **Files:** short (<10 MB) and long (>200 MB); mono & stereo; formats: 44.1k → 24k → 22.05k → 16k fallback.  
+- **Pass if:** DAW creates a clip/region and plays audio; no UAC block; no partials; no stalls. (Mirror your “Attempt” docs.) fileciteturn1file4turn1file8
+
+---
+
+## 9) Troubleshooting (symptom → fix)
+
+- **Drop does nothing (Electron → Live on Windows).** Check UAC. Restart both non‑admin. citeturn0search19  
+- **Works to Desktop, not to DAW (browser).** Expected—DAW ignores web payloads; use Electron or drag from Finder/Explorer. citeturn0search8  
+- **“Unreadable/corrupt file”** after drop. Validate header and ensure **atomic write + fsync** before drag. fileciteturn1file10  
+- **Slow drag/lag.** Move heavy work to **promise/stream fulfillment** (native) or pre‑warm file creation. citeturn0search1  
+- **Only one file appears on multi‑drag.** Provide one descriptor/promise **per item**. citeturn0search2
+
+---
+
+## 10) Answering your question explicitly
+
+> **Is “auto‑download” still viable for DAW drag & drop?**  
+> **Yes, but only as an enabler—not the delivery mechanism.** It ensures the file exists on disk (so Electron can drag a **path**) and it supports **browser → folder** UX. It **will not** make **browser → DAW** work on its own. Use **Electron** (Track B) or **native virtualization** (Track C) for true DAW drops. citeturn0search0turn0search8
+
+---
+
+## 11) Where to plug this into your repo
+
+- **Renderer:** keep the auto‑download panel and pre‑warm (`pointerdown`) logic; call the **sync** drag IPC from `dragstart`. fileciteturn1file6turn1file12  
+- **Main:** add `startDrag` handler that validates/creates files synchronously; leave advanced native helpers behind a feature flag. fileciteturn1file4  
+- **Native (later):** finish `draghelper.swift`/`draghelper.cpp` when you want file‑promise / virtual‑file support. fileciteturn1file0turn1file19
+
+---
+
+## 12) References (selected)
+
+- **Electron native drag:** must call `webContents.startDrag` in response to `ondragstart`. citeturn0search0  
+- **Electron needs a real path** (or native virtualization). citeturn0search5  
+- **Chrome `DownloadURL` is non‑standard; browser→DAW isn’t supported.** citeturn0search8turn0search3turn0search18  
+- **macOS file promises (NSFilePromiseProvider).** citeturn0search1turn0search6  
+- **Windows virtual files (FILEDESCRIPTOR/FILECONTENTS).** citeturn0search2turn0search12  
+- **Ableton Live + Admin blocks drag/drop.** citeturn0search19turn0search4
+
+---
+
+### Appendix A — Sample WAV header validator (Node)
+
+```ts
+import * as fs from 'node:fs';
+export function validateWavHeader(p: string) {
+  const fd = fs.openSync(p, 'r'); const h = Buffer.alloc(44); fs.readSync(fd, h, 0, 44, 0); fs.closeSync(fd);
+  const riff=h.toString('ascii',0,4), wave=h.toString('ascii',8,12), fmt=h.toString('ascii',12,16), data=h.toString('ascii',36,40);
+  const audioFmt=h.readUInt16LE(20), ch=h.readUInt16LE(22), sr=h.readUInt32LE(24), bps=h.readUInt16LE(34), size=h.readUInt32LE(40);
+  if (riff!=='RIFF'||wave!=='WAVE'||fmt!=='fmt '||data!=='data') return {valid:false,error:'bad header'};
+  if (audioFmt!==1) return {valid:false,error:`not PCM: ${audioFmt}`};
+  return {valid:true,details:{ch,sr,bps,size}};
+}
+```
+
+### Appendix B — “Attempt” docs & code you shared
+
+- Attempt reports/log format & checklists. fileciteturn1file5turn1file11  
+- Combined implementation and test guide (keep as companion). fileciteturn1file4turn1file8turn1file16  
+- Current renderer code paths for auto‑download panel and Electron save. fileciteturn1file6turn1file12  
+- Native helper stubs for macOS/Windows virtualization. fileciteturn1file0turn1file14turn1file19
+
+---
+
+**End of guide.**
