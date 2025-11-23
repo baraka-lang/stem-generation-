@@ -6588,6 +6588,11 @@ function updateAllCardNumbers() {
     if (cardNumEl) {
       cardNumEl.textContent = index + 1
     }
+    // Also update desktop number indicator
+    const desktopNumEl = document.querySelector(`[data-card-number-desktop="${st}"]`)
+    if (desktopNumEl) {
+      desktopNumEl.textContent = index + 1
+    }
     // Also update mixer number if it exists
     const mixNumEl = document.querySelector(`[data-mix-number="${st}"]`)
     if (mixNumEl) {
