@@ -60,6 +60,15 @@ function validateWavHeader(filePath) {
  */
 function ensureFileReady(filePath, expectedSize) {
   try {
+    // Windows MAX_PATH validation (260 characters)
+    if (process.platform === 'win32' && filePath.length > 260) {
+      console.warn(`[PATH] Path exceeds Windows MAX_PATH limit: ${filePath.length} chars (max 260)`)
+      return {
+        ready: false,
+        error: `Path too long for Windows (${filePath.length} chars, max 260). Use a shorter folder path.`
+      }
+    }
+
     if (!fs.existsSync(filePath)) {
       return { ready: false, error: 'File does not exist' }
     }

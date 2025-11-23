@@ -160,16 +160,17 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
         iconPath = path.join(__dirname, 'dist/vite.svg')
       }
       if (!fs.existsSync(iconPath)) {
-        console.warn('[Drag] Icon not found, using empty string (may cause issues on macOS)')
-        iconPath = ''
+        console.warn('[Drag] Icon not found, using system default')
+        iconPath = undefined  // undefined allows Electron to use system default
       }
 
       // Start the native OS drag operation
       // This must be called synchronously during the dragstart event
-      win.webContents.startDrag({
-        file: tempFilePath,
-        icon: iconPath
-      })
+      const dragOptions = { file: tempFilePath }
+      if (iconPath !== undefined) {
+        dragOptions.icon = iconPath
+      }
+      win.webContents.startDrag(dragOptions)
 
       console.log(`[Drag] ✓ Native drag initiated successfully (total: ${Date.now() - startTime}ms)`)
 
@@ -385,14 +386,14 @@ ipcMain.on('start-native-drag-with-path', (event, { stemId, filePath, filename }
       return
     }
 
-    // 6. Resolve drag icon
+    // 6. Resolve drag icon (use undefined instead of empty string for macOS compatibility)
     let iconPath = path.join(__dirname, 'public/vite.svg')
     if (!fs.existsSync(iconPath)) {
       iconPath = path.join(__dirname, 'dist/vite.svg')
     }
     if (!fs.existsSync(iconPath)) {
-      console.warn('[DRAG] Icon not found, proceeding without icon')
-      iconPath = ''
+      console.warn('[DRAG] Icon not found, using system default')
+      iconPath = undefined  // undefined allows Electron to use system default
     }
 
     // 7. Check UAC status and warn if mismatch likely
@@ -403,10 +404,11 @@ ipcMain.on('start-native-drag-with-path', (event, { stemId, filePath, filename }
 
     // 8. Start native drag - MUST be synchronous
     const dragStartTime = Date.now()
-    win.webContents.startDrag({
-      file: filePath,
-      icon: iconPath
-    })
+    const dragOptions = { file: filePath }
+    if (iconPath !== undefined) {
+      dragOptions.icon = iconPath  // Only include icon if defined
+    }
+    win.webContents.startDrag(dragOptions)
 
     const elapsed = Date.now() - startTime
     const dragElapsed = Date.now() - dragStartTime

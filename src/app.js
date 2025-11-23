@@ -15,11 +15,53 @@ import { loopFixConfig } from './Config/environment.js'
    Feature flags / Env toggles
    ========================================================= */
 const USE_COMPOSITION_PLAN = String(import.meta.env.VITE_ELEVEN_USE_PLAN || 'false').toLowerCase() === 'true'
-const PRIMARY_OUTPUT_FORMAT = 'pcm_44100'
-const FALLBACK_OUTPUT_FORMAT = 'mp3_44100_128'
 
 /* =========================================================
-   Generation format (server)
+   ElevenLabs Format Ladder (DAW Drag-Drop Compliance)
+   Following guide requirements: prefer highest PCM rate available,
+   fall back gracefully, log format selection explicitly
+   ========================================================= */
+const FORMAT_LADDER = [
+  { format: 'pcm_44100', tier: 'Pro+', label: 'Best Quality', sampleRate: 44100, isPCM: true },
+  { format: 'pcm_24000', tier: 'Standard', label: 'High Quality', sampleRate: 24000, isPCM: true },
+  { format: 'pcm_22050', tier: 'Starter', label: 'Good Quality', sampleRate: 22050, isPCM: true },
+  { format: 'pcm_16000', tier: 'Free', label: 'Basic Quality', sampleRate: 16000, isPCM: true },
+  { format: 'mp3_44100_128', tier: 'Fallback', label: 'Compatibility', sampleRate: 44100, isPCM: false }
+]
+
+const PRIMARY_OUTPUT_FORMAT = FORMAT_LADDER[0].format  // pcm_44100
+const FALLBACK_OUTPUT_FORMAT = FORMAT_LADDER[FORMAT_LADDER.length - 1].format  // mp3_44100_128
+
+/**
+ * Select the best available format from ElevenLabs API
+ * Logs format selection for debugging per DAW drag-drop implementation guide
+ * @param {string[]} availableFormats - Formats available for current tier
+ * @returns {string} Selected format string
+ */
+function selectBestFormat(availableFormats = null) {
+  // If no formats specified, try PRIMARY_OUTPUT_FORMAT first
+  if (!availableFormats || !Array.isArray(availableFormats)) {
+    const selected = FORMAT_LADDER[0]
+    console.log(`[FMT] ElevenLabs format selection: trying ${selected.format} (${selected.tier}: ${selected.label})`)
+    return selected.format
+  }
+
+  // Find first format in ladder that's available
+  for (const config of FORMAT_LADDER) {
+    if (availableFormats.includes(config.format)) {
+      console.log(`[FMT] ElevenLabs -> ${config.format} chosen (${config.tier}: ${config.label}, ${config.sampleRate}Hz)`)
+      return config.format
+    }
+  }
+
+  // Fallback to last format if nothing matches
+  const fallback = FORMAT_LADDER[FORMAT_LADDER.length - 1]
+  console.warn(`[FMT] No preferred format available, using fallback: ${fallback.format} (${fallback.label})`)
+  return fallback.format
+}
+
+/* =========================================================
+   Generation format (server) - legacy compatibility
    ========================================================= */
 const PRO_FORMAT = PRIMARY_OUTPUT_FORMAT
 
@@ -3612,9 +3654,16 @@ async function composeOnce(payload, signal, statusEl = null){
   let lastErr = null
   let retryCount = 0
 
-  for (const fmt of [PRIMARY_OUTPUT_FORMAT, FALLBACK_OUTPUT_FORMAT]) {
+  // Use format ladder for structured fallback
+  const formatsToTry = [PRIMARY_OUTPUT_FORMAT, FALLBACK_OUTPUT_FORMAT]
+
+  for (const fmt of formatsToTry) {
+    // Find format config for detailed logging
+    const formatConfig = FORMAT_LADDER.find(f => f.format === fmt)
+    const formatLabel = formatConfig ? `${formatConfig.tier}: ${formatConfig.label}` : 'Unknown'
+
     try {
-      console.log(`[composeOnce] Attempting with format: ${fmt}`)
+      console.log(`[FMT] Attempting ElevenLabs generation: ${fmt} (${formatLabel})`)
 
       const { data, error } = await retryEdgeFunctionCall(
         () => supabase.functions.invoke('eleven-music-compose', {
@@ -3653,10 +3702,10 @@ async function composeOnce(payload, signal, statusEl = null){
       }
 
       if (data instanceof ArrayBuffer) {
-        console.log(`[composeOnce] Success with ${fmt}, received ArrayBuffer: ${data.byteLength} bytes`)
+        console.log(`[FMT] ✓ ElevenLabs generation successful: ${fmt} (${formatLabel}) - ${data.byteLength} bytes`)
         return data
       } else if (data instanceof Blob) {
-        console.log(`[composeOnce] Success with ${fmt}, received Blob: ${data.size} bytes`)
+        console.log(`[FMT] ✓ ElevenLabs generation successful: ${fmt} (${formatLabel}) - ${data.size} bytes`)
         return await data.arrayBuffer()
       } else if (typeof data === 'object' && data.error) {
         const errMsg = data.error + (data.hint ? ` - ${data.hint}` : '')
@@ -5088,6 +5137,27 @@ function updateDragButtonState(st) {
   // Validate buffer has actual data
   const hasValidData = hasActiveSample && buf.length > 0 && buf.duration > 0
 
+  // Check Electron save status for enhanced UI feedback
+  const isElectron = isElectronMode()
+  const savedRecord = getSavedFileRecord(st)
+  const electronSaveStatus = isElectron && savedRecord ? savedRecord.status : null
+
+  // Determine UI state for visual feedback
+  let uiState = 'disabled'
+  if (hasValidData && isChromium && dragPayloadReady) {
+    if (electronSaveStatus === 'saved') {
+      uiState = 'ready'  // Green - file saved and ready
+    } else if (electronSaveStatus === 'pending') {
+      uiState = 'preparing'  // Yellow - file being saved
+    } else if (electronSaveStatus === 'error') {
+      uiState = 'error'  // Red - save failed
+    } else {
+      uiState = 'enabled'  // Default enabled state
+    }
+  } else if (electronSaveStatus === 'pending') {
+    uiState = 'preparing'  // Show preparing even if button will be disabled
+  }
+
   // Enable button only if valid data exists, PCM is ready, and browser is Chromium
   dragBtn.disabled = !hasValidData || !isChromium || !dragPayloadReady
 
@@ -5149,15 +5219,55 @@ function updateDragButtonState(st) {
     dragBtn.title = tooltip
   }
 
-  // Hide the entire drag container on non-Chromium browsers
+  // Apply visual feedback based on UI state
+  const buttonLabel = dragBtn.querySelector('span')
   const container = document.querySelector(`[data-drag-container="${st}"]`)
+
   if (container && !isChromium) {
+    // Hide the entire drag container on non-Chromium browsers
     container.style.display = 'none'
-  } else if (container && (!hasValidData || !isPCMReady)) {
-    // Visual feedback for empty buffer or not ready
-    dragBtn.style.opacity = '0.5'
   } else if (container) {
-    dragBtn.style.opacity = '1'
+    // Apply state-specific styling
+    switch (uiState) {
+      case 'ready':
+        // Green - file saved and ready to drag
+        dragBtn.style.background = 'linear-gradient(to right, rgb(16 185 129 / 0.9), rgb(5 150 105 / 0.9))'
+        dragBtn.style.opacity = '1'
+        if (buttonLabel) buttonLabel.innerHTML = `<i data-lucide="check-circle" class="w-3 h-3 sm:w-4 sm:h-4"></i> Ready to Drag`
+        break
+
+      case 'preparing':
+        // Yellow/Orange - file being prepared
+        dragBtn.style.background = 'linear-gradient(to right, rgb(251 146 60 / 0.9), rgb(249 115 22 / 0.9))'
+        dragBtn.style.opacity = '0.8'
+        if (buttonLabel) buttonLabel.innerHTML = `<i data-lucide="loader" class="w-3 h-3 sm:w-4 sm:h-4 animate-spin"></i> Preparing...`
+        break
+
+      case 'error':
+        // Red - save failed
+        dragBtn.style.background = 'linear-gradient(to right, rgb(239 68 68 / 0.8), rgb(220 38 38 / 0.8))'
+        dragBtn.style.opacity = '1'
+        if (buttonLabel) buttonLabel.innerHTML = `<i data-lucide="alert-circle" class="w-3 h-3 sm:w-4 sm:h-4"></i> Error - Retry`
+        break
+
+      case 'enabled':
+        // Default blue gradient
+        dragBtn.style.background = ''  // Use CSS default
+        dragBtn.style.opacity = '1'
+        if (buttonLabel) buttonLabel.innerHTML = `<i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i> Drag & Drop`
+        break
+
+      case 'disabled':
+      default:
+        // Disabled state
+        dragBtn.style.background = ''  // Use CSS default
+        dragBtn.style.opacity = '0.5'
+        if (buttonLabel) buttonLabel.innerHTML = `<i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i> Drag & Drop`
+        break
+    }
+
+    // Re-create lucide icons after updating HTML
+    if (window.lucide) window.lucide.createIcons()
   }
 
   const showInFolderBtn = document.querySelector(`[data-action="show-in-folder"][data-stem="${st}"]`)
