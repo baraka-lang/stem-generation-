@@ -2389,7 +2389,7 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   // This ensures offset is preserved when stretch changes
   // When skipOffsetReapply is true (called from adjustStartOffset), we still apply offset
   // but we don't recursively call adjustStartOffset again to avoid infinite loops
-  if (preservedOffset > 0) {
+  if (preservedOffset > 0 && !skipOffsetReapply) {
     adjustStartOffset(st, preservedOffset, true) // Skip endpoint reapply to avoid recursion
     // adjustStartOffset handles PCM extraction and waveform redraw
   } else if (!skipOffsetReapply) {
@@ -2541,7 +2541,7 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
   // This ensures stretch is preserved when offset changes.
   // When skipEndpointReapply is true (called from adjustEndpoint), we still apply stretch
   // but we don't recursively call adjustEndpoint again to avoid infinite loops.
-  if (preservedEndpoint !== 1) {
+  if (preservedEndpoint !== 1 && !skipEndpointReapply) {
     // Now apply stretch to the offset-adjusted audio
     // We need to stretch the offset-extracted portion
     const stretchedOut = applyStretchToBuffer(out, preservedEndpoint)
