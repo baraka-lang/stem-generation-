@@ -4152,6 +4152,11 @@ function queueAutoDownloadsForAvailableStems() {
 
 async function setupAutoDownloadPanel() {
   if (!isAutoDownloadSupported() || autoDownloadPanelEl || !document?.body) return
+
+  // Check if we're on mobile - hide the panel on mobile devices
+  const isMobile = window.innerWidth < 640
+  if (isMobile) return
+
   autoDownloadPanelEl = document.createElement('div')
   autoDownloadPanelEl.id = 'autoDownloadPanel'
   autoDownloadPanelEl.className = 'fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 space-y-2'
