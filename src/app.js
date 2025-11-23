@@ -2476,14 +2476,10 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
     console.warn(`${label} Failed to extract PCM for ${st}:`, pcmErr.message)
   }
 
-  if (hasStretch) {
-    redrawStemWaveform(st)
-  } else {
-    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
-    if (canvas) {
-      const cfg = stemConfigs[st]
-      drawWaveform(canvas, rebuilt, `rgb(${getColorRGB(cfg.color)})`)
-    }
+  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  if (canvas) {
+    const cfg = stemConfigs[st]
+    drawWaveform(canvas, rebuilt, `rgb(${getColorRGB(cfg.color)})`)
   }
   // Don't restart during adjustment - changes will take effect on next natural loop boundary
   // This prevents jarring position jumps while the user is fine-tuning parameters
