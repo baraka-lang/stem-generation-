@@ -6569,6 +6569,9 @@ function addInstrument(stemId) {
     updateAllCardNumbers()
   }
 
+  // Rebuild mixer to include the new instrument
+  buildFloatingMixerPanel()
+
   // Update plus button visibility
   updatePlusButtonVisibility()
 
