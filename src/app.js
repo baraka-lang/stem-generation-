@@ -2485,8 +2485,9 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
   offsetFactor = Math.max(0, Math.min(1, offsetFactor))
   startOffsetFactors[st] = offsetFactor
 
-  // Preserve the endpoint factor if one was set (but only if not being called recursively)
-  const preservedEndpoint = skipEndpointReapply ? 1 : (endpointFactors[st] || 1)
+  // Always read the actual stored endpoint factor to determine if stretch should be applied
+  // The skipEndpointReapply flag only controls recursion prevention, not effect preservation
+  const preservedEndpoint = endpointFactors[st] || 1
 
   const sr = raw.sampleRate
   const channels = raw.numberOfChannels
@@ -2534,9 +2535,11 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
     stemHistory[st][idx].startOffset = offsetFactor
   }
 
-  // If an endpoint/stretch was previously applied AND we're not being called recursively,
-  // reapply it to the offset-adjusted audio. This ensures stretch is preserved when offset changes.
-  if (preservedEndpoint !== 1 && !skipEndpointReapply) {
+  // If an endpoint/stretch was previously applied, apply it to the offset-adjusted audio.
+  // This ensures stretch is preserved when offset changes.
+  // When skipEndpointReapply is true (called from adjustEndpoint), we still apply stretch
+  // but we don't recursively call adjustEndpoint again to avoid infinite loops.
+  if (preservedEndpoint !== 1) {
     // Now apply stretch to the offset-adjusted audio
     // We need to stretch the offset-extracted portion
     const stretchedOut = applyStretchToBuffer(out, preservedEndpoint)
