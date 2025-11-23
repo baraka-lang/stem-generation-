@@ -253,43 +253,35 @@
         <span id="masterVolumeValue" class="text-sm w-12 text-right">90%</span>
       </div>
 
-
-
-     <!-- Saved Stem states -->
-      <div id="saveGroup"
-        class="sm:flex items-center gap-5 ps-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap">
-
-        <select id="savedSetsDropdown" class=" bg-transparent  px-2 py-1 text-xs sm:text-sm text-white/80">
+      <!-- Save button and dropdown group -->
+      <div id="saveGroup" class="sm:flex items-center gap-2">
+        <select id="savedSetsDropdown" class="bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-xs sm:text-sm text-white/80">
           <option value="">------</option>
         </select>
-        
+        <button id="saveStateBtn" aria-label="Save current state"
+          class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
+          title="Save current set">
+          <i data-lucide="save" class="w-5 h-5"></i>
+        </button>
       </div>
+
       <!-- Session info card (desktop only) -->
       <div id="sessionInfoCard"
         class="hidden sm:flex items-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap">
         <span id="sessionInfoText" class="whitespace-nowrap">--</span>
       </div>
-      <!-- Mixer toggle button: icon only -->
-      <button id="mixerToggleBtn" aria-label="Toggle mixer" aria-pressed="false"
-        class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
-        <i data-lucide="sliders" class="w-5 h-5"></i>
-      </button>
+
       <!-- Download All button: icon only, consistent across mobile and desktop -->
       <button id="downloadAllBtn" aria-label="Download all"
         class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
         <i data-lucide="download" class="w-5 h-5"></i>
       </button>
 
-      <button id="saveStateBtn" aria-label="Save current state"
-          class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
-          title="Save current set">
-          <i data-lucide="save" class="w-5 h-5"></i>
-        </button>
-      <!-- Save to database trigger btn -->
-      <!-- <button id="saveToDbTrigger" aria-label="save to database" aria-pressed="false"
+      <!-- Mixer toggle button: icon only -->
+      <button id="mixerToggleBtn" aria-label="Toggle mixer" aria-pressed="false"
         class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
-        <i data-lucide="save" class="w-5 h-5"></i>
-      </button> -->
+        <i data-lucide="sliders" class="w-5 h-5"></i>
+      </button>
     </div>
   </div>
 
