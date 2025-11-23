@@ -4658,7 +4658,8 @@ function createBuilderStemCard(st, cfg){
   card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
   card.setAttribute('data-stem', st)
 
-  const idx = STEM_ORDER.indexOf(st) + 1
+  // Use position in visibleInstruments for sequential numbering (1, 2, 3, etc.)
+  const idx = visibleInstruments.indexOf(st) + 1
 
   // Build header markup.  On mobile (below sm), action buttons appear on a second row beneath
   // the title and number.  On sm and above, the action buttons appear inline to the right of
@@ -4873,7 +4874,8 @@ function volumeKnobHTML(st){
   const v=stemControlValues[st]?.volume ?? 80
   const label=stemConfigs[st]?.name || st
   const ang=knobAngle(v)
-  const idx = STEM_ORDER.indexOf(st) + 1
+  // Use position in visibleInstruments for sequential numbering (1, 2, 3, etc.)
+  const idx = visibleInstruments.indexOf(st) + 1
   return `\n        <div class="sg-mix-card relative flex flex-col items-center justify-center rounded-xl border border-white/15 bg-white/10 p-2 aspect-square select-none"\n             data-mix-card="${st}">\n          <span data-mix-number="${st}" class="absolute left-1 top-1 flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>\n          <div class="text-[10px] mb-1 text-white/85">${label}</div>\n          <div class="relative w-12 h-12 rounded-full border border-white/25 bg-white/10 shadow-inner cursor-[ns-resize]"\n               data-mix-knob data-stem="${st}" data-value="${v}" title="${label} Volume">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-4 bg-white/90 rounded pointer-events-none"\n                 data-mix-pointer style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] text-white/80"><span data-mix-readout="${st}">${v}</span>%</div>\n          <div class="mt-1 flex gap-1">\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>\n          </div>\n        </div>\n      `
 }
 
@@ -4885,7 +4887,8 @@ function volumeKnobHTML(st){
 // event handlers.
 function mixChannelRowHTML(st){
   const name = stemConfigs[st]?.name || st
-  const idx  = STEM_ORDER.indexOf(st) + 1
+  // Use position in visibleInstruments for sequential numbering (1, 2, 3, etc.)
+  const idx  = visibleInstruments.indexOf(st) + 1
   // Retrieve current state values; initialise to defaults (50 => 0 dB) if undefined
   const volVal = stemControlValues[st]?.volume ?? 50
   const eq = stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
@@ -5350,7 +5353,7 @@ function setupEventListeners() {
       return
     }
 
-    // Digits/Numpad 1..9 → mute/unmute mapped stems
+    // Digits/Numpad 1..9 → mute/unmute visible instruments by their display number
     const code = e.code || ''
     let num = null
     if (code.startsWith('Digit')) num = Number(code.slice(5))
@@ -5359,7 +5362,8 @@ function setupEventListeners() {
       if (/^[1-9]$/.test(d)) num = Number(d)
     }
     if (num && num >= 1 && num <= 9) {
-      const st = STEM_ORDER[num - 1]
+      // Map number key to visible instrument position
+      const st = visibleInstruments[num - 1]
       if (st) toggleMute(st)
     }
   })
