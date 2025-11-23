@@ -2384,11 +2384,11 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   // Invalidate cached WAV since loop has been adjusted
   invalidateStemCache(st)
 
-  // If an offset was previously applied, reapply it now to the stretched audio
+  // If an offset was previously applied, reapply it now
   // This ensures offset is preserved when stretch changes
-  // Pass the stretched buffer (out) as the source so offset operates on stretched audio
+  // Don't pass the stretched buffer - let adjustStartOffset extract from raw then reapply stretch
   if (preservedOffset > 0 && !skipOffsetReapply) {
-    adjustStartOffset(st, preservedOffset, true, out) // Pass stretched buffer and skip endpoint reapply
+    adjustStartOffset(st, preservedOffset, true) // Skip endpoint reapply to avoid recursion
     // adjustStartOffset handles PCM extraction and waveform redraw
   } else if (!skipOffsetReapply) {
     // No offset to reapply, proceed with normal PCM extraction and rendering
@@ -2417,6 +2417,59 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
 }
 
 /**
+ * Helper function to apply time-stretch to an AudioBuffer.
+ * Uses the same OLA algorithm as adjustEndpoint.
+ *
+ * @param {AudioBuffer} buffer The buffer to stretch
+ * @param {number} factor The stretch factor (>0)
+ * @returns {AudioBuffer} The stretched buffer
+ */
+function applyStretchToBuffer(buffer, factor) {
+  const sr = buffer.sampleRate
+  const channels = buffer.numberOfChannels
+  const length = buffer.length
+  const out = new AudioBuffer({ length, numberOfChannels: channels, sampleRate: sr })
+
+  function timeStretchOLA(src, outLen, factor) {
+    const srcLen = src.length
+    const frameSize = 1024
+    const hopOut = frameSize / 2
+    const hopIn = hopOut * factor
+    const window = new Float32Array(frameSize)
+    for (let i = 0; i < frameSize; i++) {
+      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (frameSize - 1)))
+    }
+    const outBuf = new Float32Array(outLen)
+    let posSrc = 0
+    let posDst = 0
+    while (posDst < outLen + frameSize) {
+      const baseDst = Math.floor(posDst)
+      for (let i = 0; i < frameSize; i++) {
+        const outIdx = baseDst + i
+        if (outIdx >= outLen) break
+        let srcIdx = Math.floor(posSrc + i)
+        srcIdx = ((srcIdx % srcLen) + srcLen) % srcLen
+        outBuf[outIdx] += src[srcIdx] * window[i]
+      }
+      posSrc += hopIn
+      posDst += hopOut
+    }
+    return outBuf
+  }
+
+  for (let c = 0; c < channels; c++) {
+    const src = buffer.getChannelData(c)
+    const stretched = timeStretchOLA(src, length, factor)
+    const dst = out.getChannelData(c)
+    dst.set(stretched)
+  }
+
+  applyEdgeRamps(out, EDGE_RAMP_MS)
+  applySeamCrossfade(out, LOOP_XFADE_MS)
+  return out
+}
+
+/**
  * Shift the loop start position within the audio without changing duration.
  * This allows selecting which portion of the audio is used for the loop.
  *
@@ -2424,10 +2477,8 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
  * @param {number} offsetFactor The offset as a fraction (0-1) of available shift range
  */
 function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, sourceBuffer = null) {
-  // Use explicit source buffer if provided, otherwise fall back to stemRaw
-  // When called from adjustEndpoint, sourceBuffer will be the stretched audio
-  // When called directly (e.g., from knob), sourceBuffer will be null and we use stemRaw
-  const raw = sourceBuffer || stemRaw[st]
+  // Always use the original raw audio as the source for offset extraction
+  const raw = stemRaw[st]
   if (!raw) return
 
   // Clamp offset to valid range
@@ -2441,11 +2492,9 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
   const channels = raw.numberOfChannels
   const rawLength = raw.length
 
-  // Calculate desired loop length
-  // When sourceBuffer is provided (from adjustEndpoint), use its full length
-  // When sourceBuffer is null (direct call), preserve existing loop length
+  // Calculate desired loop length - preserve existing loop length if available
   const existing = stemLoop[st]
-  const loopLength = sourceBuffer ? rawLength : (existing ? existing.length : rawLength)
+  const loopLength = existing ? existing.length : rawLength
 
   // Calculate start frame based on offset
   // If offset is 0, start at frame 0. If offset is 1, start as far right as possible
@@ -2487,10 +2536,25 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
 
   // If an endpoint/stretch was previously applied AND we're not being called recursively,
   // reapply it to the offset-adjusted audio. This ensures stretch is preserved when offset changes.
-  // Only do this when called directly (sourceBuffer is null), not when called from adjustEndpoint
-  if (preservedEndpoint !== 1 && !skipEndpointReapply && !sourceBuffer) {
-    // Call adjustEndpoint which will stretch the original raw, then reapply this offset
-    adjustEndpoint(st, preservedEndpoint, false)
+  if (preservedEndpoint !== 1 && !skipEndpointReapply) {
+    // Now apply stretch to the offset-adjusted audio
+    // We need to stretch the offset-extracted portion
+    const stretchedOut = applyStretchToBuffer(out, preservedEndpoint)
+    stemLoop[st] = stretchedOut
+    stemLoopDuration[st] = stretchedOut.duration
+    invalidateStemCache(st)
+
+    // Extract PCM from the stretched result
+    try {
+      clearStemPCM(st)
+      const pcmData = extractPCMFromAudioBuffer(stretchedOut)
+      storeStemPCM(st, pcmData, stretchedOut.sampleRate, stretchedOut.numberOfChannels, `pcm_${stretchedOut.sampleRate}`)
+      console.log(`[Offset+Stretch] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+      scheduleAutoDownloadForStem(st)
+    } catch (pcmErr) {
+      console.warn(`[Offset+Stretch] Failed to extract PCM for ${st}:`, pcmErr.message)
+    }
+    redrawStemWaveform(st)
   } else {
     // No endpoint to reapply, proceed with normal PCM extraction and rendering
     // Extract PCM from the adjusted AudioBuffer
