@@ -2293,6 +2293,59 @@ function handleEndpointSlider(st, val) {
 }
 
 /**
+ * Build an AudioBuffer for a stem with the current loop length, applying
+ * the specified offset and optional stretch.  This helper ensures both
+ * effects are composed in a consistent order so one does not overwrite
+ * the other.
+ *
+ * @param {string} st The stem identifier.
+ * @param {number} offsetFactor The start offset (0–1).
+ * @param {number} endpointFactor The stretch factor (>0).
+ * @returns {AudioBuffer|null} The rebuilt buffer or null if the stem is missing.
+ */
+function rebuildStemLoop(st, offsetFactor, endpointFactor) {
+  const raw = stemRaw[st]
+  if (!raw) return null
+
+  const existing = stemLoop[st]
+  const loopLength = existing ? existing.length : raw.length
+  const sr = raw.sampleRate
+  const channels = raw.numberOfChannels
+
+  const clampedOffset = Math.max(0, Math.min(1, offsetFactor))
+  const maxStartFrame = Math.max(0, raw.length - loopLength)
+  const startFrame = Math.floor(clampedOffset * maxStartFrame)
+
+  const offsetBuffer = new AudioBuffer({
+    length: loopLength,
+    numberOfChannels: channels,
+    sampleRate: sr
+  })
+
+  for (let c = 0; c < channels; c++) {
+    const src = raw.getChannelData(c)
+    const dst = offsetBuffer.getChannelData(c)
+
+    for (let i = 0; i < loopLength; i++) {
+      const srcIdx = (startFrame + i) % raw.length
+      dst[i] = src[srcIdx]
+    }
+  }
+
+  applyEdgeRamps(offsetBuffer, EDGE_RAMP_MS)
+  applySeamCrossfade(offsetBuffer, LOOP_XFADE_MS)
+
+  if (endpointFactor === 1) {
+    return offsetBuffer
+  }
+
+  const stretched = applyStretchToBuffer(offsetBuffer, endpointFactor)
+  applyEdgeRamps(stretched, EDGE_RAMP_MS)
+  applySeamCrossfade(stretched, LOOP_XFADE_MS)
+  return stretched
+}
+
+/**
  * Rebuild a stem's loop buffer based on a stretch/compression factor.  A
  * factor of 1.0 leaves the audio unchanged.  Values below 1.0 compress
  * the raw audio (it finishes sooner within the loop) and values above
@@ -2305,117 +2358,31 @@ function handleEndpointSlider(st, val) {
  * @param {number} factor The stretch factor (>0).
  */
 function adjustEndpoint(st, factor, skipOffsetReapply = false) {
-  // Always use the original raw audio as the source for stretching
-  // This ensures we don't apply stretch on already-stretched audio
-  const raw = stemRaw[st]
-  if (!raw) return
+  const preservedOffset = skipOffsetReapply ? 0 : (startOffsetFactors[st] || 0)
+  const rebuilt = rebuildStemLoop(st, preservedOffset, factor)
+  if (!rebuilt) return
 
-  // Always read the actual stored offset factor to determine if offset should be applied
-  // The skipOffsetReapply flag only controls recursion prevention, not effect preservation
-  const preservedOffset = startOffsetFactors[st] || 0
-
-  const existing = stemLoop[st]
-  // Preserve the current loop length if we have one; otherwise use the raw length
-  const length = existing ? existing.length : raw.length
-  const sr = raw.sampleRate
-  const channels = raw.numberOfChannels
-  const out = new AudioBuffer({ length, numberOfChannels: channels, sampleRate: sr })
-  /**
-   * Perform a pitch‑preserving time stretch on a single channel using a
-   * simple overlap‑add (OLA) algorithm.  We use a Hann window and
-   * 50% overlap to ensure reasonably smooth reconstruction.  The
-   * hop sizes in the input and output domains are related by the
-   * stretch factor.  When factor > 1, the audio is compressed (we
-   * move further ahead in the input for each output hop).  When
-   * factor < 1, the audio is stretched (we move more slowly through
-   * the input).  The input is treated as circular so that the loop
-   * content wraps naturally.  See: standard OLA/WSOLA techniques in
-   * time‑stretch literature【250912434198074†L742-L756】.
-   *
-   * @param {Float32Array} src The source channel data
-   * @param {number} outLen The desired output length in samples
-   * @param {number} factor The stretch factor (>0)
-   */
-  function timeStretchOLA(src, outLen, factor) {
-    const srcLen = src.length
-    const frameSize = 1024
-    const hopOut = frameSize / 2 // 50% overlap
-    const hopIn = hopOut * factor
-    // Precompute Hann window for smooth crossfades.  With 50% overlap
-    // the sum of overlapping Hann windows is unity, so no explicit
-    // normalisation is required.
-    const window = new Float32Array(frameSize)
-    for (let i = 0; i < frameSize; i++) {
-      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (frameSize - 1)))
-    }
-    const outBuf = new Float32Array(outLen)
-    let posSrc = 0
-    let posDst = 0
-    // Continue until we have filled the output buffer.  We allow the
-    // last window to wrap around at the end of the buffer.
-    while (posDst < outLen + frameSize) {
-      const baseDst = Math.floor(posDst)
-      // For each sample in the frame, add the windowed source sample to the output.
-      for (let i = 0; i < frameSize; i++) {
-        const outIdx = baseDst + i
-        if (outIdx >= outLen) break
-        let srcIdx = Math.floor(posSrc + i)
-        // Wrap around the source index
-        srcIdx = ((srcIdx % srcLen) + srcLen) % srcLen
-        outBuf[outIdx] += src[srcIdx] * window[i]
-      }
-      posSrc += hopIn
-      posDst += hopOut
-    }
-    return outBuf
-  }
-  for (let c = 0; c < channels; c++) {
-    const src = raw.getChannelData(c)
-    const stretched = timeStretchOLA(src, length, factor)
-    const dst = out.getChannelData(c)
-    // Copy stretched data into the AudioBuffer channel
-    dst.set(stretched)
-  }
-  // Apply longer edge ramps and crossfade for a smooth loop
-  applyEdgeRamps(out, EDGE_RAMP_MS)
-  applySeamCrossfade(out, LOOP_XFADE_MS)
-  // Update loop buffer and duration
-  stemLoop[st] = out
-  stemLoopDuration[st] = out.duration
-  // Invalidate cached WAV since loop has been adjusted
+  stemLoop[st] = rebuilt
+  stemLoopDuration[st] = rebuilt.duration
   invalidateStemCache(st)
 
-  // If an offset was previously applied, apply it to the stretched audio
-  // This ensures offset is preserved when stretch changes
-  // When skipOffsetReapply is true (called from adjustStartOffset), we still apply offset
-  // but we don't recursively call adjustStartOffset again to avoid infinite loops
-  if (preservedOffset > 0 && !skipOffsetReapply) {
-    adjustStartOffset(st, preservedOffset, true) // Skip endpoint reapply to avoid recursion
-    // adjustStartOffset handles PCM extraction and waveform redraw
-  } else if (!skipOffsetReapply) {
-    // No offset to reapply, proceed with normal PCM extraction and rendering
-    // Extract PCM from the adjusted AudioBuffer for drag-and-drop
-    try {
-      clearStemPCM(st) // Clear any existing PCM data before storing new
-      const pcmData = extractPCMFromAudioBuffer(stemLoop[st])
-      storeStemPCM(st, pcmData, stemLoop[st].sampleRate, stemLoop[st].numberOfChannels, `pcm_${stemLoop[st].sampleRate}`)
-      console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-      scheduleAutoDownloadForStem(st)
-    } catch (pcmErr) {
-      console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
-    }
-    // Redraw waveform
-    const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
-    if (canvas) {
-      const cfg = stemConfigs[st]
-      drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
-      // Do not scale the waveform on the card when adjusting the endpoint.
-      // Keeping the canvas at a consistent height ensures the user can
-      // always click the waveform, even if the volume is very low.
-    }
-    // Don't restart during adjustment - changes will take effect on next natural loop boundary
-    // This prevents jarring position jumps while the user is fine-tuning parameters
+  try {
+    clearStemPCM(st)
+    const pcmData = extractPCMFromAudioBuffer(rebuilt)
+    storeStemPCM(st, pcmData, rebuilt.sampleRate, rebuilt.numberOfChannels, `pcm_${rebuilt.sampleRate}`)
+    console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    scheduleAutoDownloadForStem(st)
+  } catch (pcmErr) {
+    console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
+
+  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  if (canvas) {
+    const cfg = stemConfigs[st]
+    drawWaveform(canvas, rebuilt, `rgb(${getColorRGB(cfg.color)})`)
+  }
+  // Don't restart during adjustment - changes will take effect on next natural loop boundary
+  // This prevents jarring position jumps while the user is fine-tuning parameters
 }
 
 /**
@@ -2479,110 +2446,47 @@ function applyStretchToBuffer(buffer, factor) {
  * @param {number} offsetFactor The offset as a fraction (0-1) of available shift range
  */
 function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, sourceBuffer = null) {
-  // Always use the original raw audio as the source for offset extraction
-  const raw = stemRaw[st]
-  if (!raw) return
+  const preservedEndpoint = !skipEndpointReapply ? (endpointFactors[st] || 1) : 1
+  const rebuilt = rebuildStemLoop(st, offsetFactor, preservedEndpoint)
+  if (!rebuilt) return
 
-  // Clamp offset to valid range
-  offsetFactor = Math.max(0, Math.min(1, offsetFactor))
-  startOffsetFactors[st] = offsetFactor
+  startOffsetFactors[st] = Math.max(0, Math.min(1, offsetFactor))
 
-  // Always read the actual stored endpoint factor to determine if stretch should be applied
-  // The skipEndpointReapply flag only controls recursion prevention, not effect preservation
-  const preservedEndpoint = endpointFactors[st] || 1
-
-  const sr = raw.sampleRate
-  const channels = raw.numberOfChannels
-  const rawLength = raw.length
-
-  // Calculate desired loop length - preserve existing loop length if available
-  const existing = stemLoop[st]
-  const loopLength = existing ? existing.length : rawLength
-
-  // Calculate start frame based on offset
-  // If offset is 0, start at frame 0. If offset is 1, start as far right as possible
-  const maxStartFrame = Math.max(0, rawLength - loopLength)
-  const startFrame = Math.floor(offsetFactor * maxStartFrame)
-
-  // Create new buffer with selected portion
-  const out = new AudioBuffer({
-    length: loopLength,
-    numberOfChannels: channels,
-    sampleRate: sr
-  })
-
-  for (let c = 0; c < channels; c++) {
-    const src = raw.getChannelData(c)
-    const dst = out.getChannelData(c)
-
-    // Copy from selected start position
-    for (let i = 0; i < loopLength; i++) {
-      const srcIdx = (startFrame + i) % rawLength  // Wrap around if needed
-      dst[i] = src[srcIdx]
-    }
-  }
-
-  // Apply edge ramps and crossfade
-  applyEdgeRamps(out, EDGE_RAMP_MS)
-  applySeamCrossfade(out, LOOP_XFADE_MS)
-
-  // Update loop buffer
-  stemLoop[st] = out
-  stemLoopDuration[st] = out.duration
+  stemLoop[st] = rebuilt
+  stemLoopDuration[st] = rebuilt.duration
   invalidateStemCache(st)
 
   // Persist on active take
   const idx = stemActiveIndex[st]
   if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
-    stemHistory[st][idx].startOffset = offsetFactor
+    stemHistory[st][idx].startOffset = startOffsetFactors[st]
   }
 
-  // If an endpoint/stretch was previously applied, apply it to the offset-adjusted audio.
-  // This ensures stretch is preserved when offset changes.
-  // When skipEndpointReapply is true (called from adjustEndpoint), we still apply stretch
-  // but we don't recursively call adjustEndpoint again to avoid infinite loops.
-  if (preservedEndpoint !== 1 && !skipEndpointReapply) {
-    // Now apply stretch to the offset-adjusted audio
-    // We need to stretch the offset-extracted portion
-    const stretchedOut = applyStretchToBuffer(out, preservedEndpoint)
-    stemLoop[st] = stretchedOut
-    stemLoopDuration[st] = stretchedOut.duration
-    invalidateStemCache(st)
+  const hasStretch = preservedEndpoint !== 1 && !skipEndpointReapply
 
-    // Extract PCM from the stretched result
-    try {
-      clearStemPCM(st)
-      const pcmData = extractPCMFromAudioBuffer(stretchedOut)
-      storeStemPCM(st, pcmData, stretchedOut.sampleRate, stretchedOut.numberOfChannels, `pcm_${stretchedOut.sampleRate}`)
-      console.log(`[Offset+Stretch] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-      scheduleAutoDownloadForStem(st)
-    } catch (pcmErr) {
-      console.warn(`[Offset+Stretch] Failed to extract PCM for ${st}:`, pcmErr.message)
-    }
+  try {
+    clearStemPCM(st)
+    const pcmData = extractPCMFromAudioBuffer(rebuilt)
+    storeStemPCM(st, pcmData, rebuilt.sampleRate, rebuilt.numberOfChannels, `pcm_${rebuilt.sampleRate}`)
+    const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
+    console.log(`${label} Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    scheduleAutoDownloadForStem(st)
+  } catch (pcmErr) {
+    const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
+    console.warn(`${label} Failed to extract PCM for ${st}:`, pcmErr.message)
+  }
+
+  if (hasStretch) {
     redrawStemWaveform(st)
   } else {
-    // No endpoint to reapply, proceed with normal PCM extraction and rendering
-    // Extract PCM from the adjusted AudioBuffer
-    try {
-      clearStemPCM(st)
-      const pcmData = extractPCMFromAudioBuffer(out)
-      storeStemPCM(st, pcmData, out.sampleRate, out.numberOfChannels, `pcm_${out.sampleRate}`)
-      console.log(`[Offset] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-      scheduleAutoDownloadForStem(st)
-    } catch (pcmErr) {
-      console.warn(`[Offset] Failed to extract PCM for ${st}:`, pcmErr.message)
-    }
-
-    // Redraw waveform
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
       const cfg = stemConfigs[st]
-      drawWaveform(canvas, out, `rgb(${getColorRGB(cfg.color)})`)
+      drawWaveform(canvas, rebuilt, `rgb(${getColorRGB(cfg.color)})`)
     }
-
-    // Don't restart during adjustment - changes will take effect on next natural loop boundary
-    // This prevents jarring position jumps while the user is fine-tuning parameters
   }
+  // Don't restart during adjustment - changes will take effect on next natural loop boundary
+  // This prevents jarring position jumps while the user is fine-tuning parameters
 }
 
 /**
