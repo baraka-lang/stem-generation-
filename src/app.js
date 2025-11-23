@@ -2310,8 +2310,9 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   const raw = stemRaw[st]
   if (!raw) return
 
-  // Preserve the offset factor if one was set (but only if not being called recursively)
-  const preservedOffset = skipOffsetReapply ? 0 : (startOffsetFactors[st] || 0)
+  // Always read the actual stored offset factor to determine if offset should be applied
+  // The skipOffsetReapply flag only controls recursion prevention, not effect preservation
+  const preservedOffset = startOffsetFactors[st] || 0
 
   const existing = stemLoop[st]
   // Preserve the current loop length if we have one; otherwise use the raw length
@@ -2384,10 +2385,11 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
   // Invalidate cached WAV since loop has been adjusted
   invalidateStemCache(st)
 
-  // If an offset was previously applied, reapply it now
+  // If an offset was previously applied, apply it to the stretched audio
   // This ensures offset is preserved when stretch changes
-  // Don't pass the stretched buffer - let adjustStartOffset extract from raw then reapply stretch
-  if (preservedOffset > 0 && !skipOffsetReapply) {
+  // When skipOffsetReapply is true (called from adjustStartOffset), we still apply offset
+  // but we don't recursively call adjustStartOffset again to avoid infinite loops
+  if (preservedOffset > 0) {
     adjustStartOffset(st, preservedOffset, true) // Skip endpoint reapply to avoid recursion
     // adjustStartOffset handles PCM extraction and waveform redraw
   } else if (!skipOffsetReapply) {
