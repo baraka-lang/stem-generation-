@@ -6500,22 +6500,42 @@ function showInstrumentDropdown(buttonElement) {
 
   dropdown.innerHTML = dropdownHTML
 
-  // Position dropdown to the right of the button
+  // Position dropdown centered over the button
   const rect = buttonElement.getBoundingClientRect()
   dropdown.style.position = 'fixed'
-  dropdown.style.top = `${rect.top}px`
-  dropdown.style.left = `${rect.right + 12}px`
-
-  // Ensure dropdown stays within viewport bounds
-  setTimeout(() => {
-    const dropdownRect = dropdown.getBoundingClientRect()
-    if (dropdownRect.right > window.innerWidth) {
-      // If dropdown overflows right, position it to the left of the button instead
-      dropdown.style.left = `${rect.left - dropdownRect.width - 12}px`
-    }
-  }, 0)
 
   document.body.appendChild(dropdown)
+
+  // Calculate centered position after dropdown is added to DOM (so we can get its dimensions)
+  setTimeout(() => {
+    const dropdownRect = dropdown.getBoundingClientRect()
+
+    // Center horizontally over the button
+    const buttonCenterX = rect.left + (rect.width / 2)
+    let dropdownLeft = buttonCenterX - (dropdownRect.width / 2)
+
+    // Center vertically over the button
+    const buttonCenterY = rect.top + (rect.height / 2)
+    let dropdownTop = buttonCenterY - (dropdownRect.height / 2)
+
+    // Ensure dropdown stays within viewport bounds horizontally
+    const viewportPadding = 12
+    if (dropdownLeft < viewportPadding) {
+      dropdownLeft = viewportPadding
+    } else if (dropdownLeft + dropdownRect.width > window.innerWidth - viewportPadding) {
+      dropdownLeft = window.innerWidth - dropdownRect.width - viewportPadding
+    }
+
+    // Ensure dropdown stays within viewport bounds vertically
+    if (dropdownTop < viewportPadding) {
+      dropdownTop = viewportPadding
+    } else if (dropdownTop + dropdownRect.height > window.innerHeight - viewportPadding) {
+      dropdownTop = window.innerHeight - dropdownRect.height - viewportPadding
+    }
+
+    dropdown.style.left = `${dropdownLeft}px`
+    dropdown.style.top = `${dropdownTop}px`
+  }, 0)
 
   // Add click handlers for each instrument
   availableInstruments.forEach(st => {
