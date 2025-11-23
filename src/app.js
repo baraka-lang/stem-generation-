@@ -4159,7 +4159,7 @@ async function setupAutoDownloadPanel() {
 
   autoDownloadPanelEl = document.createElement('div')
   autoDownloadPanelEl.id = 'autoDownloadPanel'
-  autoDownloadPanelEl.className = 'fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 space-y-2'
+  autoDownloadPanelEl.className = 'hidden sm:block fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 space-y-2'
   autoDownloadPanelEl.innerHTML = `
     <div class="text-[11px] uppercase tracking-[0.3em] text-white/60">DAW Drop Helper</div>
     <div class="flex items-start gap-3">
