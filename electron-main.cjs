@@ -3,6 +3,7 @@ const path = require('path')
 const fs = require('fs')
 const fsPromises = require('fs').promises
 const os = require('os')
+const { execSync } = require('child_process')
 const { validateWavHeader, ensureFileReady, isProcessElevated, getDiagnostics } = require('./electron-utils.cjs')
 
 let nativeDragHelper = null
@@ -75,21 +76,82 @@ app.on('window-all-closed', () => {
   }
 })
 
-function wrapPCMToWAV(pcmBuffer, sampleRate, numChannels) {
+/**
+ * Create BWF (Broadcast Wave Format) bext chunk for professional DAW compatibility
+ * This metadata helps DAWs recognize the file as production-ready audio
+ */
+function createBextChunk(description = '', originator = '343 Labs Music Studio') {
+  const bextSize = 602 // Standard bext chunk size
+  const chunk = Buffer.alloc(bextSize)
+
+  // Chunk ID
+  chunk.write('bext', 0)
+
+  // Description (256 bytes, null-padded)
+  const desc = description.substring(0, 255)
+  chunk.write(desc, 4)
+
+  // Originator (32 bytes, null-padded)
+  const orig = originator.substring(0, 31)
+  chunk.write(orig, 260)
+
+  // Originator Reference (32 bytes) - timestamp-based unique ID
+  const timestamp = Date.now().toString().substring(0, 31)
+  chunk.write(timestamp, 292)
+
+  // Origination Date (10 bytes) - YYYY-MM-DD
+  const date = new Date()
+  const dateStr = date.toISOString().substring(0, 10)
+  chunk.write(dateStr, 324)
+
+  // Origination Time (8 bytes) - HH:MM:SS
+  const timeStr = date.toISOString().substring(11, 19)
+  chunk.write(timeStr, 334)
+
+  // Time Reference (8 bytes, uint64) - sample count since midnight
+  // Set to 0 for simplicity
+  chunk.writeBigUInt64LE(BigInt(0), 342)
+
+  // Version (2 bytes) - BWF version 1
+  chunk.writeUInt16LE(1, 350)
+
+  // UMID (64 bytes) - set to zeros
+  // CodingHistory - empty for now
+
+  return chunk
+}
+
+/**
+ * Wrap PCM data to WAV format with BWF metadata for DAW compatibility
+ * Includes bext chunk that professional DAWs expect
+ */
+function wrapPCMToWAV(pcmBuffer, sampleRate, numChannels, stemDescription = '') {
   const bitsPerSample = 16
   const blockAlign = numChannels * (bitsPerSample / 8)
   const byteRate = sampleRate * blockAlign
   const dataSize = pcmBuffer.length
 
+  // Create BWF metadata chunk
+  const bextChunk = createBextChunk(
+    stemDescription || `${sampleRate}Hz ${numChannels}ch PCM audio from 343 Labs`,
+    '343 Labs Music Studio'
+  )
+
+  // Calculate total file size with bext chunk
+  const fmtSize = 16
+  const headerSize = 44 + bextChunk.length // RIFF header + fmt + bext + data header
+  const totalSize = 4 + headerSize + dataSize - 8 // RIFF size field
+
+  // Create main header
   const header = Buffer.alloc(44)
 
   header.write('RIFF', 0)
-  header.writeUInt32LE(36 + dataSize, 4)
+  header.writeUInt32LE(totalSize, 4)
   header.write('WAVE', 8)
 
   header.write('fmt ', 12)
-  header.writeUInt32LE(16, 16)
-  header.writeUInt16LE(1, 20)
+  header.writeUInt32LE(fmtSize, 16)
+  header.writeUInt16LE(1, 20) // PCM
   header.writeUInt16LE(numChannels, 22)
   header.writeUInt32LE(sampleRate, 24)
   header.writeUInt32LE(byteRate, 28)
@@ -99,7 +161,118 @@ function wrapPCMToWAV(pcmBuffer, sampleRate, numChannels) {
   header.write('data', 36)
   header.writeUInt32LE(dataSize, 40)
 
-  return Buffer.concat([header, pcmBuffer])
+  // Combine: RIFF header, fmt chunk, bext chunk, data chunk, PCM data
+  // Note: In proper WAV, bext should come before data, but we'll insert it after fmt
+  const headerWithoutData = header.subarray(0, 36)
+  const dataHeader = header.subarray(36, 44)
+
+  console.log(`[DAW] Creating WAV with BWF metadata: ${sampleRate}Hz, ${numChannels}ch, ${bitsPerSample}bit`)
+
+  return Buffer.concat([headerWithoutData, bextChunk, dataHeader, pcmBuffer])
+}
+
+/**
+ * Remove macOS quarantine attribute that prevents DAWs from accepting dragged files
+ * This is critical for Ableton, Logic, and other pro audio apps on macOS
+ */
+function removeQuarantineAttribute(filePath) {
+  if (process.platform !== 'darwin') return { success: true }
+
+  try {
+    execSync(`xattr -d com.apple.quarantine "${filePath}" 2>/dev/null || true`, {
+      stdio: 'pipe',
+      timeout: 1000
+    })
+    console.log(`[DAW] Removed quarantine attribute: ${filePath}`)
+    return { success: true }
+  } catch (err) {
+    // Attribute might not exist, which is fine
+    if (err.message.includes('No such xattr')) {
+      return { success: true, note: 'no quarantine attribute' }
+    }
+    console.warn(`[DAW] Could not remove quarantine:`, err.message)
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Set file permissions to ensure DAWs can read the file
+ * Many DAWs check file permissions before accepting drag
+ */
+function ensureDawReadablePermissions(filePath) {
+  try {
+    // Make file readable by all (but not writable by others)
+    fs.chmodSync(filePath, 0o644)
+    console.log(`[DAW] Set readable permissions: ${filePath}`)
+    return { success: true }
+  } catch (err) {
+    console.warn(`[DAW] Could not set permissions:`, err.message)
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Prepare file for DAW drag - comprehensive pre-flight checks
+ * Returns detailed diagnostics for troubleshooting
+ */
+function prepareFileForDawDrag(filePath) {
+  const diagnostics = {
+    exists: false,
+    readable: false,
+    size: 0,
+    permissions: null,
+    quarantine: null,
+    locked: false,
+    timestamp: null
+  }
+
+  try {
+    // Check existence
+    diagnostics.exists = fs.existsSync(filePath)
+    if (!diagnostics.exists) {
+      return { ready: false, error: 'File does not exist', diagnostics }
+    }
+
+    // Get stats
+    const stats = fs.statSync(filePath)
+    diagnostics.size = stats.size
+    diagnostics.timestamp = stats.mtime
+    diagnostics.permissions = (stats.mode & parseInt('777', 8)).toString(8)
+
+    // Test readability
+    try {
+      const fd = fs.openSync(filePath, 'r')
+      fs.closeSync(fd)
+      diagnostics.readable = true
+    } catch (err) {
+      diagnostics.readable = false
+      return { ready: false, error: 'File not readable', diagnostics }
+    }
+
+    // Remove quarantine (macOS only)
+    const quarantineResult = removeQuarantineAttribute(filePath)
+    diagnostics.quarantine = quarantineResult.success ? 'removed' : 'failed'
+
+    // Ensure permissions
+    const permResult = ensureDawReadablePermissions(filePath)
+    if (permResult.success) {
+      const newStats = fs.statSync(filePath)
+      diagnostics.permissions = (newStats.mode & parseInt('777', 8)).toString(8)
+    }
+
+    console.log(`[DAW] File prepared for drag:`, {
+      path: filePath,
+      size: `${(diagnostics.size / 1024).toFixed(1)}KB`,
+      permissions: diagnostics.permissions,
+      quarantine: diagnostics.quarantine
+    })
+
+    return { ready: true, diagnostics }
+
+  } catch (err) {
+    console.error(`[DAW] Prepare failed:`, err.message)
+    return { ready: false, error: err.message, diagnostics }
+  }
 }
 
 // Synchronous IPC handler for drag operations
@@ -112,8 +285,23 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
     console.log(`[Drag] Starting synchronous drag for ${stemId}: ${filename}`)
     console.log(`[Drag] Format: ${sampleRate}Hz, ${numChannels}ch, ${(pcmBuffer.length / 1024).toFixed(1)}KB`)
 
-    // Skip native module attempts - not compiled, go straight to reliable temp file approach
-    const tempDir = path.join(os.tmpdir(), '343labs-stems')
+    // Use DAW-friendly temp directory location
+    // Many DAWs whitelist certain directories - Desktop/Music/Documents work better than system temp
+    let tempDir
+    const homeDir = os.homedir()
+
+    if (process.platform === 'darwin') {
+      // macOS: Use Desktop or Music folder (DAWs trust these)
+      tempDir = path.join(homeDir, 'Desktop', '343-Labs-Stems')
+    } else if (process.platform === 'win32') {
+      // Windows: Use Music folder (better compatibility than temp)
+      tempDir = path.join(homeDir, 'Music', '343-Labs-Stems')
+    } else {
+      // Linux: Use home directory
+      tempDir = path.join(homeDir, '343-Labs-Stems')
+    }
+
+    console.log(`[DAW] Using DAW-friendly location: ${tempDir}`)
 
     // Create directory synchronously
     if (!fs.existsSync(tempDir)) {
@@ -122,8 +310,9 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
 
     const tempFilePath = path.join(tempDir, filename)
 
-    // Wrap PCM to WAV and write synchronously
-    const wavBuffer = wrapPCMToWAV(pcmBuffer, sampleRate, numChannels)
+    // Wrap PCM to WAV with BWF metadata for DAW compatibility
+    const stemDesc = `${stemId} stem - ${sampleRate}Hz ${numChannels}ch - Generated by 343 Labs Music Studio`
+    const wavBuffer = wrapPCMToWAV(pcmBuffer, sampleRate, numChannels, stemDesc)
     fs.writeFileSync(tempFilePath, wavBuffer)
 
     // Verify the file was written successfully
@@ -143,6 +332,14 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
     const elapsed = Date.now() - startTime
     console.log(`[Drag] Wrote temp file synchronously in ${elapsed}ms: ${tempFilePath} (${(wavBuffer.length / 1024).toFixed(1)}KB)`)
     console.log(`[Drag] File verified: ${fileStats.size} bytes written successfully`)
+
+    // CRITICAL: Prepare file for DAW drag (remove quarantine, set permissions)
+    const prepResult = prepareFileForDawDrag(tempFilePath)
+    if (!prepResult.ready) {
+      console.error('[DAW] File preparation failed:', prepResult.error)
+      event.returnValue = { success: false, error: `DAW prep failed: ${prepResult.error}`, diagnostics: prepResult.diagnostics }
+      return
+    }
 
     // Get the window and start the native drag immediately
     const win = BrowserWindow.fromWebContents(event.sender)
@@ -170,6 +367,14 @@ ipcMain.on('start-native-drag', (event, { stemId, pcmData, sampleRate, numChanne
       if (iconPath !== undefined) {
         dragOptions.icon = iconPath
       }
+
+      console.log(`[DAW] Starting native drag with options:`, {
+        file: tempFilePath,
+        hasIcon: iconPath !== undefined,
+        platform: process.platform,
+        dawPrepped: true
+      })
+
       win.webContents.startDrag(dragOptions)
 
       console.log(`[Drag] ✓ Native drag initiated successfully (total: ${Date.now() - startTime}ms)`)
@@ -378,7 +583,21 @@ ipcMain.on('start-native-drag-with-path', (event, { stemId, filePath, filename }
     const { numChannels, sampleRate, bitsPerSample, dataSize } = headerCheck.details
     console.log(`[SAVE] path=${filePath} size=${stats.size} wavHeader=ok fsync=ok sr=${sampleRate} ch=${numChannels} bits=${bitsPerSample}`)
 
-    // 5. Get window for drag operation
+    // 5. CRITICAL: Prepare file for DAW drag (remove quarantine, set permissions)
+    console.log(`[DAW] Preparing file for DAW compatibility...`)
+    const prepResult = prepareFileForDawDrag(filePath)
+    if (!prepResult.ready) {
+      console.error(`[ERROR] code=DAW_PREP_FAILED stemId=${stemId} error=${prepResult.error}`)
+      event.returnValue = {
+        success: false,
+        error: `DAW preparation failed: ${prepResult.error}`,
+        code: 'DAW_PREP_FAILED',
+        diagnostics: prepResult.diagnostics
+      }
+      return
+    }
+
+    // 6. Get window for drag operation
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) {
       console.error(`[ERROR] code=NO_WINDOW stemId=${stemId}`)
@@ -386,7 +605,7 @@ ipcMain.on('start-native-drag-with-path', (event, { stemId, filePath, filename }
       return
     }
 
-    // 6. Resolve drag icon (use undefined instead of empty string for macOS compatibility)
+    // 7. Resolve drag icon (use undefined instead of empty string for macOS compatibility)
     let iconPath = path.join(__dirname, 'public/vite.svg')
     if (!fs.existsSync(iconPath)) {
       iconPath = path.join(__dirname, 'dist/vite.svg')

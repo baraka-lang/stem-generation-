@@ -53,51 +53,108 @@ function validateWavHeader(filePath) {
 }
 
 /**
- * Ensure file is fully written and ready for drag
+ * Verify file is accessible by attempting to open with shared read
+ * This ensures no exclusive locks prevent DAW from reading the file
+ */
+function verifyFileAccessible(filePath) {
+  try {
+    const fd = fs.openSync(filePath, 'r')
+    fs.closeSync(fd)
+    return { accessible: true }
+  } catch (err) {
+    return { accessible: false, error: err.message }
+  }
+}
+
+/**
+ * Ensure file is fully written and ready for drag with retry logic
+ * Critical for DAW compatibility - files must be completely ready before drag
  * @param {string} filePath - Absolute path to file
  * @param {number} expectedSize - Expected file size in bytes (optional)
- * @returns {{ready: boolean, error?: string, stats?: object}}
+ * @param {object} options - Retry options {maxRetries: 3, delayMs: 10}
+ * @returns {{ready: boolean, error?: string, stats?: object, retries?: number}}
  */
-function ensureFileReady(filePath, expectedSize) {
-  try {
-    // Windows MAX_PATH validation (260 characters)
-    if (process.platform === 'win32' && filePath.length > 260) {
-      console.warn(`[PATH] Path exceeds Windows MAX_PATH limit: ${filePath.length} chars (max 260)`)
-      return {
-        ready: false,
-        error: `Path too long for Windows (${filePath.length} chars, max 260). Use a shorter folder path.`
-      }
-    }
+function ensureFileReady(filePath, expectedSize, options = {}) {
+  const { maxRetries = 3, delayMs = 10 } = options
+  let lastError = null
 
-    if (!fs.existsSync(filePath)) {
-      return { ready: false, error: 'File does not exist' }
-    }
-
-    const stats = fs.statSync(filePath)
-
-    if (stats.size === 0) {
-      return { ready: false, error: 'File is empty' }
-    }
-
-    if (expectedSize && stats.size !== expectedSize) {
-      return {
-        ready: false,
-        error: `Size mismatch: expected ${expectedSize}, got ${stats.size}`
-      }
-    }
-
-    // Verify file is not being written to (check if we can open it)
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      const fd = fs.openSync(filePath, 'r')
-      fs.closeSync(fd)
-    } catch (err) {
-      return { ready: false, error: `File locked: ${err.message}` }
-    }
+      // Windows MAX_PATH validation (260 characters)
+      if (process.platform === 'win32' && filePath.length > 260) {
+        console.warn(`[PATH] Path exceeds Windows MAX_PATH limit: ${filePath.length} chars (max 260)`)
+        return {
+          ready: false,
+          error: `Path too long for Windows (${filePath.length} chars, max 260). Use a shorter folder path.`
+        }
+      }
 
-    return { ready: true, stats: { size: stats.size, mtime: stats.mtime } }
-  } catch (err) {
-    return { ready: false, error: err.message }
+      if (!fs.existsSync(filePath)) {
+        lastError = 'File does not exist'
+        if (attempt < maxRetries - 1) {
+          // Synchronous busy wait (required for IPC sync context)
+          const start = Date.now()
+          while (Date.now() - start < delayMs) { /* busy wait */ }
+          continue
+        }
+        return { ready: false, error: lastError, retries: attempt + 1 }
+      }
+
+      const stats = fs.statSync(filePath)
+
+      if (stats.size === 0) {
+        lastError = 'File is empty'
+        if (attempt < maxRetries - 1) {
+          const start = Date.now()
+          while (Date.now() - start < delayMs) { /* busy wait */ }
+          continue
+        }
+        return { ready: false, error: lastError, retries: attempt + 1 }
+      }
+
+      if (expectedSize && stats.size !== expectedSize) {
+        lastError = `Size mismatch: expected ${expectedSize}, got ${stats.size}`
+        if (attempt < maxRetries - 1) {
+          const start = Date.now()
+          while (Date.now() - start < delayMs) { /* busy wait */ }
+          continue
+        }
+        return {
+          ready: false,
+          error: lastError,
+          retries: attempt + 1
+        }
+      }
+
+      // Verify file is accessible (not locked by another process)
+      const accessCheck = verifyFileAccessible(filePath)
+      if (!accessCheck.accessible) {
+        lastError = `File locked: ${accessCheck.error}`
+        if (attempt < maxRetries - 1) {
+          const start = Date.now()
+          while (Date.now() - start < delayMs) { /* busy wait */ }
+          continue
+        }
+        return { ready: false, error: lastError, retries: attempt + 1 }
+      }
+
+      // Success!
+      if (attempt > 0) {
+        console.log(`[FileReady] File ready after ${attempt + 1} attempts`)
+      }
+      return { ready: true, stats: { size: stats.size, mtime: stats.mtime }, retries: attempt + 1 }
+    } catch (err) {
+      lastError = err.message
+      if (attempt < maxRetries - 1) {
+        const start = Date.now()
+        while (Date.now() - start < delayMs) { /* busy wait */ }
+        continue
+      }
+      return { ready: false, error: lastError, retries: attempt + 1 }
+    }
   }
+
+  return { ready: false, error: lastError || 'Unknown error', retries: maxRetries }
 }
 
 /**
