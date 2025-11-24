@@ -5190,25 +5190,16 @@ function updateDragButtonState(st) {
 
       if (savedRecord?.status === 'saved') {
         tooltip += `\n\n✓ Saved to ${saveDir || 'disk'}`
-        tooltip += `\n\n📁 Ready to use!`
-        tooltip += `\nClick 📁 to reveal in Explorer/Finder`
       } else if (savedRecord?.status === 'pending') {
         tooltip += `\n\nSaving to ${saveDir}...`
-        tooltip += `\nPlease wait...`
-      } else {
-        tooltip += `\n\n⚙️ Enable auto-save first`
-        tooltip += `\n(Menu → Choose folder)`
-        tooltip += `\nFiles will save automatically when generated`
       }
     } else {
-      tooltip += `\n\n📁 Drag to folders or desktop`
-      tooltip += `\n💾 Files saved to your download folder`
       if (isAutoDownloadSupported() && autoStatus.enabled) {
+        const autoRecord = getAutoDownloadRecord(st)
         if (autoRecord?.status === 'pending') {
           tooltip += `\n\nSaving to ${autoStatus.directoryName}...`
         } else if (autoRecord?.status === 'saved') {
           tooltip += `\n\n✓ Saved in ${autoStatus.directoryName}`
-          tooltip += `\nClick 📁 to open folder`
         }
       }
     }
@@ -5993,9 +5984,6 @@ function setupEventListeners() {
       console.warn(`[DRAG] ⚠️  BROWSER MODE: Drag to folders or desktop`)
       console.warn(`[DRAG] Files are automatically saved to your download folder`)
       console.warn(`[DRAG] You can also drag files from your file manager`)
-
-      // Show visual warning banner
-      showBrowserDragWarning()
 
       // Wrap PCM to WAV for browser drag
       const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
