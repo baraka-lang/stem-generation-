@@ -160,11 +160,6 @@ const prevSoloMuteStates = {}
 const stemEqValues = {}
 const stemFilterValues = {}
 
-// Per-stem bar selection for playback loop size (2 or 4 bars)
-// Keys are stem IDs; values are the playback bar count (2 or 4)
-// This allows each stem to have independent loop lengths
-const stemPlaybackBars = {}
-
 /* =========================================================
    Auto-download / DAW helper state
    ========================================================= */
@@ -1680,20 +1675,7 @@ function createStemNodes(st, loopBuffer) {
   src.buffer = loopBuffer
   src.loop = true
   src.loopStart = 0
-
-  // Apply per-stem bar selection to loop endpoint
-  // If stemPlaybackBars is set to 2, loop at half duration; if 4 (or unset), use full duration
-  const selectedBars = stemPlaybackBars[st]
-  const masterBars = stemControlValues.master?.bars ?? DEFAULT_BARS
-  const playbackBars = getPlaybackBars(masterBars, DEFAULT_BARS)
-
-  if (selectedBars === 2 && playbackBars === 4) {
-    // User selected 2 bars when master is 4 bars (8 actual) - loop at half
-    src.loopEnd = loopBuffer.duration / 2
-  } else {
-    // Default: use full buffer duration
-    src.loopEnd = loopBuffer.duration
-  }
+  src.loopEnd = loopBuffer.duration
 
   const env = audioContext.createGain()
   env.gain.setValueAtTime(0, audioContext.currentTime)
@@ -2635,50 +2617,6 @@ function openWaveformEditModal(st) {
       volumeValueEl.textContent = Math.round(volumeVal)
     }
   }
-  // Initialize bar selector buttons
-  const masterBars = stemControlValues.master?.bars ?? DEFAULT_BARS
-  const playbackBars = getPlaybackBars(masterBars, DEFAULT_BARS)
-  const currentSelectedBars = stemPlaybackBars[st] ?? playbackBars
-
-  // Store previous bar selection for discard functionality
-  waveformEditState.prevBarSelection = currentSelectedBars
-
-  const barSelectorContainer = document.getElementById('waveformEditBarSelector')
-  if (barSelectorContainer && playbackBars === 4) {
-    // Only show bar selector if master is set to 4 bars
-    barSelectorContainer.style.display = 'flex'
-    const barButtons = barSelectorContainer.querySelectorAll('button[data-bars]')
-    barButtons.forEach(btn => {
-      const bars = parseInt(btn.getAttribute('data-bars'), 10)
-      if (bars === currentSelectedBars) {
-        btn.classList.add('bg-purple-500', 'border-purple-500')
-        btn.classList.remove('bg-white/5', 'border-white/20')
-      } else {
-        btn.classList.remove('bg-purple-500', 'border-purple-500')
-        btn.classList.add('bg-white/5', 'border-white/20')
-      }
-    })
-  } else if (barSelectorContainer) {
-    // Hide bar selector if master is set to 2 bars
-    barSelectorContainer.style.display = 'none'
-  }
-
-  // Helper function to update grid based on current bar selection
-  const updateBarGrid = (barCount) => {
-    const gridContainer = document.getElementById('waveformEditGrid')
-    if (gridContainer) {
-      gridContainer.innerHTML = ''
-      for (let i = 0; i < barCount; i++) {
-        const seg = document.createElement('div')
-        seg.style.flex = '1'
-        if (i > 0) {
-          seg.style.borderLeft = '1px solid rgba(255,255,255,0.15)'
-        }
-        gridContainer.appendChild(seg)
-      }
-    }
-  }
-
   // Draw initial preview waveform and apply volume scaling
   const prevCanvas = document.getElementById('waveformEditCanvas')
   if (prevCanvas) {
@@ -2697,8 +2635,22 @@ function openWaveformEditModal(st) {
     }
   }
 
-  // Draw bar grid lines based on current selection
-  updateBarGrid(currentSelectedBars)
+  // Draw bar grid lines on the preview.  The grid divides the width
+  // into equal segments corresponding to the number of bars in the loop.
+  const gridContainer = document.getElementById('waveformEditGrid')
+  if (gridContainer) {
+    gridContainer.innerHTML = ''
+    // Determine the number of bars from the master settings (default to 4)
+    const bars = getPlaybackBars(stemControlValues.master?.bars || DEFAULT_BARS, DEFAULT_BARS)
+    for (let i = 0; i < bars; i++) {
+      const seg = document.createElement('div')
+      seg.style.flex = '1'
+      if (i > 0) {
+        seg.style.borderLeft = '1px solid rgba(255,255,255,0.15)'
+      }
+      gridContainer.appendChild(seg)
+    }
+  }
   // Set up action buttons
   const saveBtn = document.getElementById('editSaveBtn')
   const discardBtn = document.getElementById('editDiscardBtn')
@@ -2749,36 +2701,11 @@ function openWaveformEditModal(st) {
         if (valueEl) valueEl.textContent = '80'
       }
 
-      // Reset bar selection to default (playback bars)
-      const masterBarsReset = stemControlValues.master?.bars ?? DEFAULT_BARS
-      const playbackBarsReset = getPlaybackBars(masterBarsReset, DEFAULT_BARS)
-      delete stemPlaybackBars[st]
-
-      // Update bar selector button states
-      const barSelectorReset = document.getElementById('waveformEditBarSelector')
-      if (barSelectorReset) {
-        const barBtnsReset = barSelectorReset.querySelectorAll('button[data-bars]')
-        barBtnsReset.forEach(btn => {
-          const bars = parseInt(btn.getAttribute('data-bars'), 10)
-          if (bars === playbackBarsReset) {
-            btn.classList.add('bg-purple-500', 'border-purple-500')
-            btn.classList.remove('bg-white/5', 'border-white/20')
-          } else {
-            btn.classList.remove('bg-purple-500', 'border-purple-500')
-            btn.classList.add('bg-white/5', 'border-white/20')
-          }
-        })
-      }
-
-      // Update grid
-      updateBarGrid(playbackBarsReset)
-
       // Persist defaults on active take
       const idx = stemActiveIndex[st]
       if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
         stemHistory[st][idx].startOffset = 0
         stemHistory[st][idx].endpointFactor = 1
-        delete stemHistory[st][idx].playbackBars
       }
 
       // Redraw preview waveform
@@ -2795,40 +2722,6 @@ function openWaveformEditModal(st) {
       }
     }
   }
-
-  // Set up bar selector button event handlers
-  if (barSelectorContainer && playbackBars === 4) {
-    const barButtons = barSelectorContainer.querySelectorAll('button[data-bars]')
-    barButtons.forEach(btn => {
-      btn.onclick = () => {
-        const selectedBars = parseInt(btn.getAttribute('data-bars'), 10)
-
-        // Update state
-        stemPlaybackBars[st] = selectedBars
-
-        // Update button visual states
-        barButtons.forEach(b => {
-          const bars = parseInt(b.getAttribute('data-bars'), 10)
-          if (bars === selectedBars) {
-            b.classList.add('bg-purple-500', 'border-purple-500')
-            b.classList.remove('bg-white/5', 'border-white/20')
-          } else {
-            b.classList.remove('bg-purple-500', 'border-purple-500')
-            b.classList.add('bg-white/5', 'border-white/20')
-          }
-        })
-
-        // Update grid visualization
-        updateBarGrid(selectedBars)
-
-        // Restart playback if active to apply new loop size immediately
-        if (isPlaying) {
-          restartStemNextBoundary(st)
-        }
-      }
-    })
-  }
-
   // Clicking on the semi‑transparent overlay should discard changes and close the modal
   const overlay = document.getElementById('waveformEditOverlay')
   if (overlay) {
@@ -2862,23 +2755,6 @@ function closeWaveformEditModal(save) {
       adjustEndpoint(st, waveformEditState.prevEndpointFactor)
       startOffsetFactors[st] = waveformEditState.prevStartOffset
       adjustStartOffset(st, waveformEditState.prevStartOffset)
-
-      // Revert bar selection
-      if (waveformEditState.prevBarSelection) {
-        stemPlaybackBars[st] = waveformEditState.prevBarSelection
-      } else {
-        delete stemPlaybackBars[st]
-      }
-    } else {
-      // Save bar selection to take history
-      const idx = stemActiveIndex[st]
-      if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
-        if (stemPlaybackBars[st]) {
-          stemHistory[st][idx].playbackBars = stemPlaybackBars[st]
-        } else {
-          delete stemHistory[st][idx].playbackBars
-        }
-      }
     }
 
     // Update the card waveform to reflect final changes (saved or reverted)
@@ -6623,24 +6499,14 @@ function selectStemVersion(st, index){
   const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
   if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${formatBarsForDisplay(bars, DEFAULT_BARS)} bars)`
   renderHistoryDrawer(st)
-  // Restore the saved endpoint factor, start offset, and bar selection for this take
+  // Restore the saved endpoint factor and start offset for this take
   {
     const takes = stemHistory[st] || []
     const entry = takes[index]
     const factor = entry?.endpointFactor ?? 1
     const offset = entry?.startOffset ?? 0
-    const savedPlaybackBars = entry?.playbackBars
-
     endpointFactors[st] = factor
     startOffsetFactors[st] = offset
-
-    // Restore bar selection if saved
-    if (savedPlaybackBars) {
-      stemPlaybackBars[st] = savedPlaybackBars
-    } else {
-      delete stemPlaybackBars[st]
-    }
-
     // Rebuild the loop with the stored factor
     // adjustEndpoint will automatically reapply the offset if it's > 0
     adjustEndpoint(st, factor)
