@@ -793,6 +793,11 @@ const endpointFactors = {}
 // This allows selecting which portion of generated audio to use for the loop.
 const startOffsetFactors = {}
 
+// Per-stem playback bars override: allows changing playback loop size (2 or 4 bars)
+// independently from the original generation bar count. This is purely for playback
+// and does not affect the underlying audio data.
+const stemPlaybackBarsOverride = {}
+
 // State for the waveform edit popup.  When a waveform is tapped, we open
 // a modal with its own controls for volume and endpoint.  We store
 // the stem being edited along with its previous volume and endpoint
@@ -803,7 +808,8 @@ const waveformEditState = {
   stem: null,
   prevVolume: 0,
   prevEndpointFactor: 1,
-  prevStartOffset: 0
+  prevStartOffset: 0,
+  prevPlaybackBars: null
 }
 
 let loopStartTime  = 0
@@ -2528,6 +2534,110 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
 }
 
 /**
+ * Get the effective playback bars for a stem, considering any override set by the user.
+ * Falls back to the take's original bar count or master settings.
+ * @param {string} st The stem identifier
+ * @returns {number} The number of bars to use for playback
+ */
+function getEffectivePlaybackBars(st) {
+  // Check if there's a user override for this stem
+  if (stemPlaybackBarsOverride[st]) {
+    return stemPlaybackBarsOverride[st]
+  }
+
+  // Otherwise, get the bars from the active take
+  const activeIdx = stemActiveIndex[st]
+  if (activeIdx != null && activeIdx >= 0 && stemHistory[st] && stemHistory[st][activeIdx]) {
+    const take = stemHistory[st][activeIdx]
+    if (take.playbackBarsOverride) {
+      return take.playbackBarsOverride
+    }
+    return getPlaybackBars(take.bars ?? DEFAULT_BARS, DEFAULT_BARS)
+  }
+
+  // Fall back to master settings
+  return getPlaybackBars(stemControlValues.master?.bars ?? DEFAULT_BARS, DEFAULT_BARS)
+}
+
+/**
+ * Change the playback loop size for a stem without affecting the original audio data.
+ * This rebuilds the stemLoop buffer with a different bar count while preserving
+ * the original take's tempo and head index.
+ * @param {string} st The stem identifier
+ * @param {number} newBars The new bar count (2 or 4)
+ * @param {Function} updateUICallback Optional callback to update UI
+ * @param {Function} updateGridCallback Optional callback to update grid
+ */
+function changePlaybackBars(st, newBars, updateUICallback, updateGridCallback) {
+  console.log(`[BarChange] Changing playback bars for ${st} to ${newBars}`)
+
+  // Store the override
+  stemPlaybackBarsOverride[st] = newBars
+
+  // Get the active take's original data
+  const activeIdx = stemActiveIndex[st]
+  if (activeIdx == null || activeIdx < 0 || !stemHistory[st] || !stemHistory[st][activeIdx]) {
+    console.warn(`[BarChange] No active take found for ${st}`)
+    return
+  }
+
+  const take = stemHistory[st][activeIdx]
+  if (!take.raw) {
+    console.warn(`[BarChange] No raw audio data in take for ${st}`)
+    return
+  }
+
+  // Rebuild the loop with the new bar count, using original tempo and head index
+  const tempo = take.tempo
+  const headIndex = take.headIndex ?? 0
+
+  try {
+    const newLoop = buildLoopBufferFromRawStrict(take.raw, tempo, newBars, headIndex)
+    stemLoop[st] = newLoop
+    stemLoopDuration[st] = newLoop.duration
+
+    console.log(`[BarChange] Rebuilt loop for ${st}: ${newLoop.duration.toFixed(3)}s (${newBars} bars at ${tempo} BPM)`)
+
+    // Redraw waveform in modal preview
+    const prevCanvas = document.getElementById('waveformEditCanvas')
+    if (prevCanvas && stemLoop[st]) {
+      const cfg = stemConfigs[st]
+      drawWaveform(prevCanvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+      const vol = stemControlValues[st]?.volume ?? 80
+      prevCanvas.style.transform = `scaleY(${vol / 100})`
+    }
+
+    // Update UI callbacks
+    if (updateUICallback) updateUICallback(newBars)
+    if (updateGridCallback) updateGridCallback(newBars)
+
+    // Update session info card to reflect new playback bars
+    updateSessionInfoCard()
+
+    // Restart playback if currently playing
+    if (isPlaying) {
+      restartStemNextBoundary(st)
+    }
+
+    // Invalidate cached audio since loop changed
+    invalidateStemCache(st)
+
+    // Extract new PCM for drag-and-drop
+    try {
+      clearStemPCM(st)
+      const pcmData = extractPCMFromAudioBuffer(newLoop)
+      storeStemPCM(st, pcmData, newLoop.sampleRate, newLoop.numberOfChannels, `pcm_${newLoop.sampleRate}`)
+      console.log(`[BarChange] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+      scheduleAutoDownloadForStem(st)
+    } catch (pcmErr) {
+      console.warn(`[BarChange] Failed to extract PCM for ${st}:`, pcmErr.message)
+    }
+  } catch (err) {
+    console.error(`[BarChange] Failed to rebuild loop for ${st}:`, err)
+  }
+}
+
+/**
  * Open the waveform edit modal for a specific stem.  This modal
  * displays a preview of the current loop and provides full‑width
  * controls for adjusting volume and endpoint stretch.  Changes take
@@ -2564,6 +2674,7 @@ function openWaveformEditModal(st) {
   waveformEditState.prevVolume = stemControlValues[st]?.volume ?? 80
   waveformEditState.prevEndpointFactor = endpointFactors[st] ?? 1
   waveformEditState.prevStartOffset = startOffsetFactors[st] ?? 0
+  waveformEditState.prevPlaybackBars = getEffectivePlaybackBars(st)
 
   // Configure all three knobs - retrieve and set stem attribute immediately
   const offsetKnob = document.getElementById('waveformEditOffsetKnob')
@@ -2635,21 +2746,50 @@ function openWaveformEditModal(st) {
     }
   }
 
-  // Draw bar grid lines on the preview.  The grid divides the width
-  // into equal segments corresponding to the number of bars in the loop.
-  const gridContainer = document.getElementById('waveformEditGrid')
-  if (gridContainer) {
-    gridContainer.innerHTML = ''
-    // Determine the number of bars from the master settings (default to 4)
-    const bars = getPlaybackBars(stemControlValues.master?.bars || DEFAULT_BARS, DEFAULT_BARS)
-    for (let i = 0; i < bars; i++) {
-      const seg = document.createElement('div')
-      seg.style.flex = '1'
-      if (i > 0) {
-        seg.style.borderLeft = '1px solid rgba(255,255,255,0.15)'
+  // Initialize bar selector buttons
+  const currentPlaybackBars = getEffectivePlaybackBars(st)
+  const barSelector2 = document.getElementById('barSelector2')
+  const barSelector4 = document.getElementById('barSelector4')
+
+  function updateBarSelectorUI(bars) {
+    if (barSelector2 && barSelector4) {
+      const activeClass = 'bg-purple-500 text-white'
+      const inactiveClass = 'text-white/60 hover:bg-white/10'
+
+      if (bars === 2) {
+        barSelector2.className = `px-3 py-1 text-xs rounded transition ${activeClass}`
+        barSelector4.className = `px-3 py-1 text-xs rounded transition ${inactiveClass}`
+      } else {
+        barSelector2.className = `px-3 py-1 text-xs rounded transition ${inactiveClass}`
+        barSelector4.className = `px-3 py-1 text-xs rounded transition ${activeClass}`
       }
-      gridContainer.appendChild(seg)
     }
+  }
+
+  function updateBarGrid(bars) {
+    const gridContainer = document.getElementById('waveformEditGrid')
+    if (gridContainer) {
+      gridContainer.innerHTML = ''
+      for (let i = 0; i < bars; i++) {
+        const seg = document.createElement('div')
+        seg.style.flex = '1'
+        if (i > 0) {
+          seg.style.borderLeft = '1px solid rgba(255,255,255,0.15)'
+        }
+        gridContainer.appendChild(seg)
+      }
+    }
+  }
+
+  updateBarSelectorUI(currentPlaybackBars)
+  updateBarGrid(currentPlaybackBars)
+
+  // Handle bar selector clicks
+  if (barSelector2) {
+    barSelector2.onclick = () => changePlaybackBars(st, 2, updateBarSelectorUI, updateBarGrid)
+  }
+  if (barSelector4) {
+    barSelector4.onclick = () => changePlaybackBars(st, 4, updateBarSelectorUI, updateBarGrid)
   }
   // Set up action buttons
   const saveBtn = document.getElementById('editSaveBtn')
@@ -2701,20 +2841,45 @@ function openWaveformEditModal(st) {
         if (valueEl) valueEl.textContent = '80'
       }
 
-      // Persist defaults on active take
+      // Reset playback bars to original take value
       const idx = stemActiveIndex[st]
       if (idx != null && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
-        stemHistory[st][idx].startOffset = 0
-        stemHistory[st][idx].endpointFactor = 1
+        const take = stemHistory[st][idx]
+        const originalBars = getPlaybackBars(take.bars ?? DEFAULT_BARS, DEFAULT_BARS)
+
+        // Clear any override
+        delete stemPlaybackBarsOverride[st]
+        delete take.playbackBarsOverride
+
+        // Rebuild loop with original bar count
+        if (take.raw) {
+          const tempo = take.tempo
+          const headIndex = take.headIndex ?? 0
+          const resetLoop = buildLoopBufferFromRawStrict(take.raw, tempo, originalBars, headIndex)
+          stemLoop[st] = resetLoop
+          stemLoopDuration[st] = resetLoop.duration
+          console.log(`[Default] Reset playback bars for ${st} to ${originalBars}`)
+        }
+
+        // Persist defaults on active take
+        take.startOffset = 0
+        take.endpointFactor = 1
+
+        // Update bar selector UI
+        updateBarSelectorUI(originalBars)
+        updateBarGrid(originalBars)
       }
 
       // Redraw preview waveform
       const prevCanvas2 = document.getElementById('waveformEditCanvas')
-      if (prevCanvas2) {
+      if (prevCanvas2 && stemLoop[st]) {
         const cfg2 = stemConfigs[st]
         drawWaveform(prevCanvas2, stemLoop[st], `rgb(${getColorRGB(cfg2.color)})`)
         prevCanvas2.style.transform = `scaleY(0.8)`
       }
+
+      // Update session info card
+      updateSessionInfoCard()
 
       // Restart audio with default values if playing
       if (isPlaying) {
@@ -2755,6 +2920,32 @@ function closeWaveformEditModal(save) {
       adjustEndpoint(st, waveformEditState.prevEndpointFactor)
       startOffsetFactors[st] = waveformEditState.prevStartOffset
       adjustStartOffset(st, waveformEditState.prevStartOffset)
+
+      // Revert playback bars if they changed
+      const currentBars = getEffectivePlaybackBars(st)
+      if (waveformEditState.prevPlaybackBars && currentBars !== waveformEditState.prevPlaybackBars) {
+        const activeIdx = stemActiveIndex[st]
+        if (activeIdx != null && activeIdx >= 0 && stemHistory[st] && stemHistory[st][activeIdx]) {
+          const take = stemHistory[st][activeIdx]
+          if (take.raw) {
+            const tempo = take.tempo
+            const headIndex = take.headIndex ?? 0
+            const revertedLoop = buildLoopBufferFromRawStrict(take.raw, tempo, waveformEditState.prevPlaybackBars, headIndex)
+            stemLoop[st] = revertedLoop
+            stemLoopDuration[st] = revertedLoop.duration
+            stemPlaybackBarsOverride[st] = waveformEditState.prevPlaybackBars
+            console.log(`[Modal] Reverted playback bars for ${st} to ${waveformEditState.prevPlaybackBars}`)
+          }
+        }
+      }
+    } else {
+      // Save the playback bars override to the take history
+      const activeIdx = stemActiveIndex[st]
+      if (activeIdx != null && activeIdx >= 0 && stemHistory[st] && stemHistory[st][activeIdx]) {
+        const currentBars = getEffectivePlaybackBars(st)
+        stemHistory[st][activeIdx].playbackBarsOverride = currentBars
+        console.log(`[Modal] Saved playback bars override for ${st}: ${currentBars}`)
+      }
     }
 
     // Update the card waveform to reflect final changes (saved or reverted)
@@ -2763,6 +2954,9 @@ function closeWaveformEditModal(save) {
       const cfg = stemConfigs[st]
       drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
     }
+
+    // Update session info card
+    updateSessionInfoCard()
 
     // Restart audio with current values (saved or reverted) if playing
     if (isPlaying) {
@@ -6477,6 +6671,20 @@ function selectStemVersion(st, index){
   } else if (intentForStem) {
     setStemLoopIntent(st, intentForStem)
   }
+
+  // Check if there's a playback bars override for this take and apply it before setting stemLoop
+  const playbackBarsOverride = take.playbackBarsOverride
+  if (playbackBarsOverride) {
+    stemPlaybackBarsOverride[st] = playbackBarsOverride
+    // Rebuild loop with the override bars
+    const headIndex = take.headIndex ?? 0
+    playbackLoop = buildLoopBufferFromRawStrict(take.raw, tempo, playbackBarsOverride, headIndex)
+    console.log(`[Select] Applied playback bars override for ${st}: ${playbackBarsOverride}`)
+  } else {
+    // Clear any existing override
+    delete stemPlaybackBarsOverride[st]
+  }
+
   stemLoop[st] = playbackLoop
   stemLoopDuration[st] = playbackLoop.duration
   // Invalidate cached WAV since we've switched to different audio
@@ -6497,7 +6705,10 @@ function selectStemVersion(st, index){
     const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
   }
   const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
-  if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${formatBarsForDisplay(bars, DEFAULT_BARS)} bars)`
+  if (statusEl) {
+    const effectiveBars = getEffectivePlaybackBars(st)
+    statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${effectiveBars} bars)`
+  }
   renderHistoryDrawer(st)
   // Restore the saved endpoint factor and start offset for this take
   {
@@ -6505,8 +6716,10 @@ function selectStemVersion(st, index){
     const entry = takes[index]
     const factor = entry?.endpointFactor ?? 1
     const offset = entry?.startOffset ?? 0
+
     endpointFactors[st] = factor
     startOffsetFactors[st] = offset
+
     // Rebuild the loop with the stored factor
     // adjustEndpoint will automatically reapply the offset if it's > 0
     adjustEndpoint(st, factor)
