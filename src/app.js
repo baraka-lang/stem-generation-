@@ -4210,12 +4210,12 @@ async function setupAutoDownloadPanel() {
   autoDownloadPanelEl.id = 'autoDownloadPanel'
   autoDownloadPanelEl.className = 'hidden fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 space-y-2'
   autoDownloadPanelEl.innerHTML = `
-    <div class="text-[11px] uppercase tracking-[0.3em] text-white/60">DAW Drop Helper</div>
+    <div class="text-[11px] uppercase tracking-[0.3em] text-white/60">Auto Download</div>
     <div class="flex items-start gap-3">
       <div class="flex-1">
         <div class="text-sm font-semibold" data-auto-download-status>Auto-download disabled</div>
         <p class="text-[12px] text-white/70 mt-1" data-auto-download-note>
-          Enable this to drag samples directly into your DAW. Stems will be pre-saved when you click the drag button.
+          Enable this to automatically save stems when generated. Files will be ready to drag from your folder.
         </p>
       </div>
       <div class="flex flex-col gap-2">
@@ -4289,9 +4289,9 @@ function updateAutoDownloadPanel(status = null) {
 
     if (autoDownloadNoteEl) {
       if (!electronStatus.enabled) {
-        autoDownloadNoteEl.textContent = 'Enable to drag samples directly into your DAW. Files save automatically when generated.'
+        autoDownloadNoteEl.textContent = 'Enable to automatically save stems when generated. Files will be ready in your chosen folder.'
       } else {
-        autoDownloadNoteEl.textContent = `Ready for DAW drag & drop. ${electronStatus.savedCount} file(s) saved.`
+        autoDownloadNoteEl.textContent = `Auto-save enabled. ${electronStatus.savedCount} file(s) saved to folder.`
       }
     }
 
@@ -4320,11 +4320,11 @@ function updateAutoDownloadPanel(status = null) {
 
     if (autoDownloadNoteEl) {
       if (!status.enabled) {
-        autoDownloadNoteEl.textContent = 'Enable to save files (drag to folders only, not DAWs). Use Electron app for DAW drag.'
+        autoDownloadNoteEl.textContent = 'Enable to automatically save stems to a folder. Files will be ready to use immediately.'
       } else if (status.lastSavedStem) {
-        autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}. Drag to folders only.`
+        autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}. Files are in your download folder.`
       } else {
-        autoDownloadNoteEl.textContent = 'Files auto-save when generated. Drag to folders only (not DAWs).'
+        autoDownloadNoteEl.textContent = 'Files auto-save when generated. Ready in your download folder.'
       }
     }
 
@@ -4762,9 +4762,9 @@ function createBuilderStemCard(st, cfg){
   const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
 
   // Define a drag button for desktop browsers (Chromium only).  This button appears above
-  // the Create button and allows users to drag the active sample directly to their DAW or desktop.
+  // the Create button and allows users to drag the active sample to folders or desktop.
   // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-2 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <div class="flex gap-2">\n            <button class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                    data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag & Drop to Folder (for DAWs, drag from Explorer/Finder)">\n              <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm relative w-full">\n                <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n                Drag & Drop\n                <span class="absolute right-0 text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n              </span>\n            </button>\n            <button class="px-3 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/80 to-pink-500/80 hover:from-purple-500 hover:to-pink-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] hidden"\n                    data-action="show-in-folder" data-stem="${st}" title="Reveal file in Explorer/Finder">\n              <i data-lucide="folder-open" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n            </button>\n          </div>\n        </div>\n      `;
+  const dragButtonHTML = `\n        <div class="mt-2 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <div class="flex gap-2">\n            <button class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                    data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to folders or desktop">\n              <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm relative w-full">\n                <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n                Drag & Drop (folder)\n                <span class="absolute right-0 text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n              </span>\n            </button>\n            <button class="px-3 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/80 to-pink-500/80 hover:from-purple-500 hover:to-pink-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] hidden"\n                    data-action="show-in-folder" data-stem="${st}" title="Reveal file in Explorer/Finder">\n              <i data-lucide="folder-open" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n            </button>\n          </div>\n        </div>\n      `;
 
   // Edit Take button for mobile: matches styling of Clean and Create buttons
   const editTakeButtonHTML = `\n        <div class="mt-2 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative block sm:hidden">\n          <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-purple-500/80 to-indigo-500/80 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="edit-take" data-stem="${st}" title="Edit this take">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="edit-3" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Edit Take\n            </span>\n          </button>\n        </div>\n      `;
@@ -5191,27 +5191,25 @@ function updateDragButtonState(st) {
 
       if (savedRecord?.status === 'saved') {
         tooltip += `\n\n✓ Saved to ${saveDir || 'disk'}`
-        tooltip += `\n\n🎯 Drag directly to Ableton/Logic/FL!`
-        tooltip += `\nOr click 📁 to reveal in Explorer/Finder`
+        tooltip += `\n\n📁 Ready to use!`
+        tooltip += `\nClick 📁 to reveal in Explorer/Finder`
       } else if (savedRecord?.status === 'pending') {
         tooltip += `\n\nSaving to ${saveDir}...`
-        tooltip += `\nPlease wait, then drag to DAW`
+        tooltip += `\nPlease wait...`
       } else {
         tooltip += `\n\n⚙️ Enable auto-save first`
         tooltip += `\n(Menu → Choose folder)`
-        tooltip += `\nThen you can drag to your DAW!`
+        tooltip += `\nFiles will save automatically when generated`
       }
     } else {
-      tooltip += `\n\n📁 Folder/Desktop drop only`
-      tooltip += `\n⚠️ Browser can't drag to DAWs directly`
-      tooltip += `\n\nFor Ableton/Logic: Download desktop app`
-      tooltip += `\nOR drag from saved folder in Explorer/Finder`
+      tooltip += `\n\n📁 Drag to folders or desktop`
+      tooltip += `\n💾 Files saved to your download folder`
       if (isAutoDownloadSupported() && autoStatus.enabled) {
         if (autoRecord?.status === 'pending') {
           tooltip += `\n\nSaving to ${autoStatus.directoryName}...`
         } else if (autoRecord?.status === 'saved') {
           tooltip += `\n\n✓ Saved in ${autoStatus.directoryName}`
-          tooltip += `\nClick 📁 to reveal and drag from there`
+          tooltip += `\nClick 📁 to open folder`
         }
       }
     }
@@ -5984,18 +5982,18 @@ function setupEventListeners() {
             '2. Choose "Select Save Folder"\n' +
             '3. Pick a local folder\n' +
             '4. Generate audio\n' +
-            '5. Drag to your DAW!'
+            '5. Drag to folders or use saved files!'
           alert(message)
           if (btn) btn.style.opacity = '1'
           return
         }
       }
 
-      // Browser-based drag for FOLDERS ONLY - DAWs won't accept this!
+      // Browser-based drag for folders and desktop
       console.warn(`[DRAG] sender=browser event=dragstart stemId=${st}`)
-      console.warn(`[DRAG] ⚠️  BROWSER MODE: This drag works for FOLDERS/DESKTOP only`)
-      console.warn(`[DRAG] For DAW drops: Use Electron desktop app with auto-save enabled`)
-      console.warn(`[DRAG] OR: Drag from Explorer/Finder after auto-saving to folder`)
+      console.warn(`[DRAG] ⚠️  BROWSER MODE: Drag to folders or desktop`)
+      console.warn(`[DRAG] Files are automatically saved to your download folder`)
+      console.warn(`[DRAG] You can also drag files from your file manager`)
 
       // Show visual warning banner
       showBrowserDragWarning()
@@ -6855,7 +6853,7 @@ async function checkWindowsUACStatus() {
     const elevationStatus = await window.electronAPI.getElevationStatus()
 
     if (elevationStatus.elevated && diagnostics.platform === 'win32') {
-      console.warn('[UAC] ⚠️  Running as Administrator - DAW drag may fail!')
+      console.warn('[UAC] ⚠️  Running as Administrator - file operations may be affected!')
 
       // Show warning banner
       const uacWarning = document.createElement('div')
@@ -6866,7 +6864,7 @@ async function checkWindowsUACStatus() {
                     box-shadow:0 4px 20px rgba(0,0,0,0.5); max-width:700px; text-align:center;">
           <strong>⚠️ Administrator Mode Detected</strong><br>
           <span style="font-size:13px; margin-top:8px; display:block">
-            This app is running as Administrator. Drag-and-drop to Ableton Live may fail if Live is NOT running as Administrator.
+            This app is running as Administrator. File operations may be restricted.
             <br><strong>Recommendation:</strong> Close this app and restart WITHOUT "Run as Administrator"
           </span>
           <button onclick="this.parentElement.parentElement.remove()"
@@ -6897,10 +6895,10 @@ function addBrowserDragWarningBanner() {
     box-shadow:0 4px 20px rgba(0,0,0,0.4); max-width:600px; text-align:center;
   `
   banner.innerHTML = `
-    <strong>📁 Folder Drop Only</strong><br>
+    <strong>📁 Drag to Folder</strong><br>
     <span style="font-size:13px">
-      Browser mode can't drag to DAWs. Use the desktop app for direct Ableton/Logic drag,
-      or drag from your auto-saved folder using Explorer/Finder.
+      Drag this audio file to any folder on your desktop. Files are also automatically saved
+      to your download folder for easy access.
     </span>
     <button onclick="this.parentElement.style.display='none'"
             style="margin-left:12px; padding:4px 12px; background:white; color:#ff6b00; border:none;
