@@ -248,7 +248,8 @@ function updateSessionInfoCard() {
   const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || '')
   const tempo = master.tempo ?? DEFAULT_TEMPO
   const bars = master.bars ?? DEFAULT_BARS
-  const displayBars = getPlaybackBars(bars, DEFAULT_BARS)
+  // Use the playback bar override if set, otherwise calculate from master bars
+  const displayBars = playbackBarOverride || getPlaybackBars(bars, DEFAULT_BARS)
   const mode = master.mode ?? 'Minor'
   const infoString = `${tempo} BPM • ${displayBars} bars • ${rootName} ${mode}`
   if (infoEl) infoEl.textContent = infoString
@@ -803,8 +804,13 @@ const waveformEditState = {
   stem: null,
   prevVolume: 0,
   prevEndpointFactor: 1,
-  prevStartOffset: 0
+  prevStartOffset: 0,
+  prevPlaybackBars: null
 }
+
+// Global playback bar override - when set, this overrides the calculated playback bars
+// This allows users to switch between 2 and 4 bars dynamically without affecting generation
+let playbackBarOverride = null
 
 let loopStartTime  = 0
 let loopDuration   = 0
@@ -2528,6 +2534,69 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
 }
 
 /**
+ * Rebuild all stem loops with a new bar count. This is used when the user
+ * changes the playback bar selection in the Edit Take modal.
+ *
+ * @param {number} newBars The new number of bars (2 or 4)
+ */
+function rebuildAllLoopsWithNewBars(newBars) {
+  console.log(`[BarSelector] Rebuilding all loops with ${newBars} bars`)
+
+  // Pause playback during the transition to prevent glitches
+  const wasPlaying = isPlaying
+  if (wasPlaying) {
+    pauseLoop()
+  }
+
+  // Get master tempo for loop calculations
+  const tempo = stemControlValues.master?.tempo ?? DEFAULT_TEMPO
+
+  // Rebuild each active stem's loop buffer
+  for (const st of allStems) {
+    const raw = stemRaw[st]
+    if (!raw) continue
+
+    const currentTake = stemHistory[st]?.[stemActiveIndex[st]]
+    if (!currentTake) continue
+
+    // Get the head index for this stem
+    const headIndex = currentTake.headIndex ?? 0
+
+    // Rebuild the loop buffer with the new bar count
+    const newLoop = buildLoopBufferFromRawStrict(raw, tempo, newBars, headIndex)
+
+    if (newLoop) {
+      stemLoop[st] = newLoop
+
+      // Reapply offset and stretch if they exist
+      const offsetFactor = startOffsetFactors[st] ?? 0
+      const endpointFactor = endpointFactors[st] ?? 1
+
+      if (offsetFactor !== 0 || endpointFactor !== 1) {
+        const rebuilt = rebuildStemLoop(st, offsetFactor, endpointFactor)
+        if (rebuilt) {
+          stemLoop[st] = rebuilt
+        }
+      }
+
+      console.log(`[BarSelector] Rebuilt loop for ${st}: ${newLoop.duration.toFixed(2)}s`)
+    }
+  }
+
+  // Update loop duration for transport
+  if (stemLoop[allStems[0]]) {
+    loopDuration = stemLoop[allStems[0]].duration
+  }
+
+  // Resume playback if it was playing
+  if (wasPlaying) {
+    playLoop()
+  }
+
+  console.log(`[BarSelector] All loops rebuilt successfully`)
+}
+
+/**
  * Open the waveform edit modal for a specific stem.  This modal
  * displays a preview of the current loop and provides full‑width
  * controls for adjusting volume and endpoint stretch.  Changes take
@@ -2635,22 +2704,74 @@ function openWaveformEditModal(st) {
     }
   }
 
-  // Draw bar grid lines on the preview.  The grid divides the width
-  // into equal segments corresponding to the number of bars in the loop.
-  const gridContainer = document.getElementById('waveformEditGrid')
-  if (gridContainer) {
-    gridContainer.innerHTML = ''
-    // Determine the number of bars from the master settings (default to 4)
-    const bars = getPlaybackBars(stemControlValues.master?.bars || DEFAULT_BARS, DEFAULT_BARS)
-    for (let i = 0; i < bars; i++) {
-      const seg = document.createElement('div')
-      seg.style.flex = '1'
-      if (i > 0) {
-        seg.style.borderLeft = '1px solid rgba(255,255,255,0.15)'
+  // Initialize bar selector buttons
+  const currentPlaybackBars = playbackBarOverride || getPlaybackBars(stemControlValues.master?.bars || DEFAULT_BARS, DEFAULT_BARS)
+  waveformEditState.prevPlaybackBars = currentPlaybackBars
+
+  const barSelector2 = document.getElementById('barSelector2')
+  const barSelector4 = document.getElementById('barSelector4')
+
+  function updateBarSelectorUI(selectedBars) {
+    if (barSelector2 && barSelector4) {
+      // Update active state
+      if (selectedBars === 2) {
+        barSelector2.classList.add('bg-white/20')
+        barSelector2.classList.remove('bg-white/5')
+        barSelector4.classList.remove('bg-white/20')
+        barSelector4.classList.add('bg-white/5')
+      } else {
+        barSelector4.classList.add('bg-white/20')
+        barSelector4.classList.remove('bg-white/5')
+        barSelector2.classList.remove('bg-white/20')
+        barSelector2.classList.add('bg-white/5')
       }
-      gridContainer.appendChild(seg)
     }
   }
+
+  updateBarSelectorUI(currentPlaybackBars)
+
+  // Draw bar grid lines on the preview.  The grid divides the width
+  // into equal segments corresponding to the number of bars in the loop.
+  function redrawBarGrid(bars) {
+    const gridContainer = document.getElementById('waveformEditGrid')
+    if (gridContainer) {
+      gridContainer.innerHTML = ''
+      for (let i = 0; i < bars; i++) {
+        const seg = document.createElement('div')
+        seg.style.flex = '1'
+        if (i > 0) {
+          seg.style.borderLeft = '1px solid rgba(255,255,255,0.15)'
+        }
+        gridContainer.appendChild(seg)
+      }
+    }
+  }
+
+  redrawBarGrid(currentPlaybackBars)
+
+  // Set up bar selector event handlers
+  if (barSelector2) {
+    barSelector2.onclick = () => {
+      const newBars = 2
+      playbackBarOverride = newBars
+      updateBarSelectorUI(newBars)
+      redrawBarGrid(newBars)
+      rebuildAllLoopsWithNewBars(newBars)
+      updateSessionInfoCard()
+    }
+  }
+
+  if (barSelector4) {
+    barSelector4.onclick = () => {
+      const newBars = 4
+      playbackBarOverride = newBars
+      updateBarSelectorUI(newBars)
+      redrawBarGrid(newBars)
+      rebuildAllLoopsWithNewBars(newBars)
+      updateSessionInfoCard()
+    }
+  }
+
   // Set up action buttons
   const saveBtn = document.getElementById('editSaveBtn')
   const discardBtn = document.getElementById('editDiscardBtn')
@@ -2708,6 +2829,16 @@ function openWaveformEditModal(st) {
         stemHistory[st][idx].endpointFactor = 1
       }
 
+      // Reset bar selection to default (calculated from master bars)
+      const defaultBars = getPlaybackBars(stemControlValues.master?.bars || DEFAULT_BARS, DEFAULT_BARS)
+      if (playbackBarOverride !== defaultBars) {
+        playbackBarOverride = defaultBars
+        updateBarSelectorUI(defaultBars)
+        redrawBarGrid(defaultBars)
+        rebuildAllLoopsWithNewBars(defaultBars)
+        updateSessionInfoCard()
+      }
+
       // Redraw preview waveform
       const prevCanvas2 = document.getElementById('waveformEditCanvas')
       if (prevCanvas2) {
@@ -2755,6 +2886,17 @@ function closeWaveformEditModal(save) {
       adjustEndpoint(st, waveformEditState.prevEndpointFactor)
       startOffsetFactors[st] = waveformEditState.prevStartOffset
       adjustStartOffset(st, waveformEditState.prevStartOffset)
+
+      // Revert playback bar override if user discards
+      if (waveformEditState.prevPlaybackBars !== null && playbackBarOverride !== waveformEditState.prevPlaybackBars) {
+        playbackBarOverride = waveformEditState.prevPlaybackBars
+        rebuildAllLoopsWithNewBars(playbackBarOverride)
+        updateSessionInfoCard()
+      }
+    } else {
+      // Save: playback bar override is already set, just update the display
+      // The loops have already been rebuilt during the bar selection
+      console.log(`[BarSelector] Saved playback bar override: ${playbackBarOverride || 'none'}`)
     }
 
     // Update the card waveform to reflect final changes (saved or reverted)

@@ -157,8 +157,15 @@
   <!-- Darkened overlay captures pointer events to prevent interaction with the background while editing -->
   <div class="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto" id="waveformEditOverlay"></div>
   <div class="relative w-full max-w-md max-h-[85vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-    <!-- The Edit Take heading scales down on small screens (20% smaller) but remains visible on all devices -->
-    <h2 class="text-lg sm:text-xl font-medium text-white mb-4">Edit Take - <span id="waveformEditStemName"></span></h2>
+    <!-- Header with title and bar selector -->
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg sm:text-xl font-medium text-white">Edit Take - <span id="waveformEditStemName"></span></h2>
+      <!-- Bar selector in top right corner -->
+      <div class="flex gap-1 bg-white/5 rounded-lg p-1 border border-white/10">
+        <button id="barSelector2" data-bars="2" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md transition hover:bg-white/10" title="2 bars loop">2</button>
+        <button id="barSelector4" data-bars="4" class="px-2 sm:px-3 py-1 text-xs sm:text-sm rounded-md transition hover:bg-white/10" title="4 bars loop">4</button>
+      </div>
+    </div>
     <!-- Waveform preview with bar grid overlay; bars will be drawn dynamically based on session bar count -->
     <div class="relative mb-4">
       <canvas id="waveformEditCanvas" class="w-full h-20 bg-white/5 rounded-md border border-white/10"></canvas>
