@@ -4208,14 +4208,13 @@ async function setupAutoDownloadPanel() {
 
   autoDownloadPanelEl = document.createElement('div')
   autoDownloadPanelEl.id = 'autoDownloadPanel'
-  autoDownloadPanelEl.className = 'hidden fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 space-y-2'
+  autoDownloadPanelEl.className = 'hidden fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4'
   autoDownloadPanelEl.innerHTML = `
-    <div class="text-[11px] uppercase tracking-[0.3em] text-white/60">Auto Download</div>
     <div class="flex items-start gap-3">
       <div class="flex-1">
         <div class="text-sm font-semibold" data-auto-download-status>Auto-download disabled</div>
-        <p class="text-[12px] text-white/70 mt-1" data-auto-download-note>
-          Enable this to automatically save stems when generated. Files will be ready to drag from your folder.
+        <p class="text-[12px] text-white/70 mt-1 line-clamp-2" data-auto-download-note>
+          Automatically save stems when generated.
         </p>
       </div>
       <div class="flex flex-col gap-2">
@@ -4289,9 +4288,9 @@ function updateAutoDownloadPanel(status = null) {
 
     if (autoDownloadNoteEl) {
       if (!electronStatus.enabled) {
-        autoDownloadNoteEl.textContent = 'Enable to automatically save stems when generated. Files will be ready in your chosen folder.'
+        autoDownloadNoteEl.textContent = 'Automatically save stems to your folder.'
       } else {
-        autoDownloadNoteEl.textContent = `Auto-save enabled. ${electronStatus.savedCount} file(s) saved to folder.`
+        autoDownloadNoteEl.textContent = `${electronStatus.savedCount} file(s) saved to folder.`
       }
     }
 
@@ -4320,11 +4319,11 @@ function updateAutoDownloadPanel(status = null) {
 
     if (autoDownloadNoteEl) {
       if (!status.enabled) {
-        autoDownloadNoteEl.textContent = 'Enable to automatically save stems to a folder. Files will be ready to use immediately.'
+        autoDownloadNoteEl.textContent = 'Automatically save stems to your folder.'
       } else if (status.lastSavedStem) {
-        autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}. Files are in your download folder.`
+        autoDownloadNoteEl.textContent = `Last saved: ${status.lastSavedStem.filename || status.lastSavedStem.stemId}`
       } else {
-        autoDownloadNoteEl.textContent = 'Files auto-save when generated. Ready in your download folder.'
+        autoDownloadNoteEl.textContent = 'Files auto-save when generated.'
       }
     }
 
