@@ -1,4 +1,17 @@
-import { addUniqueIdToFilename } from './Utilities/uniqueFileId.js'
+/**
+ * Electron-specific file management for DAW drag-and-drop
+ *
+ * This module handles file operations in Electron using native Node.js APIs
+ * instead of the browser's File System Access API. This approach provides:
+ * - Full absolute file paths (required for shell.showItemInFolder and DAW drops)
+ * - Synchronous operations during drag gestures
+ * - No browser security restrictions
+ *
+ * Key differences from browser auto-download:
+ * - Uses Electron dialog API for folder selection
+ * - Tracks full absolute paths, not FileSystemHandle objects
+ * - Can use Node.js fs operations via IPC to main process
+ */
 
 const electronState = {
   saveDirectory: null,
@@ -77,24 +90,23 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
   }
 
   try {
-    const uniqueFilename = addUniqueIdToFilename(filename)
     const pcmArray = pcmData instanceof ArrayBuffer
       ? Array.from(new Uint8Array(pcmData))
       : Array.from(pcmData)
 
-    console.log(`[ElectronFileManager] Saving ${stemId}: ${uniqueFilename} (${(pcmArray.length / 1024).toFixed(1)}KB PCM)`)
+    console.log(`[ElectronFileManager] Saving ${stemId}: ${filename} (${(pcmArray.length / 1024).toFixed(1)}KB PCM)`)
 
     electronState.savedFiles.set(stemId, {
-      filename: uniqueFilename,
+      filename,
       status: 'pending',
       path: null,
       savedAt: null
     })
-    emit('save-started', { stemId, filename: uniqueFilename })
+    emit('save-started', { stemId, filename })
 
     const result = await window.electronAPI.saveWavFile({
       directory: electronState.saveDirectory,
-      filename: uniqueFilename,
+      filename,
       pcmData: pcmArray,
       sampleRate,
       numChannels
@@ -105,7 +117,7 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
     }
 
     electronState.savedFiles.set(stemId, {
-      filename: uniqueFilename,
+      filename,
       status: 'saved',
       path: result.path,
       size: result.size,
@@ -113,7 +125,7 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
     })
 
     console.log(`[ElectronFileManager] ✓ Saved ${stemId} to ${result.path} (${(result.size / 1024).toFixed(1)}KB)`)
-    emit('save-completed', { stemId, filename: uniqueFilename, path: result.path, size: result.size })
+    emit('save-completed', { stemId, filename, path: result.path, size: result.size })
 
     return {
       success: true,
@@ -124,14 +136,14 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
     console.error(`[ElectronFileManager] Failed to save ${stemId}:`, err)
 
     electronState.savedFiles.set(stemId, {
-      filename: uniqueFilename,
+      filename,
       status: 'error',
       path: null,
       error: err.message,
       savedAt: null
     })
 
-    emit('save-error', { stemId, filename: uniqueFilename, error: err.message })
+    emit('save-error', { stemId, filename, error: err.message })
     throw err
   }
 }

@@ -1,6 +1,10 @@
+/**
+ * Enhanced Download Service
+ * Integrates download tracking with the existing download system
+ */
+
 import { trackDownloadWithPersistence } from './stemGenerationIntegration.js'
 import { encodeWAV, triggerDownload } from '../DownloadAudio/index.js'
-import { addUniqueIdToFilename } from '../Utilities/uniqueFileId.js'
 
 /**
  * Download a single stem with tracking
@@ -72,13 +76,14 @@ export async function downloadAllStemsWithTracking(sessionData) {
       return { success: false, error: 'No stems to download' }
     }
     
+    // Create ZIP file with all stems
     const zip = new JSZip()
     const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
-
+    
+    // Add each stem to the ZIP
     for (const [stemType, stemData] of Object.entries(stems)) {
       if (stemData.audioData) {
-        const baseFilename = `${stemType}.wav`
-        const filename = addUniqueIdToFilename(baseFilename)
+        const filename = `${stemType}_${timestamp}.wav`
         
         // Create WAV blob
         const audioBuffer = new AudioBuffer({
@@ -108,9 +113,9 @@ export async function downloadAllStemsWithTracking(sessionData) {
     }
     zip.file('session_info.json', JSON.stringify(sessionInfo, null, 2))
     
+    // Generate and download ZIP
     const zipBlob = await zip.generateAsync({ type: 'blob' })
-    const baseZipFilename = `techno_stems_${timestamp}.zip`
-    const zipFilename = addUniqueIdToFilename(baseZipFilename)
+    const zipFilename = `techno_stems_${timestamp}.zip`
     triggerDownload(zipBlob, zipFilename)
     
     // Track download
@@ -148,13 +153,14 @@ export async function downloadStemSetWithTracking(setData) {
       return { success: false, error: 'No stems in set' }
     }
     
+    // Create ZIP file with set stems
     const zip = new JSZip()
     const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
-
+    
+    // Add each stem to the ZIP
     for (const stem of setData.stems) {
       if (stem.audioData) {
-        const baseFilename = `${stem.stem_type}.wav`
-        const filename = addUniqueIdToFilename(baseFilename)
+        const filename = `${stem.stem_type}_${timestamp}.wav`
         
         // Create WAV blob
         const audioBuffer = new AudioBuffer({
@@ -186,9 +192,9 @@ export async function downloadStemSetWithTracking(setData) {
     }
     zip.file('set_info.json', JSON.stringify(setInfo, null, 2))
     
+    // Generate and download ZIP
     const zipBlob = await zip.generateAsync({ type: 'blob' })
-    const baseZipFilename = `${setData.name.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}.zip`
-    const zipFilename = addUniqueIdToFilename(baseZipFilename)
+    const zipFilename = `${setData.name.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}.zip`
     triggerDownload(zipBlob, zipFilename)
     
     // Track download

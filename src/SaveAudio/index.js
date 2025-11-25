@@ -1,3 +1,6 @@
+// Placeholder for future audio saving/uploading integrations (e.g., Supabase storage)
+// No functionality moved yet to avoid breaking existing features.
+
 import { bufferToWavAndDownload } from '../DownloadAudio/index.js'
 
 export function saveBufferToCloud(/* buffer, metadata */) {
@@ -11,7 +14,7 @@ export function saveBufferToCloud(/* buffer, metadata */) {
 export function downloadStem(st, stemLoop, stemConfigs) {
   const buf = stemLoop[st]
   if (!buf) { alert(`No audio for ${stemConfigs[st]?.name || st}. Create first.`); return }
-  bufferToWavAndDownload(buf, `techno_${st}.wav`)
+  bufferToWavAndDownload(buf, `techno_${st}_${Date.now()}.wav`)
 }
 
 export function downloadAllActiveStems(stemConfigs, stemActiveIndex, stemLoop) {
