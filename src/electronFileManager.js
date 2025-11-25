@@ -76,7 +76,7 @@ export function disableElectronSave() {
   console.log('[ElectronFileManager] Electron save disabled')
 }
 
-export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChannels, filename, uniqueFileId) {
+export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChannels, filename) {
   if (!isElectronMode()) {
     throw new Error('Not running in Electron')
   }
@@ -89,12 +89,6 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
     throw new Error('Electron save API not available')
   }
 
-  const existingFile = electronState.savedFiles.get(stemId)
-  if (existingFile && existingFile.uniqueFileId === uniqueFileId && existingFile.status === 'saved') {
-    console.log(`[ElectronFileManager] Skipping ${stemId} - already saved with ID ${uniqueFileId}`)
-    return { success: true, path: existingFile.path, size: existingFile.size, skipped: true }
-  }
-
   try {
     const pcmArray = pcmData instanceof ArrayBuffer
       ? Array.from(new Uint8Array(pcmData))
@@ -104,7 +98,6 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
 
     electronState.savedFiles.set(stemId, {
       filename,
-      uniqueFileId,
       status: 'pending',
       path: null,
       savedAt: null
@@ -125,7 +118,6 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
 
     electronState.savedFiles.set(stemId, {
       filename,
-      uniqueFileId,
       status: 'saved',
       path: result.path,
       size: result.size,
@@ -145,7 +137,6 @@ export async function saveWavFileElectron(stemId, pcmData, sampleRate, numChanne
 
     electronState.savedFiles.set(stemId, {
       filename,
-      uniqueFileId,
       status: 'error',
       path: null,
       error: err.message,

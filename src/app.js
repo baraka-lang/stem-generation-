@@ -3949,10 +3949,7 @@ async function generateStem(st) {
     const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
     if (canvas) {
       const cfg = stemConfigs[st]
-      canvas.style.opacity = '1'
-      requestAnimationFrame(() => {
-        drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
-      })
+      drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
     }
     // After drawing the waveform, update the overlay controls to reflect
     // the current per‑stem volume and the reset endpoint factor.  Also
@@ -4170,12 +4167,10 @@ function scheduleAutoDownloadForStem(st) {
   const pcmCache = getStemPCM(st)
   if (!pcmCache || !pcmCache.pcmData) return
 
-  const uniqueFileId = pcmCache.uniqueFileId
-  const baseFilename = generateWavFilename(st)
-  const filename = addUniqueIdToFilename(baseFilename, uniqueFileId)
+  const filename = generateWavFilename(st)
 
   if (isElectronMode() && isElectronSaveEnabled()) {
-    saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename, uniqueFileId)
+    saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename)
       .then(result => {
         console.log(`[Electron] Saved ${st}: ${result.path}`)
         updateDragButtonState(st)
@@ -4189,8 +4184,7 @@ function scheduleAutoDownloadForStem(st) {
       sampleRate: pcmCache.sampleRate,
       numChannels: pcmCache.numChannels,
       filename,
-      timestamp: pcmCache.timestamp,
-      uniqueFileId: uniqueFileId
+      timestamp: pcmCache.timestamp
     }).catch(err => {
       console.warn(`[AutoDownload] Failed to save ${st}:`, err?.message || err)
     })
