@@ -266,13 +266,16 @@ export async function queueAutoDownloadForStem(stemId, meta = {}) {
   }
 
   const timestamp = meta.timestamp || Date.now()
+  const uniqueFileId = meta.uniqueFileId
   const filename = meta.filename || `${stemId}_${timestamp}.wav`
+
   const record = autoState.stemRecords[stemId]
-  if (record && record.timestamp === timestamp && record.status === 'saved') {
+  if (record && record.uniqueFileId === uniqueFileId && record.status === 'saved') {
+    console.log(`[AutoDownload] Skipping ${stemId} - already saved with ID ${uniqueFileId}`)
     return { skipped: true, reason: 'already-saved' }
   }
 
-  const jobKey = `${stemId}:${timestamp}`
+  const jobKey = uniqueFileId ? `${stemId}:${uniqueFileId}` : `${stemId}:${timestamp}`
   if (autoState.pendingWrites.has(jobKey)) {
     return autoState.pendingWrites.get(jobKey)
   }
@@ -281,6 +284,7 @@ export async function queueAutoDownloadForStem(stemId, meta = {}) {
     autoState.stemRecords[stemId] = {
       filename,
       timestamp,
+      uniqueFileId,
       status: 'pending',
       fileHandle: null
     }
@@ -290,6 +294,7 @@ export async function queueAutoDownloadForStem(stemId, meta = {}) {
       autoState.stemRecords[stemId] = {
         filename,
         timestamp,
+        uniqueFileId,
         status: 'saved',
         bytes,
         savedAt: Date.now(),
@@ -310,6 +315,7 @@ export async function queueAutoDownloadForStem(stemId, meta = {}) {
       autoState.stemRecords[stemId] = {
         filename,
         timestamp,
+        uniqueFileId,
         status: 'error',
         error: error.message,
         fileHandle: null
