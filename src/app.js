@@ -6527,6 +6527,11 @@ function showPage(pageId){
   pages.forEach(id => { const page=document.getElementById(id); if (page) page.classList.add('hidden') })
   const targetPage=document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
 
+  // Show studio header on studio page
+  const studioHeader=document.getElementById('studioHeader')
+  const showStudioHeader = pageId === 'techno-generator-page'
+  if (studioHeader) studioHeader.classList.toggle('hidden', !showStudioHeader)
+
   // Show bottom player only on Studio page
   const playerBar=document.getElementById('playerBar')
   const showDock = pageId === 'techno-generator-page'

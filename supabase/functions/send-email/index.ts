@@ -13,15 +13,15 @@ const corsHeaders = {
 // Email template configurations
 const emailTemplates = {
   confirmation: {
-    subject: 'Confirm Your Email - 343 Labs AI Music Studio',
+    subject: 'Confirm Your Email - TunePal Beta AI Music Studio',
     template: 'confirmation.html'
   },
   password_reset: {
-    subject: 'Reset Your Password - 343 Labs AI Music Studio',
+    subject: 'Reset Your Password - TunePal Beta AI Music Studio',
     template: 'password-reset.html'
   },
   welcome: {
-    subject: 'Welcome to 343 Labs AI Music Studio!',
+    subject: 'Welcome to TunePal Beta AI Music Studio!',
     template: 'welcome.html'
   }
 };
@@ -58,7 +58,7 @@ const templateVariables = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reset Your Password - 343 Labs AI Music Studio</title>
+    <title>Reset Your Password - TunePal Beta AI Music Studio</title>
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; }
         .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
@@ -81,12 +81,12 @@ const templateVariables = {
 <body>
     <div class="email-container">
         <div class="header">
-            <h1 class="logo">343 Labs AI Music Studio</h1>
+            <h1 class="logo">TunePal Beta AI Music Studio</h1>
             <p class="tagline">Create professional-quality stems with AI-powered music generation</p>
         </div>
         <div class="content">
             <h2 class="title">Reset Your Password</h2>
-            <p class="message">We received a request to reset your password for your 343 Labs AI Music Studio account. Please check your email for the password reset link, or click the button below to request a new one.</p>
+            <p class="message">We received a request to reset your password for your TunePal Beta AI Music Studio account. Please check your email for the password reset link, or click the button below to request a new one.</p>
             <div class="button-container">
                 <a href="{{RESET_LINK}}" class="reset-button">Check Email & Reset Password</a>
             </div>
@@ -99,7 +99,7 @@ const templateVariables = {
         </div>
         <div class="footer">
             <p class="footer-text">This email was sent to {{USER_EMAIL}} because a password reset was requested for your account.</p>
-            <p class="footer-text">© 2024 343 Labs. All rights reserved.</p>
+            <p class="footer-text">© 2024 TunePal Beta. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -112,7 +112,7 @@ const templateVariables = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Confirm Your Email - 343 Labs AI Music Studio</title>
+    <title>Confirm Your Email - TunePal Beta AI Music Studio</title>
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; }
         .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
@@ -133,12 +133,12 @@ const templateVariables = {
 <body>
     <div class="email-container">
         <div class="header">
-            <h1 class="logo">343 Labs AI Music Studio</h1>
+            <h1 class="logo">TunePal Beta AI Music Studio</h1>
             <p class="tagline">Create professional-quality stems with AI-powered music generation</p>
         </div>
         <div class="content">
             <h2 class="title">Confirm Your Email</h2>
-            <p class="message">Thank you for registering with 343 Labs AI Music Studio! To activate your account, please confirm your email address by clicking the button below.</p>
+            <p class="message">Thank you for registering with TunePal Beta AI Music Studio! To activate your account, please confirm your email address by clicking the button below.</p>
             <div class="button-container">
                 <a href="{{CONFIRMATION_LINK}}" class="confirm-button">Confirm Email</a>
             </div>
@@ -146,7 +146,7 @@ const templateVariables = {
         </div>
         <div class="footer">
             <p class="footer-text">This email was sent to {{USER_EMAIL}} to confirm your account.</p>
-            <p class="footer-text">© 2024 343 Labs. All rights reserved.</p>
+            <p class="footer-text">© 2024 TunePal Beta. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -159,7 +159,7 @@ const templateVariables = {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Welcome to 343 Labs AI Music Studio</title>
+    <title>Welcome to TunePal Beta AI Music Studio</title>
     <style>
         body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; color: #1e293b; }
         .email-container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
@@ -180,12 +180,12 @@ const templateVariables = {
 <body>
     <div class="email-container">
         <div class="header">
-            <h1 class="logo">343 Labs AI Music Studio</h1>
+            <h1 class="logo">TunePal Beta AI Music Studio</h1>
             <p class="tagline">Create professional-quality stems with AI-powered music generation</p>
         </div>
         <div class="content">
-            <h2 class="title">Welcome to 343 Labs!</h2>
-            <p class="message">Your account has been successfully created and verified. Welcome to 343 Labs AI Music Studio!</p>
+            <h2 class="title">Welcome to TunePal Beta!</h2>
+            <p class="message">Your account has been successfully created and verified. Welcome to TunePal Beta AI Music Studio!</p>
             <p class="message">We're excited to have you. Start creating professional-quality stems with our AI-powered music generation.</p>
             <div class="button-container">
                 <a href="{{APP_URL}}" class="welcome-button">Go to Studio</a>
@@ -193,8 +193,8 @@ const templateVariables = {
             <p class="message">If you have any questions, feel free to contact our support team.</p>
         </div>
         <div class="footer">
-            <p class="footer-text">This email was sent to {{USER_EMAIL}} to welcome you to 343 Labs.</p>
-            <p class="footer-text">© 2024 343 Labs. All rights reserved.</p>
+            <p class="footer-text">This email was sent to {{USER_EMAIL}} to welcome you to TunePal Beta.</p>
+            <p class="footer-text">© 2024 TunePal Beta. All rights reserved.</p>
         </div>
     </div>
 </body>
@@ -203,10 +203,10 @@ const templateVariables = {
   // Default fallback
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-      <h2 style="color: #8b5cf6;">Email from 343 Labs AI Music Studio</h2>
+      <h2 style="color: #8b5cf6;">Email from TunePal Beta AI Music Studio</h2>
       <p>Hello {{USER_EMAIL}},</p>
-      <p>This is an email from 343 Labs AI Music Studio.</p>
-      <p>Best regards,<br>343 Labs Team</p>
+      <p>This is an email from TunePal Beta AI Music Studio.</p>
+      <p>Best regards,<br>TunePal Beta Team</p>
     </div>
   `;
 }
@@ -252,7 +252,7 @@ const templateVariables = {
         'Authorization': `Bearer ${resendApiKey}`
       },
       body: JSON.stringify({
-        from: '343 Labs <noreply@stemflow.app>',
+        from: 'TunePal Beta <noreply@stemflow.app>',
         to: [
           to
         ],
