@@ -1,4 +1,9 @@
-import { generateUniqueFileId } from './Utilities/uniqueFileId.js'
+/**
+ * Stem Data Manager
+ *
+ * Manages both AudioBuffer (for playback) and raw PCM data (for drag-to-DAW).
+ * Keeps the original PCM format from ElevenLabs without re-encoding.
+ */
 
 const stemPCMCache = {}
 const stemFormatInfo = {}
@@ -13,16 +18,13 @@ const stemFormatInfo = {}
  * @param {string} format - Format string like 'pcm_44100'
  */
 export function storeStemPCM(stemId, pcmData, sampleRate, numChannels, format) {
-  const uniqueFileId = generateUniqueFileId()
-
   stemPCMCache[stemId] = {
     pcmData: pcmData,
     sampleRate: sampleRate,
     numChannels: numChannels,
     format: format,
     timestamp: Date.now(),
-    size: pcmData.byteLength,
-    uniqueFileId: uniqueFileId
+    size: pcmData.byteLength
   }
 
   stemFormatInfo[stemId] = {
@@ -31,7 +33,7 @@ export function storeStemPCM(stemId, pcmData, sampleRate, numChannels, format) {
     format
   }
 
-  console.log(`[PCM] Stored ${stemId}: ${format} (${sampleRate}Hz, ${numChannels}ch, ${(pcmData.byteLength / 1024).toFixed(1)}KB) ID: ${uniqueFileId}`)
+  console.log(`[PCM] Stored ${stemId}: ${format} (${sampleRate}Hz, ${numChannels}ch, ${(pcmData.byteLength / 1024).toFixed(1)}KB)`)
 }
 
 /**
