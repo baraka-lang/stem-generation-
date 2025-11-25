@@ -6527,10 +6527,12 @@ function showPage(pageId){
   pages.forEach(id => { const page=document.getElementById(id); if (page) page.classList.add('hidden') })
   const targetPage=document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
 
-  // Show bottom player only on Studio page
+  // Show bottom player and studio header only on Studio page
   const playerBar=document.getElementById('playerBar')
+  const studioHeader=document.getElementById('studioHeader')
   const showDock = pageId === 'techno-generator-page'
   if (playerBar) playerBar.classList.toggle('hidden', !showDock)
+  if (studioHeader) studioHeader.classList.toggle('hidden', !showDock)
   if (!showDock) setMixerOpen(false)
 }
 function setupNavigationListeners(){
