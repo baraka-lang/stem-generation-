@@ -1,14 +1,4 @@
-/**
- * PCM to WAV Converter for ElevenLabs Audio
- *
- * This module wraps raw PCM S16LE data from ElevenLabs into a proper WAV file
- * WITHOUT re-encoding or changing the sample rate. This is critical for DAW
- * compatibility as it preserves the exact audio format from the API.
- *
- * ElevenLabs PCM format: 16-bit signed little-endian PCM
- * Supported sample rates: 44100, 24000, 22050, 16000 Hz
- * Channels: Stereo (2 channels) for music
- */
+import { addUniqueIdToFilename } from './Utilities/uniqueFileId.js'
 
 /**
  * Wrap raw PCM S16LE data into a WAV file with proper RIFF header
@@ -145,21 +135,13 @@ export function parseElevenLabsFormat(format) {
   };
 }
 
-/**
- * Generate a filename for the WAV file based on stem and session info
- *
- * @param {string} stemName - Name of the stem (kick, bass, etc.)
- * @param {number} tempo - BPM
- * @param {string} key - Musical key
- * @param {number} sampleRate - Sample rate in Hz
- * @returns {string} Filename like "kick_130bpm_Cmin_44k.wav"
- */
 export function generateWavFilename(stemName, tempo, key, sampleRate) {
   const sanitizedStem = stemName.replace(/[^a-z0-9]/gi, '');
   const sanitizedKey = key.replace(/[^a-zA-Z0-9#]/g, '');
   const rateLabel = sampleRate >= 1000 ? `${Math.round(sampleRate / 1000)}k` : `${sampleRate}`;
 
-  return `${sanitizedStem}_${tempo}bpm_${sanitizedKey}_${rateLabel}.wav`;
+  const baseFilename = `${sanitizedStem}_${tempo}bpm_${sanitizedKey}_${rateLabel}.wav`;
+  return addUniqueIdToFilename(baseFilename);
 }
 
 /**

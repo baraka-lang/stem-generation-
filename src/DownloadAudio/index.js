@@ -1,4 +1,4 @@
-// Audio download helpers: encode AudioBuffer to WAV and trigger downloads
+import { addUniqueIdToFilename } from '../Utilities/uniqueFileId.js'
 
 export function encodeWAV(audioBuffer) {
   const srcCh = audioBuffer.numberOfChannels
@@ -23,9 +23,10 @@ export function encodeWAV(audioBuffer) {
 }
 
 export function triggerDownload(blob, filename) {
+  const uniqueFilename = addUniqueIdToFilename(filename)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url; a.download = filename
+  a.href = url; a.download = uniqueFilename
   document.body.appendChild(a); a.click(); document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }

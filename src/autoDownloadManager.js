@@ -1,4 +1,5 @@
 import { pcm16leToWav, isValidWavHeader } from './pcmToWav.js'
+import { addUniqueIdToFilename } from './Utilities/uniqueFileId.js'
 
 const DB_NAME = 'daw-auto-download'
 const STORE_NAME = 'handles'
@@ -266,7 +267,8 @@ export async function queueAutoDownloadForStem(stemId, meta = {}) {
   }
 
   const timestamp = meta.timestamp || Date.now()
-  const filename = meta.filename || `${stemId}_${timestamp}.wav`
+  const baseFilename = meta.filename || `${stemId}.wav`
+  const filename = addUniqueIdToFilename(baseFilename)
   const record = autoState.stemRecords[stemId]
   if (record && record.timestamp === timestamp && record.status === 'saved') {
     return { skipped: true, reason: 'already-saved' }

@@ -10,6 +10,7 @@ import { isElectronMode, isElectronSaveEnabled, getElectronSaveDirectory, choose
 import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Utilities/barUtils.js'
 import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper.js'
 import { loopFixConfig } from './Config/environment.js'
+import { addUniqueIdToFilename } from './Utilities/uniqueFileId.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -4078,20 +4079,12 @@ function supportsFileHandleDragOut() {
   )
 }
 
-/**
- * Generate a properly formatted WAV filename for drag-and-drop.
- * Format: ProjectName_InstrumentName_BPM_Key_Bars.wav
- * Example: Nexus_Kick_130_Am_4bars.wav
- * @param {string} st Stem identifier
- * @returns {string} formatted filename
- */
 function generateWavFilename(st) {
   const cfg = stemConfigs[st]
   const master = stemControlValues.master || {}
   const tempo = master.tempo ?? DEFAULT_TEMPO
   const bars = master.bars ?? DEFAULT_BARS
 
-  // Get root note with accidentals
   const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || 'A')
   const mode = master.mode ?? 'Minor'
   const keyStr = rootName.replace('♯', '#').replace('♭', 'b') + (mode === 'Minor' ? 'm' : '')
@@ -4099,7 +4092,8 @@ function generateWavFilename(st) {
   const instrumentName = cfg?.name || st
   const safeName = instrumentName.replace(/\s+/g, '')
 
-  return `Techno_${safeName}_${tempo}_${keyStr}_${bars}bars.wav`
+  const baseFilename = `Techno_${safeName}_${tempo}_${keyStr}_${bars}bars.wav`
+  return addUniqueIdToFilename(baseFilename)
 }
 
 function setDragImageForFilename(event, filename) {
