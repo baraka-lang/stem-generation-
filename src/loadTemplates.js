@@ -7,9 +7,10 @@
 export async function loadTemplates() {
   try {
     // Fetch all template files in parallel
-    const [templatesResponse, selectionPageResponse, loginPageResponse, resetPasswordResponse, confirmEmailResponse, profilePageResponse, technoGeneratorResponse] = await Promise.all([
+    const [templatesResponse, selectionPageResponse, favoritesPageResponse, loginPageResponse, resetPasswordResponse, confirmEmailResponse, profilePageResponse, technoGeneratorResponse] = await Promise.all([
       fetch('/src/templates.html'),
       fetch('/src/pages/selection-page.html'),
+      fetch('/src/pages/favorites-page.html'),
       fetch('/src/pages/login-page.html'),
       fetch('/src/pages/reset-password.html'),
       fetch('/src/pages/confirm-email.html'),
@@ -27,6 +28,10 @@ export async function loadTemplates() {
       throw new Error(`Failed to load selection page: ${selectionPageResponse.status} ${selectionPageResponse.statusText}`);
     }
     
+    if (!favoritesPageResponse.ok) {
+      throw new Error(`Failed to load favorites page: ${favoritesPageResponse.status} ${favoritesPageResponse.statusText}`);
+    }
+
     if (!loginPageResponse.ok) {
       throw new Error(`Failed to load login page: ${loginPageResponse.status} ${loginPageResponse.statusText}`);
     }
@@ -47,9 +52,10 @@ export async function loadTemplates() {
       throw new Error(`Failed to load techno generator page: ${technoGeneratorResponse.status} ${technoGeneratorResponse.statusText}`);
     }
     
-    const [templatesContent, selectionPageContent, loginPageContent, resetPasswordContent, confirmEmailContent, profilePageContent, technoGeneratorContent] = await Promise.all([
+    const [templatesContent, selectionPageContent, favoritesPageContent, loginPageContent, resetPasswordContent, confirmEmailContent, profilePageContent, technoGeneratorContent] = await Promise.all([
       templatesResponse.text(),
       selectionPageResponse.text(),
+      favoritesPageResponse.text(),
       loginPageResponse.text(),
       resetPasswordResponse.text(),
       confirmEmailResponse.text(),
@@ -82,6 +88,15 @@ export async function loadTemplates() {
     } else {
       console.warn('Selection page placeholder not found, appending selection page to end');
       appRoot.insertAdjacentHTML('beforeend', selectionPageContent);
+    }
+
+    // Replace the favorites page placeholder
+    const favoritesPlaceholder = document.getElementById('favorites-page-placeholder');
+    if (favoritesPlaceholder) {
+      favoritesPlaceholder.outerHTML = favoritesPageContent;
+    } else {
+      console.warn('Favorites page placeholder not found, appending favorites page to end');
+      appRoot.insertAdjacentHTML('beforeend', favoritesPageContent);
     }
     
     // Replace the reset password page placeholder

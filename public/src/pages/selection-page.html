@@ -25,11 +25,16 @@
         <a href="#contact" class="text-white/70 hover:text-white transition">Contact</a>
       </nav>
 
-      <!-- User Status Container - Dynamically populated by JavaScript -->
-      <div id="userStatusContainer"></div>
+      <div class="flex items-center gap-3">
+        <button data-likes-menu-toggle data-anchor-id="selection-menu" class="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10 transition" title="Likes &amp; Sets">
+          <i data-lucide="user" class="w-5 h-5"></i>
+        </button>
+        <!-- User Status Container - Dynamically populated by JavaScript -->
+        <div id="userStatusContainer"></div>
 
-      <!-- User Menu Container - Dynamically populated by JavaScript -->
-      <div id="logedInUserMenu" class="hidden"></div>
+        <!-- User Menu Container - Dynamically populated by JavaScript -->
+        <div id="logedInUserMenu" class="hidden"></div>
+      </div>
     </div>
   </header>
 

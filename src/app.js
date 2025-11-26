@@ -10,6 +10,7 @@ import { isElectronMode, isElectronSaveEnabled, getElectronSaveDirectory, choose
 import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Utilities/barUtils.js'
 import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper.js'
 import { loopFixConfig } from './Config/environment.js'
+import { initFavoritesPageView, initLikesSetsMenu, isTrackLiked, refreshFavoritesUI, syncSavedSetsMenu, toggleLikeForStem } from './UI/likesSetsMenu.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -150,6 +151,8 @@ function getStemAlignmentStrategy(st) {
 let stemControlValues = {}
 let stemMuteStates = {}
 let soloedStem = null
+let currentPageId = 'selection-page'
+let lastPageBeforeFavorites = 'selection-page'
 
 // When a stem is soloed, store its previous mute state here so it can be restored
 // when the solo is released.  Keys are stem IDs; values are booleans indicating
@@ -253,6 +256,37 @@ function updateSessionInfoCard() {
   const infoString = `${tempo} BPM • ${displayBars} bars • ${rootName} ${mode}`
   if (infoEl) infoEl.textContent = infoString
   if (infoElMob) infoElMob.textContent = infoString
+}
+
+function buildSavedSetRecord(labelOverride = null) {
+  const snapshot = getCurrentPlayerState()
+  const master = stemControlValues.master || {}
+  const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || master.root || 'A')
+  const tempo = master.tempo ?? DEFAULT_TEMPO
+  const bars = master.bars ?? DEFAULT_BARS
+  const mode = master.mode ?? 'Minor'
+  const activeStemCount = STEM_ORDER.filter(st => (stemActiveIndex[st] ?? -1) >= 0).length
+  const totalTakes = STEM_ORDER.reduce((sum, st) => sum + (stemHistory[st]?.length || 0), 0)
+
+  snapshot.metadata = {
+    timestamp: Date.now(),
+    tempo,
+    bars,
+    key: `${rootName} ${mode}`.trim(),
+    name: labelOverride || snapshot.metadata?.name,
+    activeStemCount,
+    totalTakes
+  }
+
+  return snapshot
+}
+
+function getSessionSummaryInfo() {
+  const master = stemControlValues.master || {}
+  const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || master.root || 'A')
+  const tempo = master.tempo ?? DEFAULT_TEMPO
+  const mode = master.mode ?? 'Minor'
+  return { bpm: tempo, key: `${rootName} ${mode}`.trim() }
 }
 
 /**
@@ -397,9 +431,10 @@ function updateSavedSetsDropdown() {
  * confirmation is required when saving; the action always succeeds.
  */
 function saveCurrentPlayerState() {
-  const snapshot = getCurrentPlayerState()
+  const snapshot = buildSavedSetRecord()
   savedSets.push(snapshot)
   updateSavedSetsDropdown()
+  syncSavedSetsMenu(savedSets)
 }
 
 // ------------------------- Load Set Modal handlers -------------------------
@@ -654,7 +689,7 @@ function saveNewSet() {
     label.textContent = 'Saving'
   }
   // Save the state
-  const snapshot = getCurrentPlayerState()
+  const snapshot = buildSavedSetRecord(`Set ${savedSets.length + 1}`)
   savedSets.push(snapshot)
   // Determine new index
   const newIndex = savedSets.length - 1
@@ -665,6 +700,7 @@ function saveNewSet() {
     dropdown.value = String(newIndex)
   }
   currentSavedSetIndex = newIndex
+  syncSavedSetsMenu(savedSets)
   // Hide spinner and close modal
   if (spinner && label) {
     spinner.classList.add('hidden')
@@ -721,6 +757,39 @@ async function confirmLoadSet(idx) {
     label.textContent = 'Load'
   }
   // Note: loadSavedSet() closes the modal
+}
+
+
+function updateStemLikeButtons(st) {
+  const activeIdx = stemActiveIndex[st] ?? -1
+  const liked = isTrackLiked(st, activeIdx)
+  const buttons = document.querySelectorAll(`[data-action="toggle-like"][data-stem="${st}"]`)
+  buttons.forEach((btn) => {
+    btn.setAttribute('aria-pressed', liked ? 'true' : 'false')
+    btn.classList.toggle('text-red-400', liked)
+    btn.classList.toggle('bg-red-500/10', liked)
+    btn.classList.toggle('border', liked)
+    btn.classList.toggle('border-red-400/40', liked)
+  })
+}
+
+function handleStemLikeToggle(st) {
+  const takeIndex = stemActiveIndex[st] ?? -1
+  const activeTake = getActiveVersion(st)
+  const sessionInfo = getSessionSummaryInfo()
+  if (!activeTake) {
+    alert('Generate this stem first before saving it to Likes.')
+    return false
+  }
+  const liked = toggleLikeForStem(st, {
+    stemName: stemConfigs[st]?.name || st,
+    stemColor: stemConfigs[st]?.color || 'purple',
+    bpm: activeTake?.tempo ?? sessionInfo.bpm,
+    key: sessionInfo.key,
+    takeIndex
+  })
+  updateStemLikeButtons(st)
+  return liked
 }
 
 /**
@@ -4702,7 +4771,26 @@ function filterKnobHTML(st){
   return `\n        <div class="flex items-center gap-2">\n          <div class="flex flex-col items-center select-none">\n            <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n                 data-filter-knob data-stem="${st}" data-value="${v}" title="Filter Cutoff: drag to adjust">\n              <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n              <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                   data-filter-pointer\n                   style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n            </div>\n            <div class="mt-1 text-[10px] tracking-wider text-white/80">CUTOFF</div>\n            <div class="text-[10px] text-white/60" data-filter-readout="${st}"></div>\n          </div>\n          <button class="h-6 px-2 rounded-md border border-white/15 bg-white/80 text-black text-[10px] font-semibold tracking-wider hover:bg-white active:translate-y-[1px] transition"\n                  data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}" title="Toggle LP/HP">\n            ${mode === 'lowpass' ? 'LP' : 'HP'}\n          </button>\n        </div>\n      `
 }
 function headerActionButtonsHTML(st){
-  return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `
+  return `
+        <div class="flex items-center gap-1.5">
+          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
+            <i data-lucide="volume-2" class="w-4 h-4"></i>
+          </button>
+          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
+            <i data-lucide="headphones" class="w-4 h-4"></i>
+          </button>
+          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
+            <i data-lucide="heart" class="w-4 h-4"></i>
+          </button>
+          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                 data-action="download-stem" data-stem="${st}" title="Download">
+            <i data-lucide="download" class="w-4 h-4"></i>
+          </button>
+        </div>
+      `
 }
 
 // Mobile version of header action buttons.  On small screens the action icons
@@ -4710,8 +4798,28 @@ function headerActionButtonsHTML(st){
 // helper is used in the card header markup to display a second row of
 // buttons on mobile only (hidden on sm and larger).
 function headerActionButtonsMobileHTML(st) {
-  return `\n        <div class="flex items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <i data-lucide="headphones" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `
+  return `
+        <div class="flex items-center gap-1 sm:hidden mt-1">
+          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
+            <i data-lucide="volume-2" class="w-3 h-3"></i>
+          </button>
+          <button class="sg-toggle w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
+            <i data-lucide="headphones" class="w-3 h-3"></i>
+          </button>
+          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
+            <i data-lucide="heart" class="w-3 h-3"></i>
+          </button>
+          <button class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="download-stem" data-stem="${st}" title="Download">
+            <i data-lucide="download" class="w-3 h-3"></i>
+          </button>
+        </div>
+      `
 }
+
 function createBuilderStemCard(st, cfg){
   const card = document.createElement('div')
   // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
@@ -6153,6 +6261,7 @@ function setupEventListeners() {
         }
         return
       }
+      if (action === 'toggle-like' && st) { handleStemLikeToggle(st); return }
       if (action === 'download-stem' && st) { downloadStem(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       if (action === 'show-in-folder' && st) {
@@ -6517,15 +6626,20 @@ function selectStemVersion(st, index){
   updateCardNumberColor(st)
   updateDragButtonState(st); updateCleanButtonState(st)
   updateTempoIndicator(st)
+  updateStemLikeButtons(st)
 }
 
 /* =========================================================
    App init + navigation
    ========================================================= */
 function showPage(pageId){
-  const pages=['login-page', 'selection-page', 'techno-generator-page']
+  const pages=['login-page', 'selection-page', 'techno-generator-page', 'favorites-page']
   pages.forEach(id => { const page=document.getElementById(id); if (page) page.classList.add('hidden') })
   const targetPage=document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
+  currentPageId = pageId
+  if (pageId !== 'favorites-page') {
+    lastPageBeforeFavorites = pageId
+  }
 
   // Show studio header on studio page
   const studioHeader=document.getElementById('studioHeader')
@@ -6537,6 +6651,24 @@ function showPage(pageId){
   const showDock = pageId === 'techno-generator-page'
   if (playerBar) playerBar.classList.toggle('hidden', !showDock)
   if (!showDock) setMixerOpen(false)
+}
+
+function openFavoritesPage(){
+  showPage('favorites-page')
+  refreshFavoritesUI()
+  window.lucide?.createIcons()
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+function setupFavoritesPageNavigation(){
+  const backBtn = document.getElementById('favoritesBackButton')
+  if (backBtn) backBtn.addEventListener('click', () => showPage(lastPageBeforeFavorites))
+
+  const selectionBtn = document.getElementById('favoritesOpenSelection')
+  if (selectionBtn) selectionBtn.addEventListener('click', () => showPage('selection-page'))
+
+  const studioBtn = document.getElementById('favoritesOpenStudio')
+  if (studioBtn) studioBtn.addEventListener('click', () => showPage('techno-generator-page'))
 }
 function setupNavigationListeners(){
   const loginBtn = document.getElementById('loginBtn')
@@ -6776,6 +6908,8 @@ function initTechnoGenerator(){
 
     // Add plus button to add more instruments
     createAddInstrumentButton(container)
+
+    visibleInstruments.forEach(updateStemLikeButtons)
   }
 
   setupEventListeners()
@@ -6924,6 +7058,23 @@ export async function initApp(){
   setupHelpModal()
   // Initialise the user menu in the header
   setupUserMenu()
+  initLikesSetsMenu({
+    getSessionInfo: getSessionSummaryInfo,
+    onLoadSet: (idx) => openLoadSetModal(idx)
+  })
+  initFavoritesPageView({
+    getSessionInfo: getSessionSummaryInfo,
+    onLoadSet: (idx) => openLoadSetModal(idx)
+  })
+  syncSavedSetsMenu(savedSets)
+  window.addEventListener('likesUpdated', (event) => {
+    const stemId = event.detail?.stemId
+    if (stemId) {
+      updateStemLikeButtons(stemId)
+    }
+  })
+  window.addEventListener('openFavoritesPage', () => openFavoritesPage())
+  setupFavoritesPageNavigation()
 
   // Check for Windows UAC elevation and warn if needed
   await checkWindowsUACStatus()
@@ -6947,11 +7098,49 @@ export async function initApp(){
 //    and the solo button uses 'S'.
 
 function customHeaderActionButtonsHTML(st) {
-  return `\n        <div class="flex items-center gap-1.5">\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-4 h-4"></i>\n          </button>\n          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-sm">S</span>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-4 h-4"></i>\n          </button>\n          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-4 h-4"></i>\n          </button>\n        </div>\n      `;
+  return `
+        <div class="flex items-center gap-1.5">
+          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
+            <i data-lucide="volume-2" class="w-4 h-4"></i>
+          </button>
+          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
+            <span class="font-bold text-sm">S</span>
+          </button>
+          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
+            <i data-lucide="heart" class="w-4 h-4"></i>
+          </button>
+          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                 data-action="download-stem" data-stem="${st}" title="Download">
+            <i data-lucide="download" class="w-4 h-4"></i>
+          </button>
+        </div>
+      `
 }
 
 function customHeaderActionButtonsMobileHTML(st) {
-  return `\n        <div class="flex w-full items-center gap-1 sm:hidden mt-1">\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">\n            <i data-lucide="volume-2" class="w-3 h-3"></i>\n          </button>\n          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">\n            <span class="font-bold text-[10px]">S</span>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-stem="${st}" title="Favorite (coming soon)">\n            <i data-lucide="heart" class="w-3 h-3"></i>\n          </button>\n          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"\n                  data-action="download-stem" data-stem="${st}" title="Download">\n            <i data-lucide="download" class="w-3 h-3"></i>\n          </button>\n        </div>\n      `;
+  return `
+        <div class="flex w-full items-center gap-1 sm:hidden mt-1">
+          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
+            <i data-lucide="volume-2" class="w-3 h-3"></i>
+          </button>
+          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
+            <span class="font-bold text-[10px]">S</span>
+          </button>
+          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
+            <i data-lucide="heart" class="w-3 h-3"></i>
+          </button>
+          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                  data-action="download-stem" data-stem="${st}" title="Download">
+            <i data-lucide="download" class="w-3 h-3"></i>
+          </button>
+        </div>
+      `
 }
 
 /* =========================================================

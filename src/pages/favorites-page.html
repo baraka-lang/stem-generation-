@@ -1,0 +1,71 @@
+<div id="favorites-page" class="hidden min-h-screen flex flex-col bg-gradient-to-b from-zinc-950 via-zinc-900 to-zinc-950">
+  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <button id="favoritesBackButton"
+          class="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10 transition"
+          aria-label="Back to previous page">
+          <i data-lucide="arrow-left" class="w-5 h-5"></i>
+        </button>
+        <div>
+          <div class="flex items-center gap-2 text-white/80 text-sm">
+            <i data-lucide="heart" class="w-4 h-4"></i>
+            <span class="uppercase tracking-[0.2em] text-[11px] text-white/50">Session Favorites</span>
+          </div>
+          <h1 class="text-2xl sm:text-3xl font-bold">Likes &amp; Saved Sets</h1>
+          <p class="text-sm text-white/60">Everything you've hearted or saved in this session, with filters for BPM and key.</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="favoritesOpenStudio"
+          class="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-sm hover:bg-white/10 transition"
+          aria-label="Return to studio">
+          <i data-lucide="music-2" class="w-4 h-4"></i>
+          <span>Back to Studio</span>
+        </button>
+        <button id="favoritesOpenSelection"
+          class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-sm hover:bg-white/10 transition"
+          aria-label="Return to genre selection">
+          <i data-lucide="grid" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">Genre Selection</span>
+          <span class="sm:hidden">Browse</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1">
+    <div class="max-w-6xl mx-auto px-4 py-6 sm:py-10 space-y-6 sm:space-y-8">
+      <div id="favoritesStats" class="grid sm:grid-cols-3 gap-3"></div>
+
+      <div class="player-surface card-border border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
+        <div class="px-4 pt-4 pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div class="flex items-center gap-2 text-sm text-white/70">
+            <i data-lucide="info" class="w-4 h-4"></i>
+            <span>Session-only favorites. Clears on refresh.</span>
+          </div>
+          <div class="inline-flex bg-white/5 border border-white/10 rounded-lg overflow-hidden text-sm w-full sm:w-auto">
+            <button data-favorites-tab="likes"
+              class="favorites-tab-btn flex-1 sm:flex-none px-4 py-2 font-medium border-b-2 border-purple-400 text-white">
+              <i data-lucide="heart" class="w-4 h-4 mr-2"></i>Likes
+            </button>
+            <button data-favorites-tab="sets"
+              class="favorites-tab-btn flex-1 sm:flex-none px-4 py-2 font-medium border-b-2 border-transparent text-white/70">
+              <i data-lucide="layers" class="w-4 h-4 mr-2"></i>Sets
+            </button>
+          </div>
+        </div>
+
+        <section id="favoritesLikesSection" class="p-4 space-y-4">
+          <div id="favoritesLikesFilters"></div>
+          <div id="favoritesLikesList" class="space-y-3"></div>
+        </section>
+
+        <section id="favoritesSetsSection" class="hidden p-4 space-y-4">
+          <div id="favoritesSetsFilters"></div>
+          <div id="favoritesSetsList" class="space-y-3"></div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
