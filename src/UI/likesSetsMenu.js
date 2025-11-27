@@ -608,7 +608,7 @@ function renderLikeCard(item, variant = 'dropdown') {
           <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-3.5 h-3.5" data-like-play-icon></i>
         </button>
         ${renderLikeWaveformCanvas(item, 'dropdown')}
-        <button data-insert-like="${item.id}" class="absolute right-2 px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 backdrop-blur-sm text-xs font-medium">Insert</button>
+        <button data-insert-like="${item.id}" class="absolute right-2 px-3 py-1.5 rounded-lg border border-white/20 bg-black/40 hover:bg-black/60 backdrop-blur-sm text-xs font-medium">Insert</button>
       </div>
     </div>
   `
