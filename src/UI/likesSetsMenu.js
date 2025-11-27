@@ -148,8 +148,8 @@ export function setSetRating(setIndex, rating) {
 }
 
 function renderStarRating(rating = 3, dataAttr = '', size = 'sm', interactive = false) {
-  const starSize = size === 'md' ? 'w-4 h-4' : 'w-3 h-3'
-  const gapSize = size === 'md' ? 'gap-0.5' : 'gap-[2px]'
+  const starSize = size === 'md' ? 'w-4 h-4' : (size === 'sm-plus' ? 'w-[15px] h-[15px]' : 'w-3 h-3')
+  const gapSize = size === 'md' ? 'gap-0.5' : (size === 'sm-plus' ? 'gap-[3px]' : 'gap-[2px]')
   const cursorClass = interactive ? 'cursor-pointer' : ''
   const hoverClass = interactive ? 'hover:scale-110 transition-transform' : ''
 
@@ -573,7 +573,7 @@ function renderLikeCard(item, variant = 'dropdown') {
               </div>
               <div class="text-[12px] text-white/70">${item.bpm} BPM · ${item.key}</div>
               <div class="star-rating-container" data-current-rating="${rating}">
-                ${renderStarRating(rating, item.id, 'sm', true)}
+                ${renderStarRating(rating, item.id, 'sm-plus', true)}
               </div>
             </div>
           </div>
@@ -806,7 +806,7 @@ function renderSetCard(entry, variant = 'dropdown') {
           <div class="flex items-center gap-3">
             <span class="text-base font-semibold">${label}</span>
             <div class="star-rating-container" data-current-rating="${displayRating}">
-              ${renderStarRating(displayRating, idx.toString(), 'sm', true)}
+              ${renderStarRating(displayRating, idx.toString(), 'sm-plus', true)}
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2 text-[12px] text-white/70">
