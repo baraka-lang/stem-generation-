@@ -153,6 +153,8 @@ let stemMuteStates = {}
 let soloedStem = null
 let currentPageId = 'selection-page'
 let lastPageBeforeFavorites = 'selection-page'
+let likePreviewSource = null
+let likePreviewId = null
 
 // When a stem is soloed, store its previous mute state here so it can be restored
 // when the solo is released.  Keys are stem IDs; values are booleans indicating
@@ -786,10 +788,76 @@ function handleStemLikeToggle(st) {
     stemColor: stemConfigs[st]?.color || 'purple',
     bpm: activeTake?.tempo ?? sessionInfo.bpm,
     key: sessionInfo.key,
-    takeIndex
+    takeIndex,
+    audioBuffer: activeTake?.raw,
+    bars: activeTake?.bars
   })
   updateStemLikeButtons(st)
   return liked
+}
+
+function insertLikeIntoStem(item) {
+  if (!item) return
+  if (Number.isInteger(item.takeIndex)) {
+    selectStemVersion(item.stemId, item.takeIndex)
+  }
+}
+
+async function toggleLikePreview(item, currentId) {
+  // Stop any existing preview first
+  if (likePreviewSource) {
+    try {
+      likePreviewSource.stop()
+    } catch (err) {
+      console.warn('Failed to stop existing like preview:', err)
+    }
+    likePreviewSource = null
+    likePreviewId = null
+  }
+
+  if (!item?.audioBuffer) {
+    window.dispatchEvent(new CustomEvent('likePreviewStopped'))
+    return null
+  }
+
+  // If the same item was playing, treat as a toggle-off
+  if (currentId === item.id) {
+    window.dispatchEvent(new CustomEvent('likePreviewStopped'))
+    return null
+  }
+
+  await ensureAudioContext()
+  const src = audioContext.createBufferSource()
+  src.buffer = item.audioBuffer
+  src.loop = true
+  const destination = masterGain || audioContext.destination
+  src.connect(destination)
+  src.start()
+
+  likePreviewSource = src
+  likePreviewId = item.id
+  src.onended = () => {
+    if (likePreviewId === item.id) {
+      likePreviewSource = null
+      likePreviewId = null
+      window.dispatchEvent(new CustomEvent('likePreviewStopped'))
+    }
+  }
+
+  return likePreviewId
+}
+
+function stopLikePreview(item) {
+  if (!likePreviewSource) return
+  if (item && likePreviewId && likePreviewId !== item.id) return
+  try {
+    likePreviewSource.stop()
+  } catch (err) {
+    console.warn('Failed to stop like preview:', err)
+  }
+  likePreviewSource = null
+  likePreviewId = null
+  window.dispatchEvent(new CustomEvent('likePreviewStopped'))
 }
 
 /**
@@ -7060,11 +7128,17 @@ export async function initApp(){
   setupUserMenu()
   initLikesSetsMenu({
     getSessionInfo: getSessionSummaryInfo,
-    onLoadSet: (idx) => openLoadSetModal(idx)
+    onLoadSet: (idx) => openLoadSetModal(idx),
+    onInsertLike: insertLikeIntoStem,
+    onPlayLike: toggleLikePreview,
+    onStopPreview: stopLikePreview
   })
   initFavoritesPageView({
     getSessionInfo: getSessionSummaryInfo,
-    onLoadSet: (idx) => openLoadSetModal(idx)
+    onLoadSet: (idx) => openLoadSetModal(idx),
+    onInsertLike: insertLikeIntoStem,
+    onPlayLike: toggleLikePreview,
+    onStopPreview: stopLikePreview
   })
   syncSavedSetsMenu(savedSets)
   window.addEventListener('likesUpdated', (event) => {

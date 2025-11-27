@@ -40,14 +40,21 @@ export function drawWaveform(canvas, audioBuffer, color) {
   ctx.stroke()
 }
 
-export function drawTinyWaveform(canvas, audioBuffer) {
+export function drawTinyWaveform(
+  canvas,
+  audioBuffer,
+  strokeColor = 'rgba(255,255,255,0.85)',
+  fillColor = 'rgba(255,255,255,0.08)'
+) {
   if (!canvas || !audioBuffer) return
   const ctx = canvas.getContext('2d')
   const { width, height } = canvas
   ctx.clearRect(0, 0, width, height)
-  ctx.fillStyle = 'rgba(255,255,255,0.08)'
-  ctx.fillRect(0, 0, width, height)
-  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+  if (fillColor) {
+    ctx.fillStyle = fillColor
+    ctx.fillRect(0, 0, width, height)
+  }
+  ctx.strokeStyle = strokeColor
   ctx.lineWidth = 1
   const data = audioBuffer.getChannelData(0)
   const step = Math.max(1, Math.floor(data.length / (width * 2)))

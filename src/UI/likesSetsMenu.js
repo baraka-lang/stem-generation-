@@ -1,3 +1,5 @@
+import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
+
 const KEY_OPTIONS = [
   'Any Key',
   'C Major', 'C Minor', 'C# Major', 'C# Minor', 'D Major', 'D Minor', 'D# Major', 'D# Minor',
@@ -20,10 +22,18 @@ let filters = { ...DEFAULT_FILTERS }
 let sessionInfoProvider = () => ({ bpm: 130, key: 'A Minor' })
 let loadSetHandler = null
 let anchorButtons = []
+let insertLikeHandler = null
+let playLikeHandler = null
+let stopPreviewHandler = null
+let activePreviewId = null
+let previewStopListenerAttached = false
 
-export function initLikesSetsMenu({ getSessionInfo, onLoadSet } = {}) {
+export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
   sessionInfoProvider = getSessionInfo || sessionInfoProvider
   loadSetHandler = onLoadSet || null
+  insertLikeHandler = onInsertLike || insertLikeHandler
+  playLikeHandler = onPlayLike || playLikeHandler
+  stopPreviewHandler = onStopPreview || stopPreviewHandler
 
   anchorButtons = Array.from(document.querySelectorAll('[data-likes-menu-toggle]'))
   if (!anchorButtons.length) return
@@ -36,11 +46,15 @@ export function initLikesSetsMenu({ getSessionInfo, onLoadSet } = {}) {
 
   document.addEventListener('click', handleOutsideClick)
   document.addEventListener('keydown', handleEscape)
+  attachPreviewStopListener()
 }
 
-export function initFavoritesPageView({ getSessionInfo, onLoadSet } = {}) {
+export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
   sessionInfoProvider = getSessionInfo || sessionInfoProvider
   loadSetHandler = onLoadSet || loadSetHandler
+  insertLikeHandler = onInsertLike || insertLikeHandler
+  playLikeHandler = onPlayLike || playLikeHandler
+  stopPreviewHandler = onStopPreview || stopPreviewHandler
 
   favoritesPageRefs = {
     likesFilters: document.getElementById('favoritesLikesFilters'),
@@ -58,6 +72,7 @@ export function initFavoritesPageView({ getSessionInfo, onLoadSet } = {}) {
   renderLikes()
   renderSets()
   switchTab(currentTab)
+  attachPreviewStopListener()
 }
 
 export function refreshFavoritesUI() {
@@ -86,6 +101,8 @@ export function toggleLikeForStem(stemId, track) {
     stemColor: track.stemColor || 'purple',
     bpm: track.bpm || sessionInfoProvider().bpm || 130,
     key: track.key || sessionInfoProvider().key || 'A Minor',
+    bars: track.bars || null,
+    audioBuffer: track.audioBuffer || null,
     timestamp: Date.now()
   })
   renderLikes()
@@ -202,6 +219,17 @@ function handleEscape(e) {
   if (e.key === 'Escape') {
     closeMenu()
   }
+}
+
+function attachPreviewStopListener() {
+  if (previewStopListenerAttached) return
+  window.addEventListener('likePreviewStopped', resetPreviewState)
+  previewStopListenerAttached = true
+}
+
+function resetPreviewState() {
+  activePreviewId = null
+  updateLikePlayButtons()
 }
 
 function switchTab(tab) {
@@ -338,26 +366,12 @@ function handleFilterChange(e, prefix) {
   }
 }
 
-function renderWaveform(seed, color = 'rgba(168,85,247,0.85)') {
-  if (!seed) return ''
-  let hash = 0
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash * 31 + seed.charCodeAt(i)) % 9973
-  }
-
-  const bars = Array.from({ length: 24 }).map((_, idx) => {
-    const value = ((hash + idx * 17) % 70) + 25
-    return `<span class="flex-1 rounded-full" style="height:${value}%; background: linear-gradient(180deg, ${color}, rgba(255,255,255,0.25));"></span>`
-  })
-
-  return `<div class="flex items-end gap-[3px] h-16 w-full max-w-md" aria-hidden="true">${bars.join('')}</div>`
-}
-
 function renderLikes() {
   const containers = getLikesContainers()
   if (!containers.length) return
 
   const filtered = getFilteredLikes()
+  const itemMap = new Map(filtered.map((item) => [item.id, item]))
 
   containers.forEach(({ el, variant }) => {
     if (!filtered.length) {
@@ -369,21 +383,13 @@ function renderLikes() {
       .map((item) => renderLikeCard(item, variant))
       .join('')
 
-    el.querySelectorAll('[data-unlike]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const [stemId, takeIdx] = (btn.getAttribute('data-unlike') || '').split('|')
-        const idxNum = parseInt(takeIdx, 10)
-        const index = likedTracks.findIndex((entry) => entry.stemId === stemId && entry.takeIndex === idxNum)
-        if (index >= 0) {
-          likedTracks.splice(index, 1)
-          renderLikes()
-          notifyLikeChange(stemId)
-        }
-      })
-    })
+    attachLikeCardHandlers(el, variant, itemMap)
+    renderLikeWaveforms(el, itemMap)
   })
 
+  updateLikePlayButtons()
   renderStats()
+  window.lucide?.createIcons()
 }
 
 function getLikesContainers() {
@@ -403,37 +409,35 @@ function getFilteredLikes() {
 }
 
 function renderLikeCard(item, variant = 'dropdown') {
-  const minutesAgo = Math.max(1, Math.round((Date.now() - item.timestamp) / 60000))
   const baseInfo = `${item.bpm} BPM · ${item.key}`
-  const timeLabel = minutesAgo < 60 ? `${minutesAgo} min ago` : `${Math.round(minutesAgo / 60)}h ago`
 
   if (variant === 'page') {
     return `
-      <div class="flex flex-col gap-3 bg-white/5 border border-white/10 rounded-xl p-4">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div class="flex items-start gap-3">
-            <span class="mt-1 w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
-            <div>
-              <div class="flex flex-wrap items-center gap-2">
-                <span class="text-base font-semibold">${item.stemName}</span>
-                <span class="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[11px]">Take ${item.takeIndex + 1}</span>
-                <span class="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[11px]">${baseInfo}</span>
+      <div class="flex flex-col gap-4 bg-white/5 border border-white/10 rounded-xl p-4" data-like-card="${item.id}">
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div class="flex items-start gap-3 flex-shrink-0 min-w-[200px]">
+              <button data-like-play="${item.id}" class="w-11 h-11 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 flex items-center justify-center transition" aria-label="Play ${item.stemName}">
+                <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-4 h-4" data-like-play-icon></i>
+                <span class="sr-only" data-like-play-label>${activePreviewId === item.id ? 'Stop' : 'Play'}</span>
+              </button>
+              <div class="space-y-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="mt-1 w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
+                  <span class="text-base font-semibold">${item.stemName}</span>
+                </div>
+                <div class="text-[12px] text-white/70">${baseInfo}</div>
               </div>
-              <div class="text-[12px] text-white/60">${timeLabel}</div>
             </div>
-          </div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-white/60 px-2 py-1 rounded-full bg-white/5 border border-white/10">Session like</span>
-            <button data-unlike="${item.stemId}|${item.takeIndex}" class="text-sm text-red-300 hover:text-red-100">Remove</button>
-          </div>
-        </div>
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div class="flex-1">
-            ${renderWaveform(`${item.stemId}-${item.takeIndex}-${item.timestamp}`)}
-          </div>
-          <div class="flex gap-2 text-[12px] text-white/70">
-            <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">BPM ${item.bpm}</span>
-            <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${item.key}</span>
+            <div class="flex items-center gap-4 flex-1 min-w-0">
+              <div class="flex-[1.15] min-w-0">
+                ${renderLikeWaveformCanvas(item, 'page')}
+              </div>
+              <div class="flex flex-col items-end gap-2 flex-shrink-0 min-w-[120px]">
+                <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-sm w-full">Insert</button>
+                <button data-unlike="${item.stemId}|${item.takeIndex}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm text-red-200 w-full">Remove</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -441,18 +445,134 @@ function renderLikeCard(item, variant = 'dropdown') {
   }
 
   return `
-    <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3">
-      <div class="flex flex-col">
-        <div class="flex items-center gap-2">
-          <span class="w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
-          <span class="text-sm font-medium">${item.stemName}</span>
+    <div class="flex flex-col gap-3 bg-white/5 border border-white/10 rounded-xl p-3" data-like-card="${item.id}">
+      <div class="flex items-center gap-3">
+        <div class="flex flex-col gap-1 flex-shrink-0 min-w-[120px] max-w-[160px]">
+          <div class="flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
+            <span class="text-sm font-medium">${item.stemName}</span>
+          </div>
+          <div class="text-[11px] text-white/70">${baseInfo}</div>
         </div>
-        <div class="text-xs text-white/60">${baseInfo}</div>
-        <div class="text-[11px] text-white/40">${timeLabel}</div>
+        <div class="flex-[1.6] min-w-0">
+          ${renderLikeWaveformCanvas(item, 'dropdown')}
+        </div>
+        <div class="flex flex-col items-end gap-2 flex-shrink-0 min-w-[92px] text-right">
+          <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-xs w-full sm:w-auto">Insert</button>
+        </div>
       </div>
-      <button data-unlike="${item.stemId}|${item.takeIndex}" class="text-sm text-red-300 hover:text-red-100">Remove</button>
     </div>
   `
+}
+
+function renderLikeWaveformCanvas(item, variant = 'dropdown') {
+  const heightClass = variant === 'dropdown' ? 'h-12' : 'h-16'
+  const width = variant === 'dropdown' ? 520 : 720
+  const height = variant === 'dropdown' ? 68 : 96
+  return `
+    <canvas class="like-waveform w-full ${heightClass} bg-white/5 rounded-lg border border-white/10"
+      data-like-waveform="${item.id}"
+      width="${width}"
+      height="${height}"
+      aria-label="Waveform for ${item.stemName}"></canvas>
+  `
+}
+
+function attachLikeCardHandlers(container, variant, itemMap) {
+  container.querySelectorAll('[data-unlike]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const [stemId, takeIdx] = (btn.getAttribute('data-unlike') || '').split('|')
+      const idxNum = parseInt(takeIdx, 10)
+      removeLike(stemId, idxNum)
+    })
+  })
+
+  container.querySelectorAll('[data-insert-like]').forEach((btn) => {
+    const item = itemMap.get(btn.getAttribute('data-insert-like'))
+    btn.addEventListener('click', () => handleInsertLike(item, variant))
+  })
+
+  container.querySelectorAll('[data-like-play]').forEach((btn) => {
+    const item = itemMap.get(btn.getAttribute('data-like-play'))
+    btn.addEventListener('click', () => handlePlayRequest(item))
+  })
+}
+
+function renderLikeWaveforms(container, itemMap) {
+  const canvases = Array.from(container.querySelectorAll('[data-like-waveform]'))
+  if (!canvases.length) return
+
+  requestAnimationFrame(() => {
+    canvases.forEach((canvas) => {
+      const item = itemMap.get(canvas.getAttribute('data-like-waveform'))
+      const width = canvas.clientWidth || Number(canvas.getAttribute('width')) || 320
+      const height = canvas.clientHeight || Number(canvas.getAttribute('height')) || 64
+      canvas.width = width
+      canvas.height = height
+
+      if (item?.audioBuffer) {
+        const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
+        drawTinyWaveform(canvas, item.audioBuffer, color, 'rgba(255,255,255,0.05)')
+      } else {
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.fillStyle = 'rgba(255,255,255,0.08)'
+          ctx.fillRect(0, 0, width, height)
+        }
+      }
+    })
+  })
+}
+
+function handleInsertLike(item, variant = 'dropdown') {
+  if (!item || !insertLikeHandler) return
+  insertLikeHandler(item)
+  if (variant === 'dropdown') closeMenu()
+}
+
+function handlePlayRequest(item) {
+  if (!item || !playLikeHandler) return
+  const result = playLikeHandler(item, activePreviewId)
+  if (result instanceof Promise) {
+    result.then((id) => {
+      activePreviewId = id || null
+      updateLikePlayButtons()
+    }).catch(() => {})
+    return
+  }
+  activePreviewId = result || null
+  updateLikePlayButtons()
+}
+
+function stopPreviewForItem(item) {
+  if (!item || activePreviewId !== item.id) return
+  if (stopPreviewHandler) stopPreviewHandler(item)
+  resetPreviewState()
+}
+
+function removeLike(stemId, takeIndex) {
+  const index = likedTracks.findIndex((entry) => entry.stemId === stemId && entry.takeIndex === takeIndex)
+  if (index >= 0) {
+    const [removed] = likedTracks.splice(index, 1)
+    stopPreviewForItem(removed)
+    renderLikes()
+    notifyLikeChange(stemId)
+  }
+}
+
+function updateLikePlayButtons() {
+  document.querySelectorAll('[data-like-play]').forEach((btn) => {
+    const id = btn.getAttribute('data-like-play')
+    const isActive = id === activePreviewId
+    btn.classList.toggle('border-purple-400/60', isActive)
+    btn.classList.toggle('bg-purple-500/20', isActive)
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false')
+    const label = btn.querySelector('[data-like-play-label]')
+    if (label) label.textContent = isActive ? 'Stop' : 'Play'
+    const icon = btn.querySelector('[data-like-play-icon]')
+    if (icon) icon.setAttribute('data-lucide', isActive ? 'pause' : 'play')
+  })
+  window.lucide?.createIcons()
 }
 
 function renderSets() {
