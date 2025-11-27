@@ -147,6 +147,23 @@ export function setSetRating(setIndex, rating) {
   }
 }
 
+export function setSetName(setIndex, newName) {
+  if (setIndex >= 0 && setIndex < savedSetsCache.length) {
+    const set = savedSetsCache[setIndex]
+    if (!set.metadata) set.metadata = {}
+    set.metadata.name = newName.trim()
+
+    // Dispatch event to notify app.js to update its savedSets array
+    window.dispatchEvent(new CustomEvent('setRenamed', {
+      detail: { setIndex, newName: newName.trim() }
+    }))
+
+    renderSets()
+    return true
+  }
+  return false
+}
+
 function renderStarRating(rating = 3, dataAttr = '', size = 'sm', interactive = false) {
   const starSize = size === 'md' ? 'w-4 h-4' : (size === 'sm-plus' ? 'w-[15px] h-[15px]' : 'w-3 h-3')
   const gapSize = size === 'md' ? 'gap-0.5' : (size === 'sm-plus' ? 'gap-[3px]' : 'gap-[2px]')
@@ -238,6 +255,111 @@ function attachStarHandlers(container, type) {
       })
     }
   })
+}
+
+function attachRenameHandlers(container) {
+  if (!container) return
+
+  // Handle rename button click
+  container.querySelectorAll('[data-rename-set]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const idx = btn.getAttribute('data-rename-set')
+      const card = container.querySelector(`[data-set-card="${idx}"]`)
+      if (!card) return
+
+      const nameDisplay = card.querySelector(`[data-set-name-display="${idx}"]`)
+      const renameEditor = card.querySelector(`[data-rename-editor="${idx}"]`)
+      const renameInput = card.querySelector(`[data-rename-input="${idx}"]`)
+      const renameBtn = card.querySelector(`[data-rename-set="${idx}"]`)
+
+      if (nameDisplay && renameEditor && renameInput && renameBtn) {
+        nameDisplay.classList.add('hidden')
+        renameEditor.classList.remove('hidden')
+        renameBtn.disabled = true
+        renameBtn.classList.add('opacity-50', 'cursor-not-allowed')
+        renameInput.focus()
+        renameInput.select()
+      }
+    })
+  })
+
+  // Handle save button click
+  container.querySelectorAll('[data-rename-save]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const idx = parseInt(btn.getAttribute('data-rename-save'), 10)
+      const card = container.querySelector(`[data-set-card="${idx}"]`)
+      if (!card) return
+
+      const renameInput = card.querySelector(`[data-rename-input="${idx}"]`)
+      const newName = renameInput?.value.trim()
+
+      if (newName && newName.length > 0) {
+        const success = setSetName(idx, newName)
+        if (success) {
+          showToast('Set renamed successfully')
+        }
+      } else {
+        showToast('Set name cannot be empty', 'error')
+      }
+    })
+  })
+
+  // Handle cancel button click
+  container.querySelectorAll('[data-rename-cancel]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const idx = btn.getAttribute('data-rename-cancel')
+      const card = container.querySelector(`[data-set-card="${idx}"]`)
+      if (!card) return
+
+      const nameDisplay = card.querySelector(`[data-set-name-display="${idx}"]`)
+      const renameEditor = card.querySelector(`[data-rename-editor="${idx}"]`)
+      const renameBtn = card.querySelector(`[data-rename-set="${idx}"]`)
+
+      if (nameDisplay && renameEditor && renameBtn) {
+        nameDisplay.classList.remove('hidden')
+        renameEditor.classList.add('hidden')
+        renameBtn.disabled = false
+        renameBtn.classList.remove('opacity-50', 'cursor-not-allowed')
+      }
+    })
+  })
+
+  // Handle Enter key to save
+  container.querySelectorAll('[data-rename-input]').forEach(input => {
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        const idx = input.getAttribute('data-rename-input')
+        const saveBtn = container.querySelector(`[data-rename-save="${idx}"]`)
+        if (saveBtn) saveBtn.click()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        const idx = input.getAttribute('data-rename-input')
+        const cancelBtn = container.querySelector(`[data-rename-cancel="${idx}"]`)
+        if (cancelBtn) cancelBtn.click()
+      }
+    })
+  })
+}
+
+function showToast(message, type = 'success') {
+  // Simple toast implementation - can be improved later
+  const toastEl = document.createElement('div')
+  toastEl.className = `fixed bottom-4 right-4 px-4 py-2 rounded-lg text-sm z-50 transition-opacity ${
+    type === 'error'
+      ? 'bg-red-500/90 border border-red-400/60'
+      : 'bg-green-500/90 border border-green-400/60'
+  }`
+  toastEl.textContent = message
+  document.body.appendChild(toastEl)
+
+  setTimeout(() => {
+    toastEl.style.opacity = '0'
+    setTimeout(() => toastEl.remove(), 300)
+  }, 2000)
 }
 
 function generateBPMOptions(selected, min = 110, max = 140) {
@@ -758,6 +880,7 @@ function renderSets() {
     // Attach star rating handlers for favorites page (interactive)
     if (variant === 'page') {
       attachStarHandlers(el, 'set')
+      attachRenameHandlers(el)
     }
   })
 
@@ -801,10 +924,10 @@ function renderSetCard(entry, variant = 'dropdown') {
 
   if (variant === 'page') {
     return `
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white/5 border border-white/10 rounded-xl p-4">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white/5 border border-white/10 rounded-xl p-4" data-set-card="${idx}">
         <div class="space-y-2 flex-1">
           <div class="flex items-center gap-3">
-            <span class="text-base font-semibold">${label}</span>
+            <span class="text-base font-semibold set-name-display" data-set-name-display="${idx}">${label}</span>
             <div class="star-rating-container" data-current-rating="${displayRating}">
               ${renderStarRating(displayRating, idx.toString(), 'sm-plus', true)}
             </div>
@@ -816,8 +939,18 @@ function renderSetCard(entry, variant = 'dropdown') {
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${activeStemCount} stems</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${totalTakes} takes</span>
           </div>
+          <div class="set-rename-editor hidden" data-rename-editor="${idx}">
+            <div class="flex items-center gap-2">
+              <input type="text" class="flex-1 px-3 py-1.5 rounded-lg bg-white/10 border border-white/20 text-sm focus:outline-none focus:border-purple-400/60 focus:ring-1 focus:ring-purple-400/30" data-rename-input="${idx}" value="${label}" maxlength="50" placeholder="Enter set name">
+              <button data-rename-save="${idx}" class="px-3 py-1.5 rounded-lg border border-green-400/60 bg-green-500/20 hover:bg-green-500/30 text-sm flex-shrink-0">Save</button>
+              <button data-rename-cancel="${idx}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm flex-shrink-0">Cancel</button>
+            </div>
+          </div>
         </div>
-        <button data-load-set="${idx}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 flex-shrink-0">Load set</button>
+        <div class="flex flex-col gap-2 flex-shrink-0">
+          <button data-rename-set="${idx}" class="text-sm px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 w-full sm:w-auto">Rename</button>
+          <button data-load-set="${idx}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>
+        </div>
       </div>
     `
   }

@@ -7147,6 +7147,14 @@ export async function initApp(){
       updateStemLikeButtons(stemId)
     }
   })
+  window.addEventListener('setRenamed', (event) => {
+    const { setIndex, newName } = event.detail || {}
+    if (setIndex >= 0 && setIndex < savedSets.length) {
+      if (!savedSets[setIndex].metadata) savedSets[setIndex].metadata = {}
+      savedSets[setIndex].metadata.name = newName
+      updateSavedSetsDropdown()
+    }
+  })
   window.addEventListener('openFavoritesPage', () => openFavoritesPage())
   setupFavoritesPageNavigation()
 
