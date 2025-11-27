@@ -592,22 +592,23 @@ function renderLikeCard(item, variant = 'dropdown') {
   }
 
   return `
-    <div class="flex flex-col gap-2 bg-white/5 border border-white/10 rounded-xl p-2.5" data-like-card="${item.id}">
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2 flex-shrink-0 min-w-[120px]">
+    <div class="flex items-start gap-3 bg-white/5 border border-white/10 rounded-xl p-2.5" data-like-card="${item.id}">
+      <div class="flex flex-col gap-1 flex-shrink-0" style="min-width: 100px;">
+        <div class="flex items-center gap-2">
           <span class="w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
           <span class="text-sm font-medium">${item.stemName}</span>
         </div>
-        ${renderStarRating(rating, '', 'sm', false)}
+        <div class="text-[11px] text-white/70">${item.bpm} BPM · ${item.key}</div>
+        <div class="mt-0.5">
+          ${renderStarRating(rating, '', 'sm', false)}
+        </div>
       </div>
-      <div class="text-[11px] text-white/70">${item.bpm} BPM · ${item.key}</div>
-      <div class="flex items-center gap-3">
-        <div class="flex-[1.6] min-w-0">
-          ${renderLikeWaveformCanvas(item, 'dropdown')}
-        </div>
-        <div class="flex-shrink-0">
-          <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-xs">Insert</button>
-        </div>
+      <div class="flex items-center gap-2 flex-1 min-w-0 relative">
+        <button data-like-play="${item.id}" class="absolute left-2 z-10 w-8 h-8 rounded-full border border-white/20 bg-black/40 hover:bg-black/60 backdrop-blur-sm flex items-center justify-center transition" aria-label="Play ${item.stemName}">
+          <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-3.5 h-3.5" data-like-play-icon></i>
+        </button>
+        ${renderLikeWaveformCanvas(item, 'dropdown')}
+        <button data-insert-like="${item.id}" class="absolute right-2 px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 backdrop-blur-sm text-xs font-medium">Insert</button>
       </div>
     </div>
   `
