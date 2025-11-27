@@ -10,7 +10,8 @@ const KEY_OPTIONS = [
 const DEFAULT_FILTERS = {
   bpmMin: 110,
   bpmMax: 140,
-  key: 'Any Key'
+  key: 'Any Key',
+  stars: null
 }
 
 const likedTracks = []
@@ -103,7 +104,8 @@ export function toggleLikeForStem(stemId, track) {
     key: track.key || sessionInfoProvider().key || 'A Minor',
     bars: track.bars || null,
     audioBuffer: track.audioBuffer || null,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    rating: 3
   })
   renderLikes()
   notifyLikeChange(stemId)
@@ -116,7 +118,135 @@ export function isTrackLiked(stemId, takeIndex) {
 
 export function syncSavedSetsMenu(list) {
   savedSetsCache = Array.isArray(list) ? list : []
+
+  // Ensure all sets have default rating
+  savedSetsCache.forEach(set => {
+    if (!set.metadata) set.metadata = {}
+    if (set.metadata.rating === undefined) {
+      set.metadata.rating = 3
+    }
+  })
+
   renderSets()
+}
+
+export function setLikeRating(trackId, rating) {
+  const track = likedTracks.find(t => t.id === trackId)
+  if (track) {
+    track.rating = Math.max(1, Math.min(5, rating))
+    renderLikes()
+  }
+}
+
+export function setSetRating(setIndex, rating) {
+  if (setIndex >= 0 && setIndex < savedSetsCache.length) {
+    const set = savedSetsCache[setIndex]
+    if (!set.metadata) set.metadata = {}
+    set.metadata.rating = Math.max(1, Math.min(5, rating))
+    renderSets()
+  }
+}
+
+function renderStarRating(rating = 3, dataAttr = '', size = 'sm', interactive = false) {
+  const starSize = size === 'md' ? 'w-4 h-4' : 'w-3 h-3'
+  const gapSize = size === 'md' ? 'gap-0.5' : 'gap-[2px]'
+  const cursorClass = interactive ? 'cursor-pointer' : ''
+  const hoverClass = interactive ? 'hover:scale-110 transition-transform' : ''
+
+  const stars = Array.from({ length: 5 }, (_, i) => {
+    const starNum = i + 1
+    const isFilled = starNum <= rating
+    const fillClass = isFilled ? 'fill-yellow-400 text-yellow-400' : 'text-white/20'
+    const dataAttrStr = dataAttr ? `data-star-rating="${dataAttr}" data-star-value="${starNum}"` : ''
+
+    return `
+      <svg ${dataAttrStr}
+        class="star-icon ${starSize} ${fillClass} ${cursorClass} ${hoverClass}"
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        stroke="currentColor"
+        stroke-width="1"
+        aria-label="${starNum} star${starNum > 1 ? 's' : ''}">
+        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+      </svg>
+    `
+  }).join('')
+
+  return `<div class="flex items-center ${gapSize}">${stars}</div>`
+}
+
+function attachStarHandlers(container, type) {
+  if (!container) return
+
+  container.querySelectorAll('[data-star-rating]').forEach(star => {
+    star.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const target = star.getAttribute('data-star-rating')
+      const value = parseInt(star.getAttribute('data-star-value'), 10)
+
+      if (type === 'like') {
+        setLikeRating(target, value)
+      } else if (type === 'set') {
+        const setIndex = parseInt(target, 10)
+        setSetRating(setIndex, value)
+      } else if (type === 'filter') {
+        // Toggle filter behavior
+        if (filters.stars === value) {
+          filters.stars = null
+        } else {
+          filters.stars = value
+        }
+        renderFilters()
+        renderLikes()
+        renderSets()
+      }
+    })
+
+    // Optional: hover preview
+    if (type !== 'filter') {
+      star.addEventListener('mouseenter', () => {
+        const value = parseInt(star.getAttribute('data-star-value'), 10)
+        const parent = star.closest('.star-rating-container')
+        if (parent) {
+          parent.querySelectorAll('.star-icon').forEach((s, i) => {
+            if (i < value) {
+              s.classList.add('text-yellow-400', 'fill-yellow-400')
+              s.classList.remove('text-white/20')
+            } else {
+              s.classList.remove('text-yellow-400', 'fill-yellow-400')
+              s.classList.add('text-white/20')
+            }
+          })
+        }
+      })
+
+      star.addEventListener('mouseleave', () => {
+        const parent = star.closest('.star-rating-container')
+        const currentRating = parseInt(parent?.dataset.currentRating || 3)
+        if (parent) {
+          parent.querySelectorAll('.star-icon').forEach((s, i) => {
+            if (i < currentRating) {
+              s.classList.add('text-yellow-400', 'fill-yellow-400')
+              s.classList.remove('text-white/20')
+            } else {
+              s.classList.remove('text-yellow-400', 'fill-yellow-400')
+              s.classList.add('text-white/20')
+            }
+          })
+        }
+      })
+    }
+  })
+}
+
+function generateBPMOptions(selected, min = 110, max = 140) {
+  const options = []
+  for (let bpm = min; bpm <= max; bpm++) {
+    const isSelected = bpm === selected ? 'selected' : ''
+    options.push(`<option value="${bpm}" ${isSelected}>${bpm} BPM</option>`)
+  }
+  return options.join('')
 }
 
 function buildDropdown() {
@@ -308,42 +438,58 @@ function renderFilters() {
 
 function renderFilterPanel(container, prefix, context = 'dropdown') {
   if (!container) return
-  const columnClass = 'sm:grid-cols-3'
+  const columnClass = 'sm:grid-cols-4'
   const label = prefix === 'sets' ? 'Saved set filters' : 'Likes filters'
   const baseClass = context === 'page'
     ? `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
     : `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
   container.className = baseClass
+
+  const currentStars = filters.stars || 0
+
   container.innerHTML = `
     <div class="flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.2em] text-white/50">
       <span>${label}</span>
       <button data-filter="clear" class="text-[11px] text-purple-300 hover:text-white">Reset</button>
     </div>
-    <div class="grid grid-cols-1 ${columnClass} gap-3">
-      <div class="col-span-1">
-        <label class="block text-[11px] text-white/60">BPM Min</label>
-        <input type="range" min="110" max="140" value="${filters.bpmMin}" data-filter="bpmMin" class="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
-        <div class="text-[11px] mt-1">${filters.bpmMin} BPM</div>
+    <div class="grid grid-cols-1 ${columnClass} gap-2 items-end">
+      <div>
+        <label class="block text-[11px] text-white/60 mb-1">BPM Min</label>
+        <select data-filter="bpmMin" class="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm">
+          ${generateBPMOptions(filters.bpmMin, 110, filters.bpmMax)}
+        </select>
       </div>
-      <div class="col-span-1">
-        <label class="block text-[11px] text-white/60">BPM Max</label>
-        <input type="range" min="110" max="140" value="${filters.bpmMax}" data-filter="bpmMax" class="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
-        <div class="text-[11px] mt-1">${filters.bpmMax} BPM</div>
+      <div>
+        <label class="block text-[11px] text-white/60 mb-1">BPM Max</label>
+        <select data-filter="bpmMax" class="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm">
+          ${generateBPMOptions(filters.bpmMax, filters.bpmMin, 140)}
+        </select>
       </div>
-      <div class="col-span-1">
-        <label class="block text-[11px] text-white/60">Key</label>
-        <select data-filter="key" class="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1 text-sm">
+      <div>
+        <label class="block text-[11px] text-white/60 mb-1">Key</label>
+        <select data-filter="key" class="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm">
           ${KEY_OPTIONS.map((key) => `<option ${filters.key === key ? 'selected' : ''}>${key}</option>`).join('')}
         </select>
+      </div>
+      <div>
+        <label class="block text-[11px] text-white/60 mb-1">Rating</label>
+        <div class="flex items-center justify-center h-[34px] px-2 bg-white/5 border border-white/10 rounded-lg">
+          ${renderStarRating(currentStars, 'filter-stars', 'sm', true)}
+        </div>
       </div>
     </div>
   `
 
   container.querySelectorAll('[data-filter]').forEach((el) => {
-    el.addEventListener('input', (e) => handleFilterChange(e, prefix))
-    el.addEventListener('change', (e) => handleFilterChange(e, prefix))
-    el.addEventListener('click', (e) => handleFilterChange(e, prefix))
+    if (el.tagName === 'SELECT') {
+      el.addEventListener('change', (e) => handleFilterChange(e, prefix))
+    } else {
+      el.addEventListener('click', (e) => handleFilterChange(e, prefix))
+    }
   })
+
+  // Attach star filter handlers
+  attachStarHandlers(container, 'filter')
 }
 
 function handleFilterChange(e, prefix) {
@@ -352,9 +498,9 @@ function handleFilterChange(e, prefix) {
     filters = { ...DEFAULT_FILTERS }
     renderFilters()
   } else if (type === 'bpmMin') {
-    filters.bpmMin = Math.min(parseInt(e.target.value, 10) || DEFAULT_FILTERS.bpmMin, filters.bpmMax)
+    filters.bpmMin = parseInt(e.target.value, 10) || DEFAULT_FILTERS.bpmMin
   } else if (type === 'bpmMax') {
-    filters.bpmMax = Math.max(parseInt(e.target.value, 10) || DEFAULT_FILTERS.bpmMax, filters.bpmMin)
+    filters.bpmMax = parseInt(e.target.value, 10) || DEFAULT_FILTERS.bpmMax
   } else if (type === 'key') {
     filters.key = e.target.value
   }
@@ -404,39 +550,40 @@ function getFilteredLikes() {
   return likedTracks.filter((item) => {
     const bpmOk = item.bpm >= filters.bpmMin && item.bpm <= filters.bpmMax
     const keyOk = filters.key === 'Any Key' || item.key === filters.key
-    return bpmOk && keyOk
+    const starsOk = filters.stars === null || (item.rating ?? 3) === filters.stars
+    return bpmOk && keyOk && starsOk
   })
 }
 
 function renderLikeCard(item, variant = 'dropdown') {
-  const baseInfo = `${item.bpm} BPM · ${item.key}`
+  const rating = item.rating ?? 3
 
   if (variant === 'page') {
     return `
-      <div class="flex flex-col gap-4 bg-white/5 border border-white/10 rounded-xl p-4" data-like-card="${item.id}">
-        <div class="flex flex-col gap-3">
-          <div class="flex flex-col sm:flex-row sm:items-center gap-4">
-            <div class="flex items-start gap-3 flex-shrink-0 min-w-[200px]">
-              <button data-like-play="${item.id}" class="w-11 h-11 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 flex items-center justify-center transition" aria-label="Play ${item.stemName}">
-                <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-4 h-4" data-like-play-icon></i>
-                <span class="sr-only" data-like-play-label>${activePreviewId === item.id ? 'Stop' : 'Play'}</span>
-              </button>
-              <div class="space-y-1">
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="mt-1 w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
-                  <span class="text-base font-semibold">${item.stemName}</span>
-                </div>
-                <div class="text-[12px] text-white/70">${baseInfo}</div>
+      <div class="flex flex-col gap-3 bg-white/5 border border-white/10 rounded-xl p-4" data-like-card="${item.id}">
+        <div class="flex flex-col sm:flex-row sm:items-start gap-4">
+          <div class="flex items-start gap-3 flex-shrink-0 min-w-[200px]">
+            <button data-like-play="${item.id}" class="w-11 h-11 rounded-full border border-white/15 bg-white/5 hover:bg-white/10 flex items-center justify-center transition" aria-label="Play ${item.stemName}">
+              <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-4 h-4" data-like-play-icon></i>
+            </button>
+            <div class="space-y-0.5">
+              <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
+                <span class="text-base font-semibold">${item.stemName}</span>
+              </div>
+              <div class="text-[12px] text-white/70">${item.bpm} BPM · ${item.key}</div>
+              <div class="star-rating-container" data-current-rating="${rating}">
+                ${renderStarRating(rating, item.id, 'sm', true)}
               </div>
             </div>
-            <div class="flex items-center gap-4 flex-1 min-w-0">
-              <div class="flex-[1.15] min-w-0">
-                ${renderLikeWaveformCanvas(item, 'page')}
-              </div>
-              <div class="flex flex-col items-end gap-2 flex-shrink-0 min-w-[120px]">
-                <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-sm w-full">Insert</button>
-                <button data-unlike="${item.stemId}|${item.takeIndex}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm text-red-200 w-full">Remove</button>
-              </div>
+          </div>
+          <div class="flex items-center gap-4 flex-1 min-w-0">
+            <div class="flex-[1.15] min-w-0">
+              ${renderLikeWaveformCanvas(item, 'page')}
+            </div>
+            <div class="flex flex-col items-end gap-2 flex-shrink-0 min-w-[120px]">
+              <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-sm w-full">Insert</button>
+              <button data-unlike="${item.stemId}|${item.takeIndex}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm text-red-200 w-full">Remove</button>
             </div>
           </div>
         </div>
@@ -445,20 +592,21 @@ function renderLikeCard(item, variant = 'dropdown') {
   }
 
   return `
-    <div class="flex flex-col gap-3 bg-white/5 border border-white/10 rounded-xl p-3" data-like-card="${item.id}">
-      <div class="flex items-center gap-3">
-        <div class="flex flex-col gap-1 flex-shrink-0 min-w-[120px] max-w-[160px]">
-          <div class="flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
-            <span class="text-sm font-medium">${item.stemName}</span>
-          </div>
-          <div class="text-[11px] text-white/70">${baseInfo}</div>
+    <div class="flex flex-col gap-2 bg-white/5 border border-white/10 rounded-xl p-2.5" data-like-card="${item.id}">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2 flex-shrink-0 min-w-[120px]">
+          <span class="w-2 h-2 rounded-full bg-${item.stemColor}-400"></span>
+          <span class="text-sm font-medium">${item.stemName}</span>
         </div>
+        ${renderStarRating(rating, '', 'sm', false)}
+      </div>
+      <div class="text-[11px] text-white/70">${item.bpm} BPM · ${item.key}</div>
+      <div class="flex items-center gap-3">
         <div class="flex-[1.6] min-w-0">
           ${renderLikeWaveformCanvas(item, 'dropdown')}
         </div>
-        <div class="flex flex-col items-end gap-2 flex-shrink-0 min-w-[92px] text-right">
-          <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-xs w-full sm:w-auto">Insert</button>
+        <div class="flex-shrink-0">
+          <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-xs">Insert</button>
         </div>
       </div>
     </div>
@@ -496,6 +644,11 @@ function attachLikeCardHandlers(container, variant, itemMap) {
     const item = itemMap.get(btn.getAttribute('data-like-play'))
     btn.addEventListener('click', () => handlePlayRequest(item))
   })
+
+  // Attach star rating handlers for favorites page (interactive)
+  if (variant === 'page') {
+    attachStarHandlers(container, 'like')
+  }
 }
 
 function renderLikeWaveforms(container, itemMap) {
@@ -600,6 +753,11 @@ function renderSets() {
         }
       })
     })
+
+    // Attach star rating handlers for favorites page (interactive)
+    if (variant === 'page') {
+      attachStarHandlers(el, 'set')
+    }
   })
 
   renderStats()
@@ -621,54 +779,58 @@ function getFilteredSets() {
     const activeStemCount = meta.activeStemCount ?? Object.values(item.stems || {}).filter((stem) => stem && (stem.takes?.length || stem.takeIndex >= 0)).length
     const totalTakes = meta.totalTakes ?? Object.values(item.stems || {}).reduce((sum, stem) => sum + (stem?.takes?.length || 0), 0)
     const timestamp = meta.timestamp || item.timestamp || 0
-    return { item, idx, bpm, key, bars: meta.bars ?? meta.barCount ?? 4, activeStemCount, totalTakes, name: meta.name || `Set ${idx + 1}`, timestamp }
+    const rating = meta.rating ?? 3
+    return { item, idx, bpm, key, bars: meta.bars ?? meta.barCount ?? 4, activeStemCount, totalTakes, name: meta.name || `Set ${idx + 1}`, timestamp, rating }
   })
 
   return decorated
-    .filter(({ bpm, key }) => {
+    .filter(({ bpm, key, rating }) => {
       const bpmOk = bpm >= filters.bpmMin && bpm <= filters.bpmMax
       const keyOk = filters.key === 'Any Key' || key === filters.key
-      return bpmOk && keyOk
+      const starsOk = filters.stars === null || rating === filters.stars
+      return bpmOk && keyOk && starsOk
     })
     .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
 }
 
 function renderSetCard(entry, variant = 'dropdown') {
-  const { idx, bpm, key, bars, name, activeStemCount, totalTakes } = entry
+  const { idx, bpm, key, bars, name, activeStemCount, totalTakes, rating } = entry
   const label = name || `Set ${idx + 1}`
-  const timestamp = entry.timestamp || 0
-  const minutesAgo = timestamp ? Math.max(1, Math.round((Date.now() - timestamp) / 60000)) : null
-  const timeLabel = minutesAgo ? (minutesAgo < 60 ? `${minutesAgo} min ago` : `${Math.round(minutesAgo / 60)}h ago`) : 'Saved this session'
+  const displayRating = rating ?? 3
 
   if (variant === 'page') {
     return `
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white/5 border border-white/10 rounded-xl p-4">
-        <div>
-          <div class="flex flex-wrap items-center gap-2 mb-2">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white/5 border border-white/10 rounded-xl p-4">
+        <div class="space-y-2 flex-1">
+          <div class="flex items-center gap-3">
             <span class="text-base font-semibold">${label}</span>
-            <span class="px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[11px]">${timeLabel}</span>
+            <div class="star-rating-container" data-current-rating="${displayRating}">
+              ${renderStarRating(displayRating, idx.toString(), 'sm', true)}
+            </div>
           </div>
           <div class="flex flex-wrap items-center gap-2 text-[12px] text-white/70">
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${bpm} BPM</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${bars} bars</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${key}</span>
-            <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${activeStemCount} active stems</span>
+            <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${activeStemCount} stems</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${totalTakes} takes</span>
           </div>
         </div>
-        <button data-load-set="${idx}" class="text-sm px-3 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30">Load set</button>
+        <button data-load-set="${idx}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 flex-shrink-0">Load set</button>
       </div>
     `
   }
 
   return `
     <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3">
-      <div>
-        <div class="text-sm font-medium">${label}</div>
+      <div class="space-y-1 flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-medium truncate">${label}</span>
+          ${renderStarRating(displayRating, '', 'sm', false)}
+        </div>
         <div class="text-xs text-white/60">${bpm} BPM · ${bars} bars · ${key}</div>
-        <div class="text-[11px] text-white/40">${timeLabel}</div>
       </div>
-      <button data-load-set="${idx}" class="text-sm text-purple-300 hover:text-white">Load</button>
+      <button data-load-set="${idx}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>
     </div>
   `
 }
