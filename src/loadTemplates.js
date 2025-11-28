@@ -7,9 +7,8 @@
 export async function loadTemplates() {
   try {
     // Fetch all template files in parallel
-    const [templatesResponse, landingPageResponse, selectionPageResponse, favoritesPageResponse, loginPageResponse, resetPasswordResponse, confirmEmailResponse, profilePageResponse, technoGeneratorResponse] = await Promise.all([
+    const [templatesResponse, selectionPageResponse, favoritesPageResponse, loginPageResponse, resetPasswordResponse, confirmEmailResponse, profilePageResponse, technoGeneratorResponse] = await Promise.all([
       fetch('/src/templates.html'),
-      fetch('/src/pages/landing-page.html'),
       fetch('/src/pages/selection-page.html'),
       fetch('/src/pages/favorites-page.html'),
       fetch('/src/pages/login-page.html'),
@@ -24,11 +23,7 @@ export async function loadTemplates() {
     if (!templatesResponse.ok) {
       throw new Error(`Failed to load templates: ${templatesResponse.status} ${templatesResponse.statusText}`);
     }
-
-    if (!landingPageResponse.ok) {
-      throw new Error(`Failed to load landing page: ${landingPageResponse.status} ${landingPageResponse.statusText}`);
-    }
-
+    
     if (!selectionPageResponse.ok) {
       throw new Error(`Failed to load selection page: ${selectionPageResponse.status} ${selectionPageResponse.statusText}`);
     }
@@ -57,9 +52,8 @@ export async function loadTemplates() {
       throw new Error(`Failed to load techno generator page: ${technoGeneratorResponse.status} ${technoGeneratorResponse.statusText}`);
     }
     
-    const [templatesContent, landingPageContent, selectionPageContent, favoritesPageContent, loginPageContent, resetPasswordContent, confirmEmailContent, profilePageContent, technoGeneratorContent] = await Promise.all([
+    const [templatesContent, selectionPageContent, favoritesPageContent, loginPageContent, resetPasswordContent, confirmEmailContent, profilePageContent, technoGeneratorContent] = await Promise.all([
       templatesResponse.text(),
-      landingPageResponse.text(),
       selectionPageResponse.text(),
       favoritesPageResponse.text(),
       loginPageResponse.text(),
@@ -77,10 +71,7 @@ export async function loadTemplates() {
     
     // Inject the main templates content first
     appRoot.innerHTML = templatesContent;
-
-    // Insert landing page first
-    appRoot.insertAdjacentHTML('afterbegin', landingPageContent);
-
+    
     // Replace the login page placeholder
     const loginPlaceholder = document.getElementById('login-page-placeholder');
     if (loginPlaceholder) {

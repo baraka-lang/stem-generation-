@@ -224,36 +224,3 @@ select option {
   color: #000;
   background-color: #fff;
 }
-
-/* Logo Responsive Styles */
-header img[alt="TunePal"] {
-  max-width: 200px;
-  height: auto;
-  object-fit: contain;
-}
-
-@media (max-width: 640px) {
-  header img[alt="TunePal"] {
-    height: 32px;
-    max-width: 160px;
-  }
-
-  header img[alt="TunePal"] + p {
-    font-size: 0.65rem;
-    margin-top: 0.25rem;
-  }
-}
-
-@media (min-width: 641px) and (max-width: 1024px) {
-  header img[alt="TunePal"] {
-    height: 36px;
-    max-width: 180px;
-  }
-}
-
-@media (min-width: 1025px) {
-  header img[alt="TunePal"] {
-    height: 40px;
-    max-width: 200px;
-  }
-}
