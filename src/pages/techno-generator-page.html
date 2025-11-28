@@ -98,6 +98,49 @@
     </div>
   </div>
 
+  <!-- Header -->
+  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <!-- Logo Section -->
+      <div class="flex flex-col items-start">
+        <img src="/TunePal Logo White.png" alt="TunePal" class="h-9 w-auto" />
+        <p class="text-xs text-white/70 font-medium mt-0.5">AI Music Studio Beta</p>
+      </div>
+
+      <!-- User Status & Controls -->
+      <div id="userStatusContainer" class="flex items-center gap-2">
+        <!-- Help button -->
+        <button id="helpBtn" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
+          <i data-lucide="help-circle" class="w-4 h-4"></i>
+        </button>
+
+        <!-- Logged in user menu (hidden by default, shown when authenticated) -->
+        <div id="logedInUserMenu" class="relative hidden">
+          <button id="userMenuBtn" class="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10" aria-haspopup="true" aria-expanded="false" title="User menu">
+            <i data-lucide="user" class="w-4 h-4"></i>
+          </button>
+
+          <!-- Dropdown menu -->
+          <div id="userMenu" class="absolute right-0 top-full mt-2 w-40 bg-zinc-800 border border-white/10 rounded-md shadow-lg hidden z-40">
+            <div class="px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center">
+              <span>Credits</span>
+              <span id="headerCreditsValue" class="font-medium">100</span>
+            </div>
+            <button id="userMenuLibrary" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Library</button>
+            <button id="userMenuAccount" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Account</button>
+            <button id="userMenuLogout" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Log out</button>
+          </div>
+        </div>
+
+        <!-- Login button (shown when not authenticated) -->
+        <button id="loginBtn" class="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white text-sm font-medium transition-all duration-300 hover:scale-105 hidden" title="Sign in">
+          <i data-lucide="log-in" class="w-4 h-4 mr-2 inline"></i>
+          Sign In
+        </button>
+      </div>
+    </div>
+  </header>
+
   <!-- Main Content -->
   <div class="flex-1 flex flex-col">
     <!-- Guest Mode Notice -->
