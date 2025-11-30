@@ -147,12 +147,65 @@
     <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="downloadConfirmOverlay"></div>
     <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
       <h2 class="text-xl font-medium text-white mb-4">Download All</h2>
-      <p class="text-sm text-white/80 mb-6">Would you like to download all active stems?</p>
+      <p class="text-sm text-white/80 mb-4">Choose which version to download:</p>
+
+      <!-- Download mode selection -->
+      <div class="mb-6 space-y-2">
+        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+          <input type="radio" name="downloadMode" value="raw" id="downloadModeRaw" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2">
+          <div class="flex-1">
+            <div class="text-sm font-medium text-white">Full Raw Audio (16 bars)</div>
+            <div class="text-xs text-white/60">Complete generated audio for loop fixing</div>
+          </div>
+        </label>
+        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+          <input type="radio" name="downloadMode" value="loop" id="downloadModeLoop" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2" checked>
+          <div class="flex-1">
+            <div class="text-sm font-medium text-white">Edited Loop (4 bars)</div>
+            <div class="text-xs text-white/60">Current playback version with edits</div>
+          </div>
+        </label>
+      </div>
+
       <div class="flex justify-end gap-3">
         <button id="downloadConfirmCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
         <button id="downloadConfirmBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium flex items-center gap-2">
           <span id="downloadConfirmLabel">Download</span>
           <i id="downloadConfirmSpinner" data-lucide="loader-2" class="hidden w-4 h-4 animate-spin"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Download Single Stem Modal -->
+  <div id="downloadStemModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="downloadStemOverlay"></div>
+    <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+      <h2 class="text-xl font-medium text-white mb-4">Download <span id="downloadStemName"></span></h2>
+      <p class="text-sm text-white/80 mb-4">Choose which version to download:</p>
+
+      <!-- Download mode selection -->
+      <div class="mb-6 space-y-2">
+        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+          <input type="radio" name="downloadStemMode" value="raw" id="downloadStemModeRaw" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2">
+          <div class="flex-1">
+            <div class="text-sm font-medium text-white">Full Raw Audio (16 bars)</div>
+            <div class="text-xs text-white/60">Complete generated audio for loop fixing</div>
+          </div>
+        </label>
+        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+          <input type="radio" name="downloadStemMode" value="loop" id="downloadStemModeLoop" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2" checked>
+          <div class="flex-1">
+            <div class="text-sm font-medium text-white">Edited Loop (4 bars)</div>
+            <div class="text-xs text-white/60">Current playback version with edits</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="flex justify-end gap-3">
+        <button id="downloadStemCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+        <button id="downloadStemConfirmBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">
+          Download
         </button>
       </div>
     </div>

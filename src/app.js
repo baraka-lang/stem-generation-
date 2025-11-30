@@ -588,7 +588,7 @@ function initSavedStateFeature() {
       saveNewSet()
     })
   }
-  // Hook up download confirmation modal buttons
+  // Hook up download confirmation modal buttons (download all)
   const dlCancel = document.getElementById('downloadConfirmCancelBtn')
   if (dlCancel) {
     dlCancel.addEventListener('click', () => {
@@ -599,6 +599,28 @@ function initSavedStateFeature() {
   if (dlConfirm) {
     dlConfirm.addEventListener('click', () => {
       confirmDownloadAll()
+    })
+  }
+
+  // Hook up single stem download modal buttons
+  const dlStemCancel = document.getElementById('downloadStemCancelBtn')
+  if (dlStemCancel) {
+    dlStemCancel.addEventListener('click', () => {
+      closeDownloadStemModal()
+    })
+  }
+  const dlStemConfirm = document.getElementById('downloadStemConfirmBtn')
+  if (dlStemConfirm) {
+    dlStemConfirm.addEventListener('click', () => {
+      confirmDownloadStem()
+    })
+  }
+
+  // Close modals when clicking overlay
+  const dlStemOverlay = document.getElementById('downloadStemOverlay')
+  if (dlStemOverlay) {
+    dlStemOverlay.addEventListener('click', () => {
+      closeDownloadStemModal()
     })
   }
 }
@@ -892,6 +914,70 @@ function closeDownloadConfirmModal() {
 }
 
 /**
+ * Open the single stem download modal.
+ */
+function openDownloadStemModal(st) {
+  const modal = document.getElementById('downloadStemModal')
+  if (!modal) return
+
+  // Set the stem name in the modal
+  const stemNameEl = document.getElementById('downloadStemName')
+  if (stemNameEl) {
+    stemNameEl.textContent = stemConfigs[st]?.name || st
+  }
+
+  // Store the stem ID for later use
+  modal.dataset.stem = st
+
+  // Reset radio selection to loop by default
+  const loopRadio = document.getElementById('downloadStemModeLoop')
+  if (loopRadio) loopRadio.checked = true
+
+  modal.classList.remove('hidden')
+  requestAnimationFrame(() => {
+    modal.style.opacity = '1'
+    modal.firstElementChild?.classList.remove('scale-95')
+    modal.firstElementChild?.classList.add('scale-100')
+  })
+}
+
+/**
+ * Close the single stem download modal.
+ */
+function closeDownloadStemModal() {
+  const modal = document.getElementById('downloadStemModal')
+  if (!modal) return
+  modal.style.opacity = '0'
+  modal.firstElementChild?.classList.remove('scale-100')
+  modal.firstElementChild?.classList.add('scale-95')
+  setTimeout(() => {
+    modal.classList.add('hidden')
+    delete modal.dataset.stem
+  }, 200)
+}
+
+/**
+ * Execute the download of a single stem after user confirmation.
+ */
+function confirmDownloadStem() {
+  const modal = document.getElementById('downloadStemModal')
+  if (!modal) return
+
+  const st = modal.dataset.stem
+  if (!st) return
+
+  // Get the selected download mode from the modal
+  const rawRadio = document.getElementById('downloadStemModeRaw')
+  const mode = rawRadio && rawRadio.checked ? 'raw' : 'loop'
+
+  // Initiate download
+  downloadStem(st, mode)
+
+  // Close modal
+  closeDownloadStemModal()
+}
+
+/**
  * Execute the download of all active stems after user confirmation.  A
  * spinner is shown on the confirm button while the download is in
  * progress.  The modal is closed after the download starts.
@@ -903,8 +989,14 @@ function confirmDownloadAll() {
     spinner.classList.remove('hidden')
     label.textContent = 'Downloading'
   }
-  // Initiate download of all active stems
-  downloadAllActiveStems()
+
+  // Get the selected download mode from the modal
+  const rawRadio = document.getElementById('downloadModeRaw')
+  const mode = rawRadio && rawRadio.checked ? 'raw' : 'loop'
+
+  // Initiate download of all active stems with the selected mode
+  downloadAllActiveStems(mode)
+
   // After initiating, hide modal and reset
   if (spinner && label) {
     spinner.classList.add('hidden')
@@ -2547,9 +2639,11 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
 
   try {
     clearStemPCM(st)
-    const pcmData = extractPCMFromAudioBuffer(rebuilt)
-    storeStemPCM(st, pcmData, rebuilt.sampleRate, rebuilt.numberOfChannels, `pcm_${rebuilt.sampleRate}`)
-    console.log(`[Endpoint] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    // Use stemRaw for auto-download to get full 16-bar audio, not the edited loop
+    const rawBuffer = stemRaw[st] || rebuilt
+    const pcmData = extractPCMFromAudioBuffer(rawBuffer)
+    storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
+    console.log(`[Endpoint] Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
     scheduleAutoDownloadForStem(st)
   } catch (pcmErr) {
     console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
@@ -2645,10 +2739,12 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
 
   try {
     clearStemPCM(st)
-    const pcmData = extractPCMFromAudioBuffer(rebuilt)
-    storeStemPCM(st, pcmData, rebuilt.sampleRate, rebuilt.numberOfChannels, `pcm_${rebuilt.sampleRate}`)
+    // Use stemRaw for auto-download to get full 16-bar audio, not the edited loop
+    const rawBuffer = stemRaw[st] || rebuilt
+    const pcmData = extractPCMFromAudioBuffer(rawBuffer)
+    storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
-    console.log(`${label} Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    console.log(`${label} Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
     scheduleAutoDownloadForStem(st)
   } catch (pcmErr) {
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
@@ -3470,12 +3566,13 @@ async function separateCurrentStem(st) {
     invalidateStemCache(st)
 
     // Extract PCM from the separated audio for drag-and-drop
-    if (aligned.loop) {
+    // Use normalizedRaw for auto-download to get full 16-bar audio
+    if (aligned.normalizedRaw) {
       try {
         clearStemPCM(st) // Clear any existing PCM data before storing new
-        const pcmData = extractPCMFromAudioBuffer(aligned.loop)
-        storeStemPCM(st, pcmData, aligned.loop.sampleRate, aligned.loop.numberOfChannels, `pcm_${aligned.loop.sampleRate}`)
-        console.log(`[Separation] Extracted PCM for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+        const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
+        storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
+        console.log(`[Separation] Extracted PCM for ${st} (full raw): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
         console.warn(`[Separation] Failed to extract PCM for ${st}:`, pcmErr.message)
@@ -3988,12 +4085,13 @@ async function generateStem(st) {
 
       try {
         clearStemPCM(st)
-        const pcmData = extractPCMFromAudioBuffer(aligned.loop)
-        storeStemPCM(st, pcmData, aligned.loop.sampleRate, aligned.loop.numberOfChannels, `pcm_${aligned.loop.sampleRate}`)
-        console.log(`[Gen] Extracted PCM from playback loop for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+        // Use normalizedRaw for auto-download to get full 16-bar audio
+        const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
+        storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
+        console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
-        console.warn(`[Gen] Failed to extract PCM from playback loop for ${st}:`, pcmErr.message)
+        console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
     } catch (supErr) {
       // Supabase call failed or returned error; fallback to local generation
@@ -4047,14 +4145,15 @@ async function generateStem(st) {
       invalidateStemCache(st)
 
       // Extract PCM from AudioBuffer for drag-and-drop (fallback path)
+      // Use normalizedRaw for auto-download to get full 16-bar audio
       try {
         clearStemPCM(st) // Clear any existing PCM data before storing new
-        const pcmData = extractPCMFromAudioBuffer(aligned.loop)
-        storeStemPCM(st, pcmData, aligned.loop.sampleRate, aligned.loop.numberOfChannels, `pcm_${aligned.loop.sampleRate}`)
-        console.log(`[Gen] Extracted PCM from AudioBuffer for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+        const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
+        storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
+        console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         scheduleAutoDownloadForStem(st)
       } catch (pcmErr) {
-        console.warn(`[Gen] Failed to extract PCM from AudioBuffer for ${st}:`, pcmErr.message)
+        console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
     }
 
@@ -4674,10 +4773,29 @@ function encodeWAVLegacy(audioBuffer){
 /**
  * Download a stem as a WAV file with comprehensive validation and error handling.
  * @param {string} st - Stem identifier
+ * @param {string} mode - Download mode: 'loop' (edited playback loop) or 'raw' (full generated audio)
  */
-function downloadStem(st){
+function downloadStem(st, mode = 'loop'){
   try {
-    const buf = stemLoop[st]
+    // Determine which buffer to use based on mode
+    let buf
+    let modeLabel
+
+    if (mode === 'raw') {
+      buf = stemRaw[st]
+      modeLabel = 'Full Raw Audio'
+
+      // Fallback to loop if raw is not available
+      if (!buf) {
+        console.warn(`No raw audio for ${st}, falling back to loop`)
+        buf = stemLoop[st]
+        modeLabel = 'Edited Loop (fallback)'
+        mode = 'loop'
+      }
+    } else {
+      buf = stemLoop[st]
+      modeLabel = 'Edited Loop'
+    }
 
     // Validate buffer exists
     if (!buf) {
@@ -4693,7 +4811,7 @@ function downloadStem(st){
       return
     }
 
-    console.log(`Downloading stem ${st}: ${buf.length} samples, ${buf.duration.toFixed(2)}s`)
+    console.log(`Downloading stem ${st} (${modeLabel}): ${buf.length} samples, ${buf.duration.toFixed(2)}s`)
 
     // Encode to WAV with error handling
     let wav
@@ -4714,8 +4832,11 @@ function downloadStem(st){
 
     console.log(`WAV blob created: ${(wav.size / 1024).toFixed(1)}KB`)
 
-    // Use proper filename with session info
-    const filename = generateWavFilename(st)
+    // Use proper filename with session info, add suffix for raw mode
+    let filename = generateWavFilename(st)
+    if (mode === 'raw') {
+      filename = filename.replace('.wav', '_raw.wav')
+    }
 
     // Create download link
     const url = URL.createObjectURL(wav)
@@ -4748,17 +4869,18 @@ function downloadStem(st){
  * WAV file and trigger a download.  This does nothing for stems
  * without a generated take.  The file names mirror the single
  * download button naming scheme and include a timestamp.
+ * @param {string} mode - Download mode: 'loop' (edited playback loop) or 'raw' (full generated audio)
  */
-function downloadAllActiveStems(){
+function downloadAllActiveStems(mode = 'loop'){
   // Iterate over the keys of stemConfigs to include all stems defined in
   // the current session.  For each stem, check whether there is an
-  // active history entry (active index >= 0) and that a loop buffer
+  // active history entry (active index >= 0) and that a buffer
   // exists.  If so, download that buffer.
   Object.keys(stemConfigs).forEach(st => {
     const hasActive = (stemActiveIndex[st] ?? -1) >= 0
-    const buf = stemLoop[st]
+    const buf = mode === 'raw' ? (stemRaw[st] || stemLoop[st]) : stemLoop[st]
     if (hasActive && buf) {
-      downloadStem(st)
+      downloadStem(st, mode)
     }
   })
 }
@@ -6330,7 +6452,7 @@ function setupEventListeners() {
         return
       }
       if (action === 'toggle-like' && st) { handleStemLikeToggle(st); return }
-      if (action === 'download-stem' && st) { downloadStem(st); return }
+      if (action === 'download-stem' && st) { openDownloadStemModal(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       if (action === 'show-in-folder' && st) {
         const isElectron = isElectronMode()
@@ -6660,11 +6782,13 @@ function selectStemVersion(st, index){
   invalidateStemCache(st)
 
   // Extract PCM from the selected version for drag-and-drop
+  // Use take.raw for auto-download to get full 16-bar audio, not the edited playback loop
   try {
     clearStemPCM(st) // Clear any existing PCM data before storing new
-    const pcmData = extractPCMFromAudioBuffer(playbackLoop)
-    storeStemPCM(st, pcmData, playbackLoop.sampleRate, playbackLoop.numberOfChannels, `pcm_${playbackLoop.sampleRate}`)
-    console.log(`[Version] Extracted PCM for ${st} v${index+1}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    const rawBuffer = take.raw || playbackLoop
+    const pcmData = extractPCMFromAudioBuffer(rawBuffer)
+    storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
+    console.log(`[Version] Extracted PCM for ${st} v${index+1} (${rawBuffer === take.raw ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
     scheduleAutoDownloadForStem(st)
   } catch (pcmErr) {
     console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
