@@ -918,15 +918,9 @@ function closeDownloadConfirmModal() {
  */
 function openDownloadStemModal(st) {
   console.log('[Download] Opening download modal for stem:', st)
-
-  // Debug: Check what modals exist in DOM
-  const allModals = document.querySelectorAll('[id$="Modal"]')
-  console.log('[Download] Found modals in DOM:', Array.from(allModals).map(m => m.id))
-
   const modal = document.getElementById('downloadStemModal')
   if (!modal) {
     console.error('[Download] Modal element #downloadStemModal not found!')
-    console.error('[Download] app-root contents:', document.getElementById('app-root')?.innerHTML.substring(0, 500))
     return
   }
 
