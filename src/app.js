@@ -917,13 +917,19 @@ function closeDownloadConfirmModal() {
  * Open the single stem download modal.
  */
 function openDownloadStemModal(st) {
+  console.log('[Download] Opening download modal for stem:', st)
   const modal = document.getElementById('downloadStemModal')
-  if (!modal) return
+  if (!modal) {
+    console.error('[Download] Modal element #downloadStemModal not found!')
+    return
+  }
 
   // Set the stem name in the modal
   const stemNameEl = document.getElementById('downloadStemName')
   if (stemNameEl) {
     stemNameEl.textContent = stemConfigs[st]?.name || st
+  } else {
+    console.warn('[Download] Stem name element not found')
   }
 
   // Store the stem ID for later use
@@ -931,8 +937,13 @@ function openDownloadStemModal(st) {
 
   // Reset radio selection to loop by default
   const loopRadio = document.getElementById('downloadStemModeLoop')
-  if (loopRadio) loopRadio.checked = true
+  if (loopRadio) {
+    loopRadio.checked = true
+  } else {
+    console.warn('[Download] Loop radio button not found')
+  }
 
+  console.log('[Download] Opening modal with opacity transition')
   modal.classList.remove('hidden')
   requestAnimationFrame(() => {
     modal.style.opacity = '1'
@@ -960,15 +971,23 @@ function closeDownloadStemModal() {
  * Execute the download of a single stem after user confirmation.
  */
 function confirmDownloadStem() {
+  console.log('[Download] Confirm download clicked')
   const modal = document.getElementById('downloadStemModal')
-  if (!modal) return
+  if (!modal) {
+    console.error('[Download] Modal not found in confirmDownloadStem')
+    return
+  }
 
   const st = modal.dataset.stem
-  if (!st) return
+  if (!st) {
+    console.error('[Download] No stem ID found in modal dataset')
+    return
+  }
 
   // Get the selected download mode from the modal
   const rawRadio = document.getElementById('downloadStemModeRaw')
   const mode = rawRadio && rawRadio.checked ? 'raw' : 'loop'
+  console.log('[Download] Downloading stem:', st, 'mode:', mode)
 
   // Initiate download
   downloadStem(st, mode)
@@ -2644,7 +2663,7 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     console.log(`[Endpoint] Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    scheduleAutoDownloadForStem(st)
+    deferAutoDownload(st)
   } catch (pcmErr) {
     console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
@@ -2745,7 +2764,7 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
     console.log(`${label} Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    scheduleAutoDownloadForStem(st)
+    deferAutoDownload(st)
   } catch (pcmErr) {
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
     console.warn(`${label} Failed to extract PCM for ${st}:`, pcmErr.message)
@@ -3573,7 +3592,7 @@ async function separateCurrentStem(st) {
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
         console.log(`[Separation] Extracted PCM for ${st} (full raw): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-        scheduleAutoDownloadForStem(st)
+        deferAutoDownload(st)
       } catch (pcmErr) {
         console.warn(`[Separation] Failed to extract PCM for ${st}:`, pcmErr.message)
       }
@@ -4089,7 +4108,7 @@ async function generateStem(st) {
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
         console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-        scheduleAutoDownloadForStem(st)
+        deferAutoDownload(st)
       } catch (pcmErr) {
         console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
@@ -4151,7 +4170,7 @@ async function generateStem(st) {
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
         console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-        scheduleAutoDownloadForStem(st)
+        deferAutoDownload(st)
       } catch (pcmErr) {
         console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
@@ -4425,6 +4444,24 @@ function scheduleAutoDownloadForStem(st) {
       console.warn(`[AutoDownload] Failed to save ${st}:`, err?.message || err)
     })
   }
+}
+
+/**
+ * Defer auto-download to run after UI updates complete.
+ * This prevents file operations from blocking waveform rendering,
+ * button state updates, and playback auto-start.
+ * @param {string} st - Stem identifier
+ */
+function deferAutoDownload(st) {
+  // Use setTimeout with 0ms to defer to next event loop tick
+  // This ensures all synchronous UI updates complete first
+  setTimeout(() => {
+    try {
+      scheduleAutoDownloadForStem(st)
+    } catch (err) {
+      console.error(`[AutoDownload] Deferred download failed for ${st}:`, err)
+    }
+  }, 0)
 }
 
 function queueAutoDownloadsForAvailableStems() {
@@ -6789,7 +6826,7 @@ function selectStemVersion(st, index){
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     console.log(`[Version] Extracted PCM for ${st} v${index+1} (${rawBuffer === take.raw ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    scheduleAutoDownloadForStem(st)
+    deferAutoDownload(st)
   } catch (pcmErr) {
     console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
