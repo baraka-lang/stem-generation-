@@ -177,40 +177,6 @@
     </div>
   </div>
 
-  <!-- Download Single Stem Modal -->
-  <div id="downloadStemModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
-    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="downloadStemOverlay"></div>
-    <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-      <h2 class="text-xl font-medium text-white mb-4">Download <span id="downloadStemName"></span></h2>
-      <p class="text-sm text-white/80 mb-4">Choose which version to download:</p>
-
-      <!-- Download mode selection -->
-      <div class="mb-6 space-y-2">
-        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
-          <input type="radio" name="downloadStemMode" value="raw" id="downloadStemModeRaw" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2">
-          <div class="flex-1">
-            <div class="text-sm font-medium text-white">Full Raw Audio (16 bars)</div>
-            <div class="text-xs text-white/60">Complete generated audio for loop fixing</div>
-          </div>
-        </label>
-        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
-          <input type="radio" name="downloadStemMode" value="loop" id="downloadStemModeLoop" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2" checked>
-          <div class="flex-1">
-            <div class="text-sm font-medium text-white">Edited Loop (4 bars)</div>
-            <div class="text-xs text-white/60">Current playback version with edits</div>
-          </div>
-        </label>
-      </div>
-
-      <div class="flex justify-end gap-3">
-        <button id="downloadStemCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
-        <button id="downloadStemConfirmBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">
-          Download
-        </button>
-      </div>
-    </div>
-  </div>
-
 <!-- Waveform Edit Modal: allows adjusting volume and endpoint for a take -->
 <div id="waveformEditModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
   <!-- Darkened overlay captures pointer events to prevent interaction with the background while editing -->
@@ -272,32 +238,6 @@
       <button id="editDefaultBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-sm">Default</button>
       <button id="editDiscardBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-sm">Discard</button>
       <button id="editSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-md text-sm font-medium">Save</button>
-    </div>
-  </div>
-</div>
-
-<!-- Clean Stem Confirmation Modal -->
-<div id="cleanStemModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
-  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="cleanStemOverlay"></div>
-  <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-xl font-medium text-white">Clean Sample</h2>
-      <button id="cleanModalCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
-        <i data-lucide="x" class="w-5 h-5"></i>
-      </button>
-    </div>
-    <div class="mb-6">
-      <p class="text-sm text-white/80 mb-3">Remove unwanted instruments from this sample?</p>
-      <p class="text-xs text-white/60">This will isolate the <span id="cleanStemName" class="font-semibold text-white/90"></span> and create a new take. Your original sample will remain available in the take history.</p>
-    </div>
-    <div class="flex gap-3 justify-end">
-      <button id="cleanModalCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
-      <button id="cleanModalConfirmBtn" class="px-4 py-2 bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 border-0 rounded-lg transition text-sm font-medium">
-        <span class="inline-flex items-center gap-2">
-          <i data-lucide="sparkles" class="w-4 h-4"></i>
-          Clean Sample
-        </span>
-      </button>
     </div>
   </div>
 </div>
