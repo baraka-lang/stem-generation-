@@ -400,7 +400,7 @@ async function applyPlayerState(snapshot) {
     updateCardNumberColor(st)
     updateMutedBorder(st)
     updateTempoIndicator(st)
-    updateDragButtonState(st); updateCleanButtonState(st)
+    safeUpdateButtonStates(st)
   })
   return
 }
@@ -1167,13 +1167,13 @@ async function prepareStemmForDrag(st, audioBuffer) {
     stemArrayBufferCache[st] = arrayBuffer
 
     stemDragReady[st] = true
-    updateDragButtonState(st); updateCleanButtonState(st)
+    safeUpdateButtonStates(st)
 
     console.log(`✓ ${st} ready for drag: ${(wavBlob.size / 1024).toFixed(1)}KB`)
   } catch (err) {
     console.error(`Failed to prepare ${st} for drag:`, err)
     stemDragReady[st] = false
-    updateDragButtonState(st); updateCleanButtonState(st)
+    safeUpdateButtonStates(st)
   }
 }
 
@@ -1216,7 +1216,7 @@ function pushStemVersion(st, entry) {
   updateHistoryBadge(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
-  updateDragButtonState(st); updateCleanButtonState(st)
+  safeUpdateButtonStates(st)
   updateTempoIndicator(st)
 }
 function getActiveVersion(st) {
@@ -4254,7 +4254,7 @@ async function generateStem(st) {
     updateMixerGlow(st)
     updateCardNumberColor(st)
     updateHistoryIndicator(st)
-    updateDragButtonState(st); updateCleanButtonState(st)
+    safeUpdateButtonStates(st)
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.error(`❌ Generation error (${st}):`, err)
@@ -5411,7 +5411,7 @@ function toggleMute(st){
   reflectMuteSoloButtons(st); updateMixerGlow(st)
   updateCardNumberColor(st)
   updateMutedBorder(st)
-  updateDragButtonState(st); updateCleanButtonState(st)
+  safeUpdateButtonStates(st)
 }
 
 /* ---------- Events ---------- */
@@ -5441,6 +5441,24 @@ function updateTempoIndicator(st) {
   }
   el.textContent = `tempo: ${tempo}`
 }
+/**
+ * Safely update both drag and clean button states with error handling.
+ * Prevents UI update failures from breaking generation flow.
+ * @param {string} st - Stem identifier
+ */
+function safeUpdateButtonStates(st) {
+  try {
+    updateDragButtonState(st)
+  } catch (err) {
+    console.warn(`[UI] Failed to update drag button for ${st}:`, err.message)
+  }
+  try {
+    updateCleanButtonState(st)
+  } catch (err) {
+    console.warn(`[UI] Failed to update clean button for ${st}:`, err.message)
+  }
+}
+
 /**
  * Update the drag button state with validation and file size information.
  * The button is disabled when no sample is available, data isn't ready, or on non-Chromium browsers.
@@ -5530,7 +5548,7 @@ function updateDragButtonState(st) {
       }
     } else {
       if (isAutoDownloadSupported() && autoStatus.enabled) {
-        const autoRecord = getAutoDownloadRecord(st)
+        const autoRecord = getStemAutoDownloadRecord(st)
         if (autoRecord?.status === 'pending') {
           tooltip += `\n\nSaving to ${autoStatus.directoryName}...`
         } else if (autoRecord?.status === 'saved') {
@@ -6629,7 +6647,7 @@ function setupEventListeners() {
           selectStemVersion(st, newIndex)
           updateHistoryIndicator(st)
           updateCardNumberColor(st)
-          updateDragButtonState(st); updateCleanButtonState(st)
+          safeUpdateButtonStates(st)
         }
         return
       }
@@ -6643,7 +6661,7 @@ function setupEventListeners() {
           selectStemVersion(st, newIndex)
           updateHistoryIndicator(st)
           updateCardNumberColor(st)
-          updateDragButtonState(st); updateCleanButtonState(st)
+          safeUpdateButtonStates(st)
         }
         return
       }
@@ -6733,7 +6751,7 @@ function updateHistoryBadge(st){
   badgeEls.forEach(badge => { badge.textContent=n; badge.style.opacity = n > 0 ? '1' : '0.4' })
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
-  updateDragButtonState(st); updateCleanButtonState(st)
+  safeUpdateButtonStates(st)
 }
 function toggleHistoryDrawer(st, forceOpen=null){
   const drawer=document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
@@ -6853,7 +6871,7 @@ function selectStemVersion(st, index){
   if (isPlaying) restartStemNextBoundary(st)
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
-  updateDragButtonState(st); updateCleanButtonState(st)
+  safeUpdateButtonStates(st)
   updateTempoIndicator(st)
   updateStemLikeButtons(st)
 }
@@ -7187,7 +7205,7 @@ function initTechnoGenerator(){
     updateCardNumberColor(st)
     updateMutedBorder(st)
     updateTempoIndicator(st)
-    updateDragButtonState(st); updateCleanButtonState(st)
+    safeUpdateButtonStates(st)
   })
   // Present the session setup modal if settings have not been chosen
   // yet.  This ensures the user sets the master tempo, bars and key

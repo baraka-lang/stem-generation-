@@ -128,6 +128,14 @@ export async function loadTemplates() {
       console.error('❌ cleanStemModal NOT found after loading templates!');
     }
 
+    // Verify downloadStemModal was loaded
+    const downloadStemModal = document.getElementById('downloadStemModal');
+    if (downloadStemModal) {
+      console.log('✅ downloadStemModal loaded successfully');
+    } else {
+      console.error('❌ downloadStemModal NOT found after loading templates!');
+    }
+
     // Append profile page
     appRoot.insertAdjacentHTML('beforeend', profilePageContent);
 
