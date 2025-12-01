@@ -4334,27 +4334,45 @@ function supportsFileHandleDragOut() {
 }
 
 /**
+ * Generate a unique identifier for file downloads to prevent duplicates.
+ * Combines timestamp with random component for uniqueness.
+ * @returns {string} unique identifier
+ */
+function generateUniqueId() {
+  const timestamp = Date.now()
+  const random = Math.floor(Math.random() * 10000)
+  return `${timestamp}${random.toString().padStart(4, '0')}`
+}
+
+/**
  * Generate a properly formatted WAV filename for drag-and-drop.
- * Format: ProjectName_InstrumentName_BPM_Key_Bars.wav
- * Example: Nexus_Kick_130_Am_4bars.wav
+ * Format: ProjectName_InstrumentName_BPM_Key_Bars_UniqueID.wav
+ * Example: Nexus_Kick_130_Am_4bars_17331234565678.wav
  * @param {string} st Stem identifier
+ * @param {string} mode - Download mode: 'loop' (playback bars) or 'raw' (full 16 bars)
  * @returns {string} formatted filename
  */
-function generateWavFilename(st) {
+function generateWavFilename(st, mode = 'loop') {
   const cfg = stemConfigs[st]
   const master = stemControlValues.master || {}
   const tempo = master.tempo ?? DEFAULT_TEMPO
-  const bars = master.bars ?? DEFAULT_BARS
+  const actualBars = master.bars ?? DEFAULT_BARS
+
+  // For 'loop' mode, use playback bars (divided by 2). For 'raw' mode, use full bars (16).
+  const bars = mode === 'raw' ? actualBars * 2 : getPlaybackBars(actualBars, DEFAULT_BARS)
 
   // Get root note with accidentals
   const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || 'A')
-  const mode = master.mode ?? 'Minor'
-  const keyStr = rootName.replace('♯', '#').replace('♭', 'b') + (mode === 'Minor' ? 'm' : '')
+  const modeStr = master.mode ?? 'Minor'
+  const keyStr = rootName.replace('♯', '#').replace('♭', 'b') + (modeStr === 'Minor' ? 'm' : '')
 
   const instrumentName = cfg?.name || st
   const safeName = instrumentName.replace(/\s+/g, '')
 
-  return `Techno_${safeName}_${tempo}_${keyStr}_${bars}bars.wav`
+  // Generate unique identifier to prevent file overwrites
+  const uniqueId = generateUniqueId()
+
+  return `Techno_${safeName}_${tempo}_${keyStr}_${bars}bars_${uniqueId}.wav`
 }
 
 function setDragImageForFilename(event, filename) {
@@ -4869,11 +4887,8 @@ function downloadStem(st, mode = 'loop'){
 
     console.log(`WAV blob created: ${(wav.size / 1024).toFixed(1)}KB`)
 
-    // Use proper filename with session info, add suffix for raw mode
-    let filename = generateWavFilename(st)
-    if (mode === 'raw') {
-      filename = filename.replace('.wav', '_raw.wav')
-    }
+    // Use proper filename with session info and mode (loop or raw)
+    const filename = generateWavFilename(st, mode)
 
     // Create download link
     const url = URL.createObjectURL(wav)
