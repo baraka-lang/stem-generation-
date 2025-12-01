@@ -450,6 +450,10 @@ function closeMenu() {
   dropdownEl.classList.add('opacity-0')
   dropdownEl.classList.add('hidden')
   anchorButtons.forEach((btn) => btn.classList.remove('ring-2', 'ring-purple-400/60', 'bg-white/5'))
+  // Stop any active like preview when closing menu
+  if (stopPreviewHandler) {
+    stopPreviewHandler()
+  }
 }
 
 function positionDropdown(anchor) {

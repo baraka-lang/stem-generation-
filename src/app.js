@@ -835,6 +835,7 @@ async function toggleLikePreview(item, currentId) {
     }
     likePreviewSource = null
     likePreviewId = null
+    restoreMainPlayerVolumes()
   }
 
   if (!item?.audioBuffer) {
@@ -862,9 +863,13 @@ async function toggleLikePreview(item, currentId) {
     if (likePreviewId === item.id) {
       likePreviewSource = null
       likePreviewId = null
+      restoreMainPlayerVolumes()
       window.dispatchEvent(new CustomEvent('likePreviewStopped'))
     }
   }
+
+  // Duck all main player stems while preview is playing
+  duckMainPlayerForPreview()
 
   return likePreviewId
 }
@@ -879,7 +884,42 @@ function stopLikePreview(item) {
   }
   likePreviewSource = null
   likePreviewId = null
+  restoreMainPlayerVolumes()
   window.dispatchEvent(new CustomEvent('likePreviewStopped'))
+}
+
+function duckMainPlayerForPreview() {
+  if (!audioContext) return
+  // Mute all main player stems while preview is playing
+  STEM_ORDER.forEach(st => {
+    const n = stemNodes[st]
+    if (n?.gain) {
+      const g = n.gain.gain
+      const now = audioContext.currentTime
+      g.cancelScheduledValues(now)
+      g.setValueAtTime(g.value, now)
+      g.linearRampToValueAtTime(0, now + 0.05)
+    }
+  })
+}
+
+function restoreMainPlayerVolumes() {
+  if (!audioContext) return
+  // Restore normal volumes for all stems
+  STEM_ORDER.forEach(st => {
+    const vol = (stemControlValues[st]?.volume ?? 80) / 100
+    const muted = stemMuteStates[st]
+    const soloedOther = (soloedStem && soloedStem !== st)
+    const target = (muted || soloedOther) ? 0 : vol
+    const n = stemNodes[st]
+    if (n?.gain) {
+      const g = n.gain.gain
+      const now = audioContext.currentTime
+      g.cancelScheduledValues(now)
+      g.setValueAtTime(g.value, now)
+      g.linearRampToValueAtTime(target, now + 0.05)
+    }
+  })
 }
 
 /**
@@ -5964,7 +6004,8 @@ function setupEventListeners() {
         g.setValueAtTime(g.value, now)
         const muted = stemMuteStates[st]
         const soloedOther = (soloedStem && soloedStem !== st)
-        const val = (muted || soloedOther) ? 0 : (v/100)
+        const previewActive = !!likePreviewSource
+        const val = (muted || soloedOther || previewActive) ? 0 : (v/100)
         g.linearRampToValueAtTime(val, now + 0.01)
       }
       return
@@ -6606,6 +6647,10 @@ function setupEventListeners() {
       if (action === 'close-history' && st) { toggleHistoryDrawer(st, false); return }
       if (action === 'mix-mute' || action === 'mute-stem') { toggleMute(st); return }
       if (action === 'mix-solo' || action === 'solo-stem') {
+        // Stop any active like preview first
+        if (likePreviewSource) {
+          stopLikePreview()
+        }
         // Custom solo logic: if the stem is muted, soloing will unmute it and
         // remember its previous mute state.  When unsoloing, the previous
         // mute state is restored.  Only one stem can be soloed at a time.
@@ -6899,6 +6944,10 @@ function showPage(pageId){
   currentPageId = pageId
   if (pageId !== 'favorites-page') {
     lastPageBeforeFavorites = pageId
+    // Stop like preview when leaving favorites page
+    if (likePreviewSource) {
+      stopLikePreview()
+    }
   }
 
   // Show studio header on studio page
