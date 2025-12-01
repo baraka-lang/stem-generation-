@@ -2658,12 +2658,12 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
 
   try {
     clearStemPCM(st)
-    // Use stemRaw for auto-download to get full 16-bar audio, not the edited loop
+    // Store PCM for drag-and-drop functionality (manual downloads)
+    // Note: Auto-download is NOT triggered here - this is just re-applying effects to existing audio
     const rawBuffer = stemRaw[st] || rebuilt
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     console.log(`[Endpoint] Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    deferAutoDownload(st)
   } catch (pcmErr) {
     console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
@@ -2758,13 +2758,13 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
 
   try {
     clearStemPCM(st)
-    // Use stemRaw for auto-download to get full 16-bar audio, not the edited loop
+    // Store PCM for drag-and-drop functionality (manual downloads)
+    // Note: Auto-download is NOT triggered here - offset/stretch are just loop edits, not new generations
     const rawBuffer = stemRaw[st] || rebuilt
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
     console.log(`${label} Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    deferAutoDownload(st)
   } catch (pcmErr) {
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
     console.warn(`${label} Failed to extract PCM for ${st}:`, pcmErr.message)
@@ -6852,14 +6852,14 @@ function selectStemVersion(st, index){
   invalidateStemCache(st)
 
   // Extract PCM from the selected version for drag-and-drop
-  // Use take.raw for auto-download to get full 16-bar audio, not the edited playback loop
+  // Store PCM for drag-and-drop functionality (manual downloads)
+  // Note: Auto-download is NOT triggered here - this is just switching between previously generated versions
   try {
     clearStemPCM(st) // Clear any existing PCM data before storing new
     const rawBuffer = take.raw || playbackLoop
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     console.log(`[Version] Extracted PCM for ${st} v${index+1} (${rawBuffer === take.raw ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
-    deferAutoDownload(st)
   } catch (pcmErr) {
     console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
