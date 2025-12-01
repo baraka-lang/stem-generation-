@@ -123,6 +123,7 @@ const stemLoop  = {}
 const stemNodes = {}
 const stemGains = {}
 const stemLoopIntent = {}
+const stemLoopDiagnostics = {}
 
 // Each stem maintains its own loop duration.  When a loop is built from a raw
 // buffer (after generation or when selecting a take), its duration is stored
@@ -3210,6 +3211,14 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
           }
         }
 
+        if (!diagnostics && response.data.diagnostics) {
+          diagnostics = response.data.diagnostics
+        }
+
+        if (diagnostics) {
+          stemLoopDiagnostics[st] = diagnostics
+        }
+
         loopFixMethod = 'gemini'
         console.log(`[LoopFix] Gemini loop fix complete - detected BPM: ${diagnostics.detected_bpm?.toFixed(2) || 'N/A'}`)
 
@@ -3254,6 +3263,8 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
         loopDuration: aligned.loop.duration,
         gemini_used: false
       }
+
+      stemLoopDiagnostics[st] = diagnostics
 
       return { fixed: aligned.loop, method: loopFixMethod, diagnostics }
     }
@@ -4049,6 +4060,60 @@ async function composeWithRetries(st, tempo, bars, signal, statusEl){
   const buf=await audioContext.decodeAudioData(ab)
   return { buffer: buf, usedPrompt: finalPrompt, tier: 2, failedValidation: true }
 }
+
+function buildSessionGenerationContext(targetStemId) {
+  try {
+    const ctx = {
+      tempo: stemControlValues.master?.tempo,
+      bars: stemControlValues.master?.bars,
+      key: {
+        rootBase: stemControlValues.master?.rootBase || 'A',
+        accidental: stemControlValues.master?.accidental || 'natural',
+        mode: stemControlValues.master?.mode || 'Minor'
+      },
+      stems: []
+    }
+
+    Object.keys(stemConfigs).forEach(st => {
+      if (st === targetStemId) return
+
+      const activeIndex = stemActiveIndex[st] ?? -1
+      const hasActive = activeIndex >= 0 && (stemLoop[st] || stemRaw[st])
+      if (!hasActive) return
+
+      const intent = getStemLoopIntent(st, {
+        tempo: ctx.tempo,
+        promptBars: stemControlValues.master?.bars,
+        promptText: ''
+      })
+
+      const diag = stemLoopDiagnostics[st] || {}
+      const controls = stemControlValues[st] || {}
+      const mute = !!stemMuteStates[st]
+
+      ctx.stems.push({
+        id: st,
+        mute,
+        volume: controls.volume ?? 80,
+        eq: { ...(stemEqValues[st] || {}) },
+        filter: { ...(stemFilterValues[st] || {}) },
+        loopIntent: intent,
+        diagnostics: {
+          detected_bpm: diag.detected_bpm,
+          tempo_stability: diag.tempo_stability,
+          quality_score: diag.quality_score,
+          transients: diag.gemini_analysis?.transient_frames?.length,
+        },
+        promptText: intent.promptText || ''
+      })
+    })
+
+    return ctx
+  } catch (err) {
+    console.warn('[SessionContext] Failed to build session context:', err)
+    return null
+  }
+}
 async function generateStem(st) {
   await ensureAudioContext()
   const ctrl = getNewStemController(st)
@@ -4073,6 +4138,7 @@ async function generateStem(st) {
     const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
     const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
     let loopIntent = null
+    const sessionContext = buildSessionGenerationContext(st)
 
     // Attempt to generate the stem via the Supabase edge function
     // `generate-techno-stem`.  This function builds the prompt, calls
@@ -4091,6 +4157,7 @@ async function generateStem(st) {
           accidental: stemControlValues.master?.accidental || 'natural',
           mode: stemControlValues.master?.mode || 'Minor'
         },
+        session_context: sessionContext || undefined,
         use_grok: false
       }
       const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
@@ -4105,6 +4172,10 @@ async function generateStem(st) {
       const receivedFormat = format || 'pcm_24000'
       const receivedSampleRate = sr || 24000
       const receivedChannels = ch || 2
+
+      if (data.loopDiagnostics) {
+        stemLoopDiagnostics[st] = data.loopDiagnostics
+      }
 
       // Log format details for diagnostics
       const audioBytes = audio_b64 ? Math.floor(audio_b64.length * 0.75) : 0

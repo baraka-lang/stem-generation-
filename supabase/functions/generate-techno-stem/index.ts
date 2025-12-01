@@ -51,6 +51,66 @@ const stemConfigs = {
     basePrompt: 'techno top percussion loop'
   }
 };
+
+interface SessionStemContext {
+  id: string;
+  mute?: boolean;
+  volume?: number;
+  eq?: any;
+  filter?: any;
+  loopIntent?: {
+    tempo?: number;
+    promptBars?: number;
+    playbackBars?: number;
+    promptText?: string;
+    sourceFrames?: number;
+    sourceDurationSec?: number;
+  };
+  diagnostics?: {
+    detected_bpm?: number;
+    tempo_stability?: number;
+    quality_score?: number;
+    transients?: number;
+  };
+  promptText?: string;
+}
+
+interface SessionGenerationContext {
+  tempo?: number;
+  bars?: number;
+  key?: { rootBase: string; accidental: string; mode: string };
+  stems: SessionStemContext[];
+}
+
+interface LoopFixDiagnostics {
+  original_duration_frames: number;
+  target_duration_frames: number;
+  head_trim_frames: number;
+  seam_location_frames: number;
+  fade_samples: number;
+  detected_bpm?: number;
+  confidence?: number;
+  stretch_ratio?: number;
+  gemini_used: boolean;
+  model_used: string;
+  cache_hit: boolean;
+  gemini_error?: string;
+  suggested_start_frame?: number;
+  seam_frame?: number;
+  gemini_call_ms?: number;
+  wsola_process_ms?: number;
+  total_process_ms: number;
+  quality_score?: number;
+  fallback_reason?: string;
+  retry_count?: number;
+  prompt_bars?: number;
+  playback_bars?: number;
+  generation_bars?: number;
+  source_frames?: number;
+  source_duration_seconds?: number;
+  inferred_prompt_bars?: number;
+  gemini_analysis?: any;
+}
 // Scale a knob value (0–100) into one of five descriptive strings.
 function scaleKnob(v, a, b, c, d, e) {
   const x = Number(v ?? 50);
@@ -247,9 +307,64 @@ function negatives(st) {
     ...per[st] || []
   ].join('; ');
 }
+
+function buildSessionContextFragment(targetStem, sessionContext) {
+  if (!sessionContext || !Array.isArray(sessionContext.stems) || sessionContext.stems.length === 0) {
+    return 'Track context: standalone stem; use modern Berlin-style techno feel.';
+  }
+
+  const { tempo, bars, key } = sessionContext;
+  const activeDescriptions = [];
+
+  for (const stem of sessionContext.stems) {
+    const diag = stem.diagnostics || {};
+    const loop = stem.loopIntent || {};
+    const role = (stem.id || '').toUpperCase();
+
+    const density = typeof diag.transients === 'number' && sessionContext.bars
+      ? diag.transients / (sessionContext.bars * 4)
+      : null;
+
+    let densityLabel = '';
+    if (density !== null) {
+      if (density < 2) densityLabel = 'very sparse';
+      else if (density < 4) densityLabel = 'sparse';
+      else if (density < 8) densityLabel = 'steady';
+      else densityLabel = 'busy';
+    }
+
+    const mutedTag = stem.mute ? ' (muted in current mix)' : '';
+    const tempoTag = diag.detected_bpm
+      ? `${diag.detected_bpm.toFixed(1)} BPM`
+      : tempo
+      ? `${tempo.toFixed(1)} BPM`
+      : '';
+
+    const snippet = stem.promptText && stem.promptText.length > 0
+      ? stem.promptText.slice(0, 120)
+      : '';
+
+    const phrasing = densityLabel || 'grid-locked';
+    const intentBars = loop.playbackBars || loop.promptBars || sessionContext.bars;
+    activeDescriptions.push(
+      `${role}: ${phrasing} pattern around ${tempoTag}${intentBars ? ` (${intentBars} bars)` : ''}${mutedTag}${snippet ? `; style: ${snippet}` : ''}`
+    );
+  }
+
+  const keyText = key
+    ? `${key.rootBase}${key.accidental === 'sharp' ? '#' : key.accidental === 'flat' ? 'b' : ''} ${key.mode}`
+    : '';
+
+  return [
+    'Track context:',
+    `Modern techno groove at ~${tempo?.toFixed(1) ?? '130'} BPM${keyText ? ` in ${keyText}` : ''}, seamless ${bars ?? 4}-bar loop.`,
+    'Currently active stems:',
+    activeDescriptions.join(' | ')
+  ].join(' ');
+}
 // Build the hi-hat prompt.  Adjusts strictness to enforce exact 1/16
 // grid and zero tails when retrying.
-function buildHihatPrompt(controls, master, strictness = 0) {
+function buildHihatPrompt(controls, master, strictness = 0, sessionContext) {
   const { tempo, bars, root, mode } = master;
   const g = globalScaffold({
     tempo,
@@ -257,12 +372,14 @@ function buildHihatPrompt(controls, master, strictness = 0) {
     root,
     mode
   });
+  const sessionFragment = buildSessionContextFragment('hihat', sessionContext);
   const brightness = scaleKnob(controls.brightness, 'dark', 'balanced', 'crisp', 'bright', 'very bright');
   const space = controls.reverb ? 'Space: tiny room; decay < 120ms; gate tails before seam.' : 'Space: dry, minimal.';
   const common = [
     'STEM: HIHAT — solo closed hi-hat only.',
     'Identity: crisp techno closed hi-hat.',
     'Engine: Roland TR-909 closed hat; tight analog noise burst; zero bleed from other drums.',
+    sessionFragment,
     g,
     'ROLE: isolated closed hat (no open-hat).',
     'Pattern: strict 1/16 notes; first hit exactly at bar 1 beat 1; consistent every bar.',
@@ -280,7 +397,7 @@ function buildHihatPrompt(controls, master, strictness = 0) {
 }
 // Build the snare (perc) prompt.  Strictness controls enforcement of hits
 // exactly on beats 2 and 4.
-function buildSnarePrompt(controls, master, strictness = 0) {
+function buildSnarePrompt(controls, master, strictness = 0, sessionContext) {
   const { tempo, bars, root, mode } = master;
   const g = globalScaffold({
     tempo,
@@ -288,6 +405,7 @@ function buildSnarePrompt(controls, master, strictness = 0) {
     root,
     mode
   });
+  const sessionFragment = buildSessionContextFragment('perc', sessionContext);
   const varTxt = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation');
   const intensity = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong');
   const body = controls.metallic ? 'Timbre: slightly metallic; tight transient; short decay (80–180ms).' : 'Timbre: dry, tight; short decay (80–180ms).';
@@ -295,6 +413,7 @@ function buildSnarePrompt(controls, master, strictness = 0) {
     'STEM: SNARE — solo snare only.',
     'Identity: industrial techno snare; drum-machine style; no clap.',
     'Engine: Roland TR-909 snare circuit; tuned noise burst plus resonant body; keep low-frequency thump minimal.',
+    sessionFragment,
     g,
     'ROLE: isolated electronic snare.',
     'Pattern: hits exactly on beats 2 and 4 of every bar (no ghost notes or rolls).',
@@ -382,12 +501,14 @@ function buildPercLoopPrompt(controls, master) {
 }
 // Build a stem prompt based on the stem type.  Hihat and snare
 // support strictness tiers for automatic retries.
-function buildStemPrompt(st, controls, master, strictness = 0) {
-  if (st === 'hihat') return buildHihatPrompt(controls, master, strictness);
-  if (st === 'perc') return buildSnarePrompt(controls, master, strictness);
+function buildStemPrompt(st, controls, master, strictness = 0, sessionContext) {
+  if (st === 'hihat') return buildHihatPrompt(controls, master, strictness, sessionContext);
+  if (st === 'perc') return buildSnarePrompt(controls, master, strictness, sessionContext);
   if (st === 'kick') {
+    const sessionFragment = buildSessionContextFragment(st, sessionContext);
     const basePrompt = [
       `STEM: ${st.toUpperCase()} — solo ${stemConfigs[st]?.basePrompt || 'kick'}.`,
+      sessionFragment,
       globalScaffold(master),
       roleDirectives(st, controls),
       `Avoid: ${negatives(st)}`,
@@ -408,8 +529,10 @@ function buildStemPrompt(st, controls, master, strictness = 0) {
   const global = globalScaffold(master);
   const role = roleDirectives(st, controls);
   const negs = negatives(st);
+  const sessionFragment = buildSessionContextFragment(st, sessionContext);
   return [
     `STEM: ${st.toUpperCase()} — solo ${stemBase}.`,
+    sessionFragment,
     global,
     role,
     `Avoid: ${negs}.`,
@@ -952,7 +1075,7 @@ async function callLoopFixGemini(
     audioDurationSec?: number;
     generationBars?: number;
   } = {}
-): Promise<Uint8Array | null> {
+): Promise<{ audio: Uint8Array; diagnostics?: LoopFixDiagnostics } | null> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
@@ -998,9 +1121,19 @@ async function callLoopFixGemini(
 
     const result = await response.json();
     const diagnostics = response.headers.get('X-LoopFix-Diagnostics');
+    let parsedDiagnostics: LoopFixDiagnostics | undefined;
 
     if (diagnostics) {
       console.log('Loop-fix diagnostics:', diagnostics);
+      try {
+        parsedDiagnostics = JSON.parse(diagnostics);
+      } catch (err) {
+        console.warn('Failed to parse loop-fix diagnostics header', err);
+      }
+    }
+
+    if (!parsedDiagnostics && result?.diagnostics) {
+      parsedDiagnostics = result.diagnostics as LoopFixDiagnostics;
     }
 
     if (!result.fixed_audio_base64) {
@@ -1014,7 +1147,7 @@ async function callLoopFixGemini(
       fixedBytes[i] = fixedBinary.charCodeAt(i);
     }
 
-    return fixedBytes;
+    return { audio: fixedBytes, diagnostics: parsedDiagnostics };
   } catch (error) {
     console.warn('loop-fix-gemini error:', error instanceof Error ? error.message : String(error));
     return null;
@@ -1123,6 +1256,7 @@ Deno.serve(async (req)=>{
       accidental: 'natural',
       mode: 'Minor'
     };
+    const sessionContext: SessionGenerationContext | null = body.session_context || null;
     const tempo = Math.max(40, Math.min(300, Math.round(Number(master.tempo) || 130)));
     const bars = Math.max(1, Math.min(32, Math.round(Number(master.bars) || 4)));
     const generationBars = Math.max(1, Math.min(32, Math.round(Number(master.generationBars) || 16)));
@@ -1154,12 +1288,13 @@ Deno.serve(async (req)=>{
     let sampleRate = 24000;
     let channels = 1;
     let musicLengthMs = 0;
+    let loopDiagnostics: LoopFixDiagnostics | undefined = undefined;
     const preferredFormats = ['pcm_44100', 'pcm_24000', 'pcm_22050', 'pcm_16000'];
     let usedFormat = 'pcm_24000';
     let formatSampleRate = 24000;
 
     for(strictness = 0; strictness < 3; strictness++){
-      usedPrompt = buildStemPrompt(stem, controls, masterForPrompt, strictness);
+      usedPrompt = buildStemPrompt(stem, controls, masterForPrompt, strictness, sessionContext);
       // Use generationBars (16) for audio generation, not target bars
       const beats = generationBars * 4;
       const seconds = beats * (60 / tempo);
@@ -1319,7 +1454,8 @@ Deno.serve(async (req)=>{
 
       if (geminiFixed) {
         console.log('✓ Using Gemini-enhanced loop fix');
-        outBytes = geminiFixed;
+        outBytes = geminiFixed.audio;
+        loopDiagnostics = geminiFixed.diagnostics;
         loopMethod = 'gemini';
       } else {
         console.log('⚠ Gemini loop fix failed, using heuristic fallback');
@@ -1376,7 +1512,8 @@ Deno.serve(async (req)=>{
       format: usedFormat,
       sampleRate: sampleRate,
       channels: channels,
-      loopMethod: loopMethod
+      loopMethod: loopMethod,
+      loopDiagnostics
     };
     return new Response(JSON.stringify(responseBody), {
       status: 200,

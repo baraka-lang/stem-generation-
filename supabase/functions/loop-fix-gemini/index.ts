@@ -63,6 +63,7 @@ interface LoopFixDiagnostics {
   quality_score?: number;
   fallback_reason?: string;
   retry_count?: number;
+  gemini_analysis?: GeminiAnalysisResponse;
 }
 
 interface WSOLAParams {
@@ -93,6 +94,25 @@ function computeTargetFrames(sr: number, bpm: number, bars: number): number {
   const beats = bars * 4;
   const seconds = beats * (60 / bpm);
   return Math.round(seconds * sr);
+}
+
+function sanitizeGeminiAnalysis(analysis: GeminiAnalysisResponse | null): GeminiAnalysisResponse | undefined {
+  if (!analysis) return undefined;
+
+  const limitArray = (arr: number[] | undefined, max = 128) =>
+    Array.isArray(arr) ? arr.slice(0, max).map(v => Math.round(v)) : undefined;
+
+  return {
+    ...analysis,
+    downbeat_frames: limitArray(analysis.downbeat_frames, 64) || [],
+    beat_frames: limitArray(analysis.beat_frames, 128) || [],
+    transient_frames: limitArray(analysis.transient_frames, 128) || [],
+    alternative_start_frames: limitArray(analysis.alternative_start_frames, 32),
+    alternative_seam_frames: limitArray(analysis.alternative_seam_frames, 32),
+    transient_strengths: Array.isArray(analysis.transient_strengths)
+      ? analysis.transient_strengths.slice(0, 128)
+      : undefined,
+  };
 }
 
 function extractCandidateSegments(
@@ -470,16 +490,17 @@ Deno.serve(async (req: Request) => {
     const totalProcessMs = performance.now() - startTime;
 
     // Build diagnostics
+    const geminiAnalysisSanitized = sanitizeGeminiAnalysis(geminiAnalysis);
     const diagnostics: LoopFixDiagnostics = {
       original_duration_frames: pcmData[0].length,
       target_duration_frames: effectiveTargetFrames,
       head_trim_frames: headIndex,
       seam_location_frames: seamIndex,
       fade_samples: fadeSamples,
-      detected_bpm: geminiAnalysis?.detected_bpm,
-      confidence: geminiAnalysis?.confidence,
-      stretch_ratio: geminiAnalysis ? geminiAnalysis.detected_bpm / target_bpm : undefined,
-      gemini_used: geminiAnalysis !== null && !geminiError,
+      detected_bpm: geminiAnalysisSanitized?.detected_bpm,
+      confidence: geminiAnalysisSanitized?.confidence,
+      stretch_ratio: geminiAnalysisSanitized ? geminiAnalysisSanitized.detected_bpm / target_bpm : undefined,
+      gemini_used: geminiAnalysisSanitized !== null && !geminiError,
       model_used: modelUsed,
       cache_hit: cacheHit,
       prompt_bars: promptBarsNormalized,
@@ -489,14 +510,15 @@ Deno.serve(async (req: Request) => {
       source_duration_seconds: sourceDurationSeconds,
       inferred_prompt_bars: inferredPromptBars,
       gemini_error: geminiError,
-      suggested_start_frame: geminiAnalysis?.suggested_start_frame,
-      seam_frame: geminiAnalysis?.seam_frame,
+      suggested_start_frame: geminiAnalysisSanitized?.suggested_start_frame,
+      seam_frame: geminiAnalysisSanitized?.seam_frame,
       gemini_call_ms: geminiCallMs,
       wsola_process_ms: wsolaProcessMs,
       total_process_ms: totalProcessMs,
       quality_score: qualityScore,
       fallback_reason: fallbackReason,
       retry_count: retryCount,
+      gemini_analysis: geminiAnalysisSanitized,
     };
 
     // Log analytics
@@ -526,7 +548,7 @@ Deno.serve(async (req: Request) => {
     console.log(`[LoopFix] Complete: ${totalProcessMs.toFixed(0)}ms, Quality: ${qualityScore}/100, Method: ${modelUsed}`);
 
     return new Response(
-      JSON.stringify({ fixed_audio_base64: fixedBase64 }),
+      JSON.stringify({ fixed_audio_base64: fixedBase64, diagnostics }),
       {
         status: 200,
         headers: {
