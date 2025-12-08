@@ -77,14 +77,14 @@ const PROMPTS_MODE = 'builder' // 'builder' | 'freeform'
 const TEMPO_MIN = 110
 const TEMPO_MAX = 140
 const DEFAULT_TEMPO = 130
-const DEFAULT_BARS  = 4
+const DEFAULT_BARS = 4
 
-const START_ENV_MS   = 5
+const START_ENV_MS = 5
 // Increase ramp and crossfade durations to minimise audible clicks at loop
 // boundaries.  A longer fade-in/out and crossfade smooths the transition
 // when the loop restarts, reducing the chance of hearing a click.
-const EDGE_RAMP_MS   = 8
-const LOOP_XFADE_MS  = 28
+const EDGE_RAMP_MS = 8
+const LOOP_XFADE_MS = 28
 const ENVELOPE_HOP_SAMPLES = 96
 const ZERO_FALLBACK_SAMPLES = 384
 
@@ -95,13 +95,13 @@ const GEN_TAIL_PAD_MS = 200
    EQ‑3 + Filter defaults
    ========================================================= */
 const EQ_MIN_DB = -80
-const EQ_MAX_DB =  +6
+const EQ_MAX_DB = +6
 const EQ_DEFAULT = 50
 const EQ_SMOOTH_TC = 0.02
 
-const EQ_LOW_FREQ  = 180
-const EQ_MID_FREQ  = 2200
-const EQ_MID_Q     = 1.20
+const EQ_LOW_FREQ = 180
+const EQ_MID_FREQ = 2200
+const EQ_MID_Q = 1.20
 const EQ_HIGH_FREQ = 6500
 
 const FILTER_MIN_HZ = 40
@@ -114,11 +114,11 @@ const FILTER_DEFAULT_HZ = 12000 // 12 kHz default
    Global state
    ========================================================= */
 let audioContext = null
-let masterGain   = null
-let isPlaying    = false
+let masterGain = null
+let isPlaying = false
 
-const stemRaw   = {}
-const stemLoop  = {}
+const stemRaw = {}
+const stemLoop = {}
 // active nodes: { source, env, filter, eq:{low,mid,high}, gain }
 const stemNodes = {}
 const stemGains = {}
@@ -152,8 +152,8 @@ function getStemAlignmentStrategy(st) {
 let stemControlValues = {}
 let stemMuteStates = {}
 let soloedStem = null
-let currentPageId = 'selection-page'
-let lastPageBeforeFavorites = 'selection-page'
+let currentPageId = 'techno-generator-page'
+let lastPageBeforeFavorites = 'techno-generator-page'
 let likePreviewSource = null
 let likePreviewId = null
 
@@ -533,16 +533,68 @@ async function loadSavedSet(index) {
  * dropdown and modal buttons.  Call this once after the player bar and
  * mixer have been initialised.
  */
+let saveBtnHandler = null
 function initSavedStateFeature() {
   const saveBtn = document.getElementById('saveStateBtn')
   if (saveBtn) {
-    saveBtn.addEventListener('click', () => {
-      // When save is pressed, open confirmation modal instead of saving directly
-      openSaveSetModal()
-    })
+    // Remove existing listener if it exists to prevent duplicates
+    if (saveBtnHandler) {
+      saveBtn.removeEventListener('click', saveBtnHandler)
+    }
+    // Create and store the handler function
+    saveBtnHandler = async () => {
+      console.log('Save button clicked')
+      // Check if user is authenticated before allowing save
+      const { canUserSave } = await import('./Auth/selectionPage.js')
+      const canSave = await canUserSave()
+
+      if (canSave) {
+        // User is authenticated, proceed with save
+        openSaveSetModal()
+      } else {
+        const { showErrorToast } = await import('./UI/toast.js')
+        showErrorToast('You must be logged in to save')
+        const { showLoginModal } = await import('./Auth/loginPage.js')
+        if (typeof showLoginModal === 'function') {
+          showLoginModal()
+        }
+      }
+    }
+    saveBtn.addEventListener('click', saveBtnHandler)
   }
   const dropdown = document.getElementById('savedSetsDropdown')
+
   if (dropdown) {
+    ;(async () => {
+      try {
+        // Populate dropdown from cloud sets (ascending by name)
+        const { loadSavedStemsStatesFromCloudStorage } = await import('./playerControl/index.js')
+        const sets = await loadSavedStemsStatesFromCloudStorage()
+        if (Array.isArray(sets)) {
+          // Reset options, keep placeholder
+          dropdown.innerHTML = ''
+          const placeholder = document.createElement('option')
+          placeholder.value = ''
+          placeholder.textContent = '------'
+          dropdown.appendChild(placeholder)
+          const sorted = [...sets].sort((a, b) => {
+            const an = (a?.name || '').toLowerCase()
+            const bn = (b?.name || '').toLowerCase()
+            if (an < bn) return -1
+            if (an > bn) return 1
+            return 0
+          })
+          sorted.forEach(s => {
+            const opt = document.createElement('option')
+            opt.value = String(s.id)
+            opt.textContent = s.name || s.id
+            dropdown.appendChild(opt)
+          })
+        }
+      } catch (e) {
+        console.warn('Could not populate saved sets dropdown from cloud:', e)
+      }
+    })()
     dropdown.addEventListener('change', (e) => {
       const val = e.target.value
       // If no set selected, do nothing
@@ -585,11 +637,11 @@ function initSavedStateFeature() {
   }
   const saveModalConfirm = document.getElementById('saveSetConfirmBtn')
   if (saveModalConfirm) {
-    saveModalConfirm.addEventListener('click', () => {
-      saveNewSet()
-    })
+    saveModalConfirm.onclick = () => {
+      saveNewSet() // This will handle saving in background and show toast
+    }
   }
-  // Hook up download confirmation modal buttons (download all)
+  // Hook up download confirmation modal buttons
   const dlCancel = document.getElementById('downloadConfirmCancelBtn')
   if (dlCancel) {
     dlCancel.addEventListener('click', () => {
@@ -600,28 +652,6 @@ function initSavedStateFeature() {
   if (dlConfirm) {
     dlConfirm.addEventListener('click', () => {
       confirmDownloadAll()
-    })
-  }
-
-  // Hook up single stem download modal buttons
-  const dlStemCancel = document.getElementById('downloadStemCancelBtn')
-  if (dlStemCancel) {
-    dlStemCancel.addEventListener('click', () => {
-      closeDownloadStemModal()
-    })
-  }
-  const dlStemConfirm = document.getElementById('downloadStemConfirmBtn')
-  if (dlStemConfirm) {
-    dlStemConfirm.addEventListener('click', () => {
-      confirmDownloadStem()
-    })
-  }
-
-  // Close modals when clicking overlay
-  const dlStemOverlay = document.getElementById('downloadStemOverlay')
-  if (dlStemOverlay) {
-    dlStemOverlay.addEventListener('click', () => {
-      closeDownloadStemModal()
     })
   }
 }
@@ -1095,8 +1125,8 @@ const waveformEditState = {
   prevStartOffset: 0
 }
 
-let loopStartTime  = 0
-let loopDuration   = 0
+let loopStartTime = 0
+let loopDuration = 0
 let transportTicker = null
 
 function transportTick() {
@@ -1304,8 +1334,8 @@ function drawWaveform(canvas, audioBuffer, color) {
   ctx.beginPath()
   for (let x = 0; x < width; x++) {
     let min = 1, max = -1
-    for (let j = 0; j < step && (x*step + j) < data.length; j++) {
-      const v = data[x*step + j]
+    for (let j = 0; j < step && (x * step + j) < data.length; j++) {
+      const v = data[x * step + j]
       if (v < min) min = v
       if (v > max) max = v
     }
@@ -1377,14 +1407,14 @@ const stemConfigs = {
     color: 'red',
     basePrompt: 'deep techno kick drum',
     controls: {
-      punch:   { type: 'knob', min: 0, max: 100, default: 70, unit: '%', label: 'Punch' },
-      attack:  { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Attack' },
-      decay:   { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
-      body:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Body' },
-      tone:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      punch: { type: 'knob', min: 0, max: 100, default: 70, unit: '%', label: 'Punch' },
+      attack: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Attack' },
+      decay: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
+      body: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Body' },
+      tone: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
       distortion: { type: 'toggle', default: false, label: 'Distortion' },
-      rumble:     { type: 'toggle', default: false, label: 'Rumble' },
-      volume:  { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      rumble: { type: 'toggle', default: false, label: 'Rumble' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   perc: {
@@ -1394,12 +1424,12 @@ const stemConfigs = {
     controls: {
       intensity: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Intensity' },
       variation: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Variation' },
-      snap:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Snap' },
-      decay:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Decay' },
-      tone:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      snap: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Snap' },
+      decay: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Decay' },
+      tone: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
       metallic: { type: 'toggle', default: false, label: 'Metallic' },
-      reverb:   { type: 'toggle', default: false, label: 'Reverb' },
-      volume:   { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      reverb: { type: 'toggle', default: false, label: 'Reverb' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   bass: {
@@ -1407,14 +1437,14 @@ const stemConfigs = {
     color: 'yellow',
     basePrompt: 'dark techno bassline',
     controls: {
-      depth:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Depth' },
-      movement:  { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Movement' },
-      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
-      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      sub:       { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Sub' },
-      filter:    { type: 'toggle', default: true, label: 'Filter Sweep' },
-      distortion:{ type: 'toggle', default: false, label: 'Distortion' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      depth: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Depth' },
+      movement: { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Movement' },
+      attack: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
+      tone: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      sub: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Sub' },
+      filter: { type: 'toggle', default: true, label: 'Filter Sweep' },
+      distortion: { type: 'toggle', default: false, label: 'Distortion' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   lead: {
@@ -1422,14 +1452,14 @@ const stemConfigs = {
     color: 'green',
     basePrompt: 'hypnotic techno lead synth',
     controls: {
-      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
-      complexity:{ type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Complexity' },
-      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
-      attack:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
-      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
-      delay:     { type: 'toggle', default: false, label: 'Delay' },
-      chorus:    { type: 'toggle', default: false, label: 'Chorus' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      brightness: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
+      complexity: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Complexity' },
+      motion: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
+      attack: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Attack' },
+      range: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
+      delay: { type: 'toggle', default: false, label: 'Delay' },
+      chorus: { type: 'toggle', default: false, label: 'Chorus' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   hihat: {
@@ -1438,13 +1468,13 @@ const stemConfigs = {
     basePrompt: 'crisp techno closed hi-hat',
     controls: {
       brightness: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Brightness' },
-      pattern:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Pattern' },
-      decay:      { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
-      texture:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
-      shuffle:    { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Shuffle' },
-      reverb:     { type: 'toggle', default: false, label: 'Reverb' },
-      chorus:     { type: 'toggle', default: false, label: 'Chorus' },
-      volume:     { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      pattern: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Pattern' },
+      decay: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Decay' },
+      texture: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      shuffle: { type: 'knob', min: 0, max: 100, default: 40, unit: '%', label: 'Shuffle' },
+      reverb: { type: 'toggle', default: false, label: 'Reverb' },
+      chorus: { type: 'toggle', default: false, label: 'Chorus' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   pad: {
@@ -1452,14 +1482,14 @@ const stemConfigs = {
     color: 'purple',
     basePrompt: 'ambient techno pad',
     controls: {
-      warmth:    { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Warmth' },
+      warmth: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Warmth' },
       evolution: { type: 'knob', min: 0, max: 100, default: 30, unit: '%', label: 'Evolution' },
-      brightness:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
-      motion:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
-      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
-      chorus:    { type: 'toggle', default: true, label: 'Chorus' },
-      reverb:    { type: 'toggle', default: false, label: 'Reverb' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      brightness: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Brightness' },
+      motion: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Motion' },
+      texture: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      chorus: { type: 'toggle', default: true, label: 'Chorus' },
+      reverb: { type: 'toggle', default: false, label: 'Reverb' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   arp: {
@@ -1467,14 +1497,14 @@ const stemConfigs = {
     color: 'blue',
     basePrompt: 'techno synthesizer arpeggio',
     controls: {
-      rate:      { type: 'knob', min: 0, max: 100, default: 55, unit: '%', label: 'Rate' },
-      complexity:{ type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Complexity' },
-      range:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
-      swing:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Swing' },
-      tone:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      gate:      { type: 'toggle', default: false, label: 'Long Gate' },
-      delay:     { type: 'toggle', default: false, label: 'Delay' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      rate: { type: 'knob', min: 0, max: 100, default: 55, unit: '%', label: 'Rate' },
+      complexity: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Complexity' },
+      range: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Range' },
+      swing: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Swing' },
+      tone: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      gate: { type: 'toggle', default: false, label: 'Long Gate' },
+      delay: { type: 'toggle', default: false, label: 'Delay' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   fx: {
@@ -1483,13 +1513,13 @@ const stemConfigs = {
     basePrompt: 'techno transition effects and atmos',
     controls: {
       intensity: { type: 'knob', min: 0, max: 100, default: 65, unit: '%', label: 'Intensity' },
-      movement:  { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Movement' },
-      texture:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
-      sweep:     { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Sweep' },
-      filter:    { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Filter' },
-      reverb:    { type: 'toggle', default: true, label: 'Reverb' },
-      delay:     { type: 'toggle', default: false, label: 'Delay' },
-      volume:    { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      movement: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Movement' },
+      texture: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Texture' },
+      sweep: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Sweep' },
+      filter: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Filter' },
+      reverb: { type: 'toggle', default: true, label: 'Reverb' },
+      delay: { type: 'toggle', default: false, label: 'Delay' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
   perc2: {
@@ -1497,19 +1527,19 @@ const stemConfigs = {
     color: 'orange',
     basePrompt: 'techno top percussion loop',
     controls: {
-      density:     { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Density' },
-      groove:      { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Groove' },
-      variation:   { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Variation' },
-      tone:        { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
-      syncopation:{ type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Syncopation' },
-      metallic:    { type: 'toggle', default: false, label: 'Metallic' },
-      reverb:      { type: 'toggle', default: false, label: 'Reverb' },
-      volume:      { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
+      density: { type: 'knob', min: 0, max: 100, default: 60, unit: '%', label: 'Density' },
+      groove: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Groove' },
+      variation: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Variation' },
+      tone: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Tone' },
+      syncopation: { type: 'knob', min: 0, max: 100, default: 50, unit: '%', label: 'Syncopation' },
+      metallic: { type: 'toggle', default: false, label: 'Metallic' },
+      reverb: { type: 'toggle', default: false, label: 'Reverb' },
+      volume: { type: 'knob', min: 0, max: 100, default: 80, unit: '%', label: 'Volume' },
     },
   },
 }
 // Fixed hotkey order (1–9)
-const STEM_ORDER = ['kick','perc','bass','lead','hihat','pad','arp','fx','perc2']
+const STEM_ORDER = ['kick', 'perc', 'bass', 'lead', 'hihat', 'pad', 'arp', 'fx', 'perc2']
 
 /* =========================================================
    Prompt scaffold (unchanged)
@@ -1558,7 +1588,7 @@ function scaleKnob(v, a, b, c, d, e) {
 
 /* ---------- Builders (hihat/snare strict + others) ---------- */
 // (Builders unchanged; omitted for brevity in comments — logic preserved)
-function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before ... */ 
+function buildHihatPrompt(controls, master, strictness = 0) { /* ... same as before ... */
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
   const brightness = scaleKnob(controls.brightness, 'dark', 'balanced', 'crisp', 'bright', 'very bright')
@@ -1590,18 +1620,18 @@ function buildHihatPrompt(controls, master, strictness=0){ /* ... same as before
   )
   return common.join(' ')
 }
-function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before ... */
+function buildSnarePrompt(controls, master, strictness = 0) { /* ... same as before ... */
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
   const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
   const playbackLabel = playbackBars === 1 ? 'first bar' : `first ${playbackBars} bars`
-  const varTxt     = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
-  const intensity  = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
-  const snap       = scaleKnob(controls.snap, 'soft', 'medium‑soft', 'balanced', 'sharp', 'cracking')
-  const tail       = scaleKnob(controls.decay, 'very short', 'short', 'medium', 'long', 'very long')
-  const toneDesc   = scaleKnob(controls.tone, 'thin', 'dry', 'balanced', 'full', 'deep')
-  const timbreTxt  = controls.metallic ? 'Timbre: slightly metallic; tight transient.' : 'Timbre: organic and dry.'
-  const space      = controls.reverb ? 'Space: tiny room; decay < 150 ms; gate tails before seam.' : 'Space: dry; short decay; no tail.'
+  const varTxt = scaleKnob(controls.variation, 'no variation', 'very subtle variation', 'subtle variation', 'light variation', 'moderate variation')
+  const intensity = scaleKnob(controls.intensity, 'low', 'moderate', 'medium', 'strong', 'very strong')
+  const snap = scaleKnob(controls.snap, 'soft', 'medium‑soft', 'balanced', 'sharp', 'cracking')
+  const tail = scaleKnob(controls.decay, 'very short', 'short', 'medium', 'long', 'very long')
+  const toneDesc = scaleKnob(controls.tone, 'thin', 'dry', 'balanced', 'full', 'deep')
+  const timbreTxt = controls.metallic ? 'Timbre: slightly metallic; tight transient.' : 'Timbre: organic and dry.'
+  const space = controls.reverb ? 'Space: tiny room; decay < 150 ms; gate tails before seam.' : 'Space: dry; short decay; no tail.'
   const common = [
     'STEM: SNARE — solo snare only.',
     'Identity: industrial techno snare; drum‑machine style; no clap.',
@@ -1622,19 +1652,19 @@ function buildSnarePrompt(controls, master, strictness=0){ /* ... same as before
   else if (strictness >= 2) common.push('MUST: exactly one snare on beat 2 and one on beat 4 per bar, nothing else.', 'MUST: gate decay fully before the seam; exclude clap/rim layers.')
   return common.join(' ')
 }
-function mapArpRate(v){ const x=Number(v??55); return x<=33?'1/8 notes': x<=66?'1/16 notes':'1/32 notes' }
-function buildArpPrompt(controls, master){ /* ... same as before ... */
+function mapArpRate(v) { const x = Number(v ?? 55); return x <= 33 ? '1/8 notes' : x <= 66 ? '1/16 notes' : '1/32 notes' }
+function buildArpPrompt(controls, master) { /* ... same as before ... */
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
   const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
   const playbackNote = playbackBars === 1 ? 'first bar' : `first ${playbackBars} bars`
-  const rate       = mapArpRate(controls.rate)
+  const rate = mapArpRate(controls.rate)
   const complexity = scaleKnob(controls.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')
-  const rangeDesc  = scaleKnob(controls.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')
-  const swingDesc  = scaleKnob(controls.swing, 'straight', 'slight swing', 'moderate swing', 'pronounced swing', 'syncopated')
-  const toneDesc   = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'sparkling')
-  const gate       = controls.gate ? 'long‑ish gate (80–160 ms)' : 'short gate (30–80 ms)'
-  const delay      = controls.delay ? 'Delay: subtle tempo‑synced echoes; cut at bar end.' : 'Delay: off.'
+  const rangeDesc = scaleKnob(controls.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')
+  const swingDesc = scaleKnob(controls.swing, 'straight', 'slight swing', 'moderate swing', 'pronounced swing', 'syncopated')
+  const toneDesc = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'sparkling')
+  const gate = controls.gate ? 'long‑ish gate (80–160 ms)' : 'short gate (30–80 ms)'
+  const delay = controls.delay ? 'Delay: subtle tempo‑synced echoes; cut at bar end.' : 'Delay: off.'
   return [
     'STEM: ARPEGGIATOR — solo synth arpeggio only.',
     `Identity: ${stemConfigs.arp.basePrompt}.`,
@@ -1650,16 +1680,16 @@ function buildArpPrompt(controls, master){ /* ... same as before ... */
     'Deliver a bar‑perfect seamless loop aligned to bar boundaries; keep the first playback chunk identical each repeat.'
   ].join(' ')
 }
-function buildFXPrompt(controls, master){ /* ... same as before ... */ 
+function buildFXPrompt(controls, master) { /* ... same as before ... */
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const intensity   = scaleKnob(controls.intensity, 'subtle', 'moderate', 'medium', 'strong', 'intense')
-  const movement    = scaleKnob(controls.movement, 'static', 'gentle motion', 'evolving', 'animated', 'dynamic')
+  const intensity = scaleKnob(controls.intensity, 'subtle', 'moderate', 'medium', 'strong', 'intense')
+  const movement = scaleKnob(controls.movement, 'static', 'gentle motion', 'evolving', 'animated', 'dynamic')
   const textureDesc = scaleKnob(controls.texture, 'smooth', 'grainy', 'noisy', 'metallic', 'chaotic')
-  const sweepDesc   = scaleKnob(controls.sweep, 'short sweep', 'moderate sweep', 'long sweep', 'full‑bar sweep', 'multi‑bar sweep')
-  const filterDesc  = scaleKnob(controls.filter, 'low emphasis', 'mid emphasis', 'balanced', 'high emphasis', 'resonant high‑pass')
-  const space       = controls.reverb ? 'Space: tiny room; decay ≤ 150 ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
-  const delayTxt    = controls.delay ? 'Delay: subtle echo; decay under bar.' : 'Delay: off.'
+  const sweepDesc = scaleKnob(controls.sweep, 'short sweep', 'moderate sweep', 'long sweep', 'full‑bar sweep', 'multi‑bar sweep')
+  const filterDesc = scaleKnob(controls.filter, 'low emphasis', 'mid emphasis', 'balanced', 'high emphasis', 'resonant high‑pass')
+  const space = controls.reverb ? 'Space: tiny room; decay ≤ 150 ms; gate before bar end.' : 'Space: dry/minimal; gate before bar end.'
+  const delayTxt = controls.delay ? 'Delay: subtle echo; decay under bar.' : 'Delay: off.'
   return [
     'STEM: FX — solo techno transition effects & atmos only.',
     `Identity: ${stemConfigs.fx.basePrompt}.`,
@@ -1672,16 +1702,16 @@ function buildFXPrompt(controls, master){ /* ... same as before ... */
     'Deliver a bar‑perfect seamless loop; zero tail beyond the bar.'
   ].join(' ')
 }
-function buildPercLoopPrompt(controls, master){ /* ... same as before ... */ 
+function buildPercLoopPrompt(controls, master) { /* ... same as before ... */
   const { tempo, bars, root, mode } = master
   const g = globalScaffold({ tempo, bars, root, mode })
-  const density     = scaleKnob(controls.density, 'sparse', 'light', 'medium', 'busy', 'dense')
-  const groove      = scaleKnob(controls.groove, 'straight', 'straight with mild syncopation', 'syncopated but quantized', 'complex yet quantized', 'complex yet quantized')
-  const variation   = scaleKnob(controls.variation, 'repetitive', 'subtle', 'moderate', 'intricate', 'wild')
-  const toneDesc    = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'metallic')
-  const syncDesc    = scaleKnob(controls.syncopation, 'straight', 'mild', 'groovy', 'complex', 'polyrhythmic')
-  const metallic    = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
-  const space       = controls.reverb ? 'Space: tiny room; gate before seam.' : 'Space: dry; no reverb.'
+  const density = scaleKnob(controls.density, 'sparse', 'light', 'medium', 'busy', 'dense')
+  const groove = scaleKnob(controls.groove, 'straight', 'straight with mild syncopation', 'syncopated but quantized', 'complex yet quantized', 'complex yet quantized')
+  const variation = scaleKnob(controls.variation, 'repetitive', 'subtle', 'moderate', 'intricate', 'wild')
+  const toneDesc = scaleKnob(controls.tone, 'dark', 'warm', 'balanced', 'bright', 'metallic')
+  const syncDesc = scaleKnob(controls.syncopation, 'straight', 'mild', 'groovy', 'complex', 'polyrhythmic')
+  const metallic = controls.metallic ? 'slightly metallic timbre allowed' : 'organic timbre preferred'
+  const space = controls.reverb ? 'Space: tiny room; gate before seam.' : 'Space: dry; no reverb.'
   return [
     'STEM: PERCUSSION — solo top percussion only (shakers/blocks/taps); not snare/hat/kick.',
     `Identity: ${stemConfigs.perc2.basePrompt}.`,
@@ -1697,7 +1727,7 @@ function buildPercLoopPrompt(controls, master){ /* ... same as before ... */
     'Deliver a bar‑perfect seamless loop aligned to bar boundaries.'
   ].join(' ')
 }
-function roleDirectives(st, c){ /* ... same as before ... */
+function roleDirectives(st, c) { /* ... same as before ... */
   const playbackBars = getPlaybackBars(stemControlValues?.master?.bars ?? DEFAULT_BARS, DEFAULT_BARS)
   const playbackLabel = playbackBars === 1 ? 'the first bar' : `the first ${playbackBars} bars`
   switch (st) {
@@ -1706,11 +1736,11 @@ function roleDirectives(st, c){ /* ... same as before ... */
       'Pattern: four-on-the-floor; hits on beats 1–4 every bar',
       'Pitch: unpitched; no tonal sub note; no toms',
       // Envelope and tone descriptors
-      `Attack: ${scaleKnob(c.attack, 'slow','soft','balanced','sharp','instant')}`,
-      `Decay: ${scaleKnob(c.decay, 'very short','short','medium','long','very long')}`,
-      `Punch: ${scaleKnob(c.punch, 'soft','firm','punchy','very punchy','aggressive')}`,
-      `Body: ${scaleKnob(c.body, 'thin','firm','full','thick','boomy')}`,
-      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','very bright')}`,
+      `Attack: ${scaleKnob(c.attack, 'slow', 'soft', 'balanced', 'sharp', 'instant')}`,
+      `Decay: ${scaleKnob(c.decay, 'very short', 'short', 'medium', 'long', 'very long')}`,
+      `Punch: ${scaleKnob(c.punch, 'soft', 'firm', 'punchy', 'very punchy', 'aggressive')}`,
+      `Body: ${scaleKnob(c.body, 'thin', 'firm', 'full', 'thick', 'boomy')}`,
+      `Tone: ${scaleKnob(c.tone, 'dark', 'warm', 'balanced', 'bright', 'very bright')}`,
       // Toggle descriptors
       c.distortion ? 'Distortion: moderate saturation; no excessive clipping' : 'Distortion: none; clean transient',
       c.rumble ? 'Rumble: deep sub tail under 50 Hz; subtle' : 'Rumble: none',
@@ -1720,11 +1750,11 @@ function roleDirectives(st, c){ /* ... same as before ... */
       'ROLE: single isolated bass only',
       'Harmony: strictly diatonic in project key (no chromatic notes)',
       'Pitch: root + fifth primarily; occasional octave',
-      `Movement: ${scaleKnob(c.movement, 'static','simple','groovy','animated','busy')} repeating per bar`,
-      `Depth: ${scaleKnob(c.depth, 'light','medium','deep','deeper','subby')} low‑end; controlled release`,
-      `Attack: ${scaleKnob(c.attack, 'soft','moderate','distinct','sharp','percussive')}`,
-      `Tone: ${scaleKnob(c.tone, 'dark','warm','balanced','bright','acidic')}`,
-      `Sub: ${scaleKnob(c.sub, 'minimal','moderate','full','deep','subsonic')} content`,
+      `Movement: ${scaleKnob(c.movement, 'static', 'simple', 'groovy', 'animated', 'busy')} repeating per bar`,
+      `Depth: ${scaleKnob(c.depth, 'light', 'medium', 'deep', 'deeper', 'subby')} low‑end; controlled release`,
+      `Attack: ${scaleKnob(c.attack, 'soft', 'moderate', 'distinct', 'sharp', 'percussive')}`,
+      `Tone: ${scaleKnob(c.tone, 'dark', 'warm', 'balanced', 'bright', 'acidic')}`,
+      `Sub: ${scaleKnob(c.sub, 'minimal', 'moderate', 'full', 'deep', 'subsonic')} content`,
       c.filter ? 'Filter: subtle motion within bar; reset each bar' : 'Filter: stable',
       c.distortion ? 'Distortion: mild analog saturation; no heavy clipping' : 'Distortion: none',
       'Start note on beat 1; no slides across seam'
@@ -1734,11 +1764,11 @@ function roleDirectives(st, c){ /* ... same as before ... */
       'Melody: strictly diatonic; avoid chromatic passing tones',
       `Phrase length evenly divides ${Math.max(1, stemControlValues?.master?.bars || DEFAULT_BARS)} bar(s)`,
       `LoopFocus: ${playbackLabel} is what users hear — attack must start at sample 0 (bar 1 beat 1) and resolve before the seam.`,
-      `Complexity: ${scaleKnob(c.complexity, 'simple','moderate','interesting','intricate','ornate')} (quantized)`,
-      `Brightness: ${scaleKnob(c.brightness, 'dark','mellow','balanced','bright','very bright')}`,
-      `Motion: ${scaleKnob(c.motion, 'static','gentle','flowing','evolving','chaotic')}`,
-      `Attack: ${scaleKnob(c.attack, 'soft','moderate','plucky','sharp','percussive')}`,
-      `Range: ${scaleKnob(c.range, 'narrow','one octave','two octaves','three octaves','wide')}`,
+      `Complexity: ${scaleKnob(c.complexity, 'simple', 'moderate', 'interesting', 'intricate', 'ornate')} (quantized)`,
+      `Brightness: ${scaleKnob(c.brightness, 'dark', 'mellow', 'balanced', 'bright', 'very bright')}`,
+      `Motion: ${scaleKnob(c.motion, 'static', 'gentle', 'flowing', 'evolving', 'chaotic')}`,
+      `Attack: ${scaleKnob(c.attack, 'soft', 'moderate', 'plucky', 'sharp', 'percussive')}`,
+      `Range: ${scaleKnob(c.range, 'narrow', 'one octave', 'two octaves', 'three octaves', 'wide')}`,
       c.delay ? 'Delay: minimal tempo‑synced; cut at bar end' : 'Delay: off',
       c.chorus ? 'Chorus: subtle stereo spread; no detune at seam' : 'Chorus: off',
       'No bends/slides across loop seam'
@@ -1746,11 +1776,11 @@ function roleDirectives(st, c){ /* ... same as before ... */
     case 'pad': return [
       'ROLE: single isolated pad only',
       'Chord: sustained diatonic chord(s); no modulation',
-      `Evolution: ${scaleKnob(c.evolution, 'static','gentle','subtle motion','evolving','animated')} but reset every bar`,
-      `Warmth: ${scaleKnob(c.warmth, 'cool','neutral','warm','lush','very lush')}`,
-      `Brightness: ${scaleKnob(c.brightness, 'dark','warm','balanced','bright','shimmering')}`,
-      `Motion: ${scaleKnob(c.motion, 'static','gentle','animated','evolving','shifting')}`,
-      `Texture: ${scaleKnob(c.texture, 'smooth','airy','lush','grainy','noisy')}`,
+      `Evolution: ${scaleKnob(c.evolution, 'static', 'gentle', 'subtle motion', 'evolving', 'animated')} but reset every bar`,
+      `Warmth: ${scaleKnob(c.warmth, 'cool', 'neutral', 'warm', 'lush', 'very lush')}`,
+      `Brightness: ${scaleKnob(c.brightness, 'dark', 'warm', 'balanced', 'bright', 'shimmering')}`,
+      `Motion: ${scaleKnob(c.motion, 'static', 'gentle', 'animated', 'evolving', 'shifting')}`,
+      `Texture: ${scaleKnob(c.texture, 'smooth', 'airy', 'lush', 'grainy', 'noisy')}`,
       c.chorus ? 'Chorus: subtle; no stereo smear at seam' : 'Chorus: off',
       c.reverb ? 'Reverb: soft ambient; decay under bar; gate at seam' : 'Reverb: off',
       'No long reverb tail; envelope ends before bar boundary'
@@ -1758,37 +1788,37 @@ function roleDirectives(st, c){ /* ... same as before ... */
     default: return 'ROLE: single isolated instrument only'
   }
 }
-function negatives(st){ /* ... same as before ... */ 
+function negatives(st) { /* ... same as before ... */
   const common = [
-    'no vocals or speech','no cymbal crash on the last beat','no count-in','no pre-roll',
-    'no silence at start','no tempo changes','no swing','no off-grid timing','no modulation or key change'
+    'no vocals or speech', 'no cymbal crash on the last beat', 'no count-in', 'no pre-roll',
+    'no silence at start', 'no tempo changes', 'no swing', 'no off-grid timing', 'no modulation or key change'
   ]
   const per = {
-    kick:['no toms','no pitch glides','no tonal sub drops','no reverb tail'],
-    hihat:['no open hats','no ride','no shaker','no clap','no snare','no pitch sweeps','no reverb tail'],
-    perc:['no clap','no rimshot','no hi-hat','no kick','no toms','no melodic percussion','no reverb tail'],
-    bass:['no chords','no distortion tail','no slides across seam'],
-    lead:['no atonal notes','no portamento across seam','no long delay tail'],
-    pad:['no huge reverb','no side instruments','no arpeggios','no tail at seam'],
-    arp:['no drums','no percussion','no bass','no pads','no leads','no vocals','no FX'],
-    fx:['no drums or percussion','no pitched melodies','no vocals','no tails across seam'],
-    perc2:['no kick','no snare','no clap','no hi-hat','no ride','no toms','no tonal hits','no tail across seam']
+    kick: ['no toms', 'no pitch glides', 'no tonal sub drops', 'no reverb tail'],
+    hihat: ['no open hats', 'no ride', 'no shaker', 'no clap', 'no snare', 'no pitch sweeps', 'no reverb tail'],
+    perc: ['no clap', 'no rimshot', 'no hi-hat', 'no kick', 'no toms', 'no melodic percussion', 'no reverb tail'],
+    bass: ['no chords', 'no distortion tail', 'no slides across seam'],
+    lead: ['no atonal notes', 'no portamento across seam', 'no long delay tail'],
+    pad: ['no huge reverb', 'no side instruments', 'no arpeggios', 'no tail at seam'],
+    arp: ['no drums', 'no percussion', 'no bass', 'no pads', 'no leads', 'no vocals', 'no FX'],
+    fx: ['no drums or percussion', 'no pitched melodies', 'no vocals', 'no tails across seam'],
+    perc2: ['no kick', 'no snare', 'no clap', 'no hi-hat', 'no ride', 'no toms', 'no tonal hits', 'no tail across seam']
   }
   return [...common, ...(per[st] || [])].join('; ')
 }
-function buildStemPrompt(st, strictness=0){
+function buildStemPrompt(st, strictness = 0) {
   const controls = stemControlValues[st] || {}
   const master = getMasterForPrompt()
   if (st === 'hihat') return buildHihatPrompt(controls, master, strictness)
-  if (st === 'perc')  return buildSnarePrompt(controls, master, strictness)
-  if (st === 'arp')   return buildArpPrompt(controls, master)
-  if (st === 'fx')    return buildFXPrompt(controls, master)
+  if (st === 'perc') return buildSnarePrompt(controls, master, strictness)
+  if (st === 'arp') return buildArpPrompt(controls, master)
+  if (st === 'fx') return buildFXPrompt(controls, master)
   if (st === 'perc2') return buildPercLoopPrompt(controls, master)
   const cfg = stemConfigs[st]
   const stemBase = cfg?.basePrompt || 'single instrument'
-  const global   = globalScaffold(master)
-  const role     = roleDirectives(st, controls)
-  const negs     = negatives(st)
+  const global = globalScaffold(master)
+  const role = roleDirectives(st, controls)
+  const negs = negatives(st)
   return [
     `STEM: ${st.toUpperCase()} — solo ${stemBase}.`,
     global,
@@ -1808,40 +1838,40 @@ async function ensureAudioContext() {
     masterGain.gain.setValueAtTime(0.9, audioContext.currentTime)
     masterGain.connect(audioContext.destination)
 
-      // On iOS 17+ devices, the Audio Session API allows web apps to specify
-      // the intended audio behaviour.  When the phone's ringer switch is set
-      // to silent, web audio is muted unless the session type is set to
-      // "playback"【76389239852111†L94-L98】.  Attempting to set
-      // navigator.audioSession.type informs the browser that audio is
-      // essential and should ignore the silent switch.  Wrap in try/catch
-      // because this API is only available in some Safari versions.
-      try {
-        if (navigator?.audioSession && navigator.audioSession.type !== 'playback') {
-          navigator.audioSession.type = 'playback'
-        }
-      } catch (err) {
-        console.warn('Failed to set navigator.audioSession.type:', err)
+    // On iOS 17+ devices, the Audio Session API allows web apps to specify
+    // the intended audio behaviour.  When the phone's ringer switch is set
+    // to silent, web audio is muted unless the session type is set to
+    // "playback"【76389239852111†L94-L98】.  Attempting to set
+    // navigator.audioSession.type informs the browser that audio is
+    // essential and should ignore the silent switch.  Wrap in try/catch
+    // because this API is only available in some Safari versions.
+    try {
+      if (navigator?.audioSession && navigator.audioSession.type !== 'playback') {
+        navigator.audioSession.type = 'playback'
       }
+    } catch (err) {
+      console.warn('Failed to set navigator.audioSession.type:', err)
+    }
 
-      // ----------------------------------------------------------------------
-      // Fallback for devices/browsers where navigator.audioSession is
-      // unavailable (pre‑iOS 17 and some Android browsers).  On these
-      // platforms, web audio will be muted if the hardware ringer switch is
-      // set to silent.  To unmute web audio, we play a very short silent
-      // MP3 via a temporary <audio> element and also trigger a one‑sample
-      // buffer through a secondary AudioContext.  This pattern is based on
-      // community recommendations and WaveSurfer’s ignoreSilenceMode
-      // implementation and ensures that the browser promotes the audio
-      // session to media playback【76389239852111†L94-L98】.  Because the
-      // silent track is inaudible and removed immediately after playback
-      // begins, it does not disturb the user.  We only execute this once
-      // and only when navigator.audioSession is not present.
-      try {
-        if (!navigator?.audioSession) {
-          // Define a no‑op flag to prevent multiple invocations.
-          if (!window.__sg_ignore_silent_mode_ran__) {
-            window.__sg_ignore_silent_mode_ran__ = true
-            ;(function playSilent() {
+    // ----------------------------------------------------------------------
+    // Fallback for devices/browsers where navigator.audioSession is
+    // unavailable (pre‑iOS 17 and some Android browsers).  On these
+    // platforms, web audio will be muted if the hardware ringer switch is
+    // set to silent.  To unmute web audio, we play a very short silent
+    // MP3 via a temporary <audio> element and also trigger a one‑sample
+    // buffer through a secondary AudioContext.  This pattern is based on
+    // community recommendations and WaveSurfer’s ignoreSilenceMode
+    // implementation and ensures that the browser promotes the audio
+    // session to media playback【76389239852111†L94-L98】.  Because the
+    // silent track is inaudible and removed immediately after playback
+    // begins, it does not disturb the user.  We only execute this once
+    // and only when navigator.audioSession is not present.
+    try {
+      if (!navigator?.audioSession) {
+        // Define a no‑op flag to prevent multiple invocations.
+        if (!window.__sg_ignore_silent_mode_ran__) {
+          window.__sg_ignore_silent_mode_ran__ = true
+            ; (function playSilent() {
               try {
                 // 1. Create a throwaway AudioContext and play a single sample
                 const ac2 = new (window.AudioContext || window.webkitAudioContext)()
@@ -1862,7 +1892,7 @@ async function ensureAudioContext() {
                 // Load and play the silent audio; catch errors silently
                 const playPromise = audio.play()
                 if (playPromise && playPromise.catch) {
-                  playPromise.catch(() => {})
+                  playPromise.catch(() => { })
                 }
                 // Remove the element after a brief delay
                 setTimeout(() => {
@@ -1872,9 +1902,9 @@ async function ensureAudioContext() {
                 console.warn('silent mode fallback failed', inner)
               }
             })()
-          }
         }
-      } catch (ignored) {}
+      }
+    } catch (ignored) { }
 
     // Handle platform interruptions such as phone calls.  On some
     // mobile browsers (e.g. iOS Safari) receiving a call causes the
@@ -1921,12 +1951,12 @@ async function ensureAudioContext() {
   if (audioContext.state !== 'running') await audioContext.resume()
 }
 function createEqNodes() {
-  const low  = audioContext.createBiquadFilter()
+  const low = audioContext.createBiquadFilter()
   low.type = 'lowshelf'
   low.frequency.setValueAtTime(EQ_LOW_FREQ, audioContext.currentTime)
   low.gain.setValueAtTime(0, audioContext.currentTime)
 
-  const mid  = audioContext.createBiquadFilter()
+  const mid = audioContext.createBiquadFilter()
   mid.type = 'peaking'
   mid.frequency.setValueAtTime(EQ_MID_FREQ, audioContext.currentTime)
   mid.Q.setValueAtTime(EQ_MID_Q, audioContext.currentTime)
@@ -1940,13 +1970,13 @@ function createEqNodes() {
   return { low, mid, high }
 }
 function knobToFreq(val) {
-  const v = Math.max(0, Math.min(100, Number(val)||0))
+  const v = Math.max(0, Math.min(100, Number(val) || 0))
   const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
-  const lnF = lnMin + (v/100) * (lnMax - lnMin)
+  const lnF = lnMin + (v / 100) * (lnMax - lnMin)
   return Math.exp(lnF)
 }
 function freqToKnob(freq) {
-  const f = Math.max(FILTER_MIN_HZ, Math.min(FILTER_MAX_HZ, Number(freq)||FILTER_DEFAULT_HZ))
+  const f = Math.max(FILTER_MIN_HZ, Math.min(FILTER_MAX_HZ, Number(freq) || FILTER_DEFAULT_HZ))
   const lnMin = Math.log(FILTER_MIN_HZ), lnMax = Math.log(FILTER_MAX_HZ)
   const lnF = Math.log(f)
   return Math.round(((lnF - lnMin) / (lnMax - lnMin)) * 100)
@@ -1997,66 +2027,66 @@ function createStemNodes(st, loopBuffer) {
    Loop math + seam tools
    ========================================================= */
 // (unchanged helpers)
-function clampTempo(t){ const x=Math.round(Number(t)||DEFAULT_TEMPO); return Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, x)) }
-function computeTargetFrames(sr, bpm, bars){ const beats=bars*4; const seconds=beats*(60/bpm); return Math.round(seconds*sr) }
-function removeDcOffset(buffer){ const ch=buffer.numberOfChannels; for(let c=0;c<ch;c++){ const d=buffer.getChannelData(c); let sum=0; for(let i=0;i<d.length;i++) sum+=d[i]; const mean=sum/d.length; if(Math.abs(mean)>1e-6){ for(let i=0;i<d.length;i++) d[i]-=mean } } }
-function nearestZeroCrossing(data, around, radius){ const n=data.length; let best=around,bestVal=Math.abs(data[around]||0); const a=Math.max(0,around-radius), b=Math.min(n-1,around+radius); for(let i=a;i<=b;i++){ const v=Math.abs(data[i]); if(v<bestVal){ bestVal=v; best=i } } return best }
-function detectHeadIndex(buffer){ const sr=buffer.sampleRate; const maxMs=1000; const maxN=Math.min(buffer.length, Math.round((maxMs/1000)*sr)); if(maxN<=0) return 0; const x=buffer.getChannelData(0); const env=new Float32Array(maxN); for(let i=0;i<maxN;i++) env[i]=Math.abs(x[i]); const win=Math.max(2, Math.round((8/1000)*sr)); let acc=0; for(let i=0;i<win && i<env.length;i++) acc+=env[i]; const sm=new Float32Array(maxN); for(let i=0;i<maxN;i++){ if(i>=win) acc+=env[i]-env[i-win]; sm[i]=acc/Math.min(win,i+1) } let peak=0; for(let i=0;i<maxN;i++) if(sm[i]>peak) peak=sm[i]; const th=Math.max(Math.pow(10,-45/20), peak*0.12); const backOff=Math.round(0.0035*sr); for(let i=0;i<maxN;i++) if(sm[i]>=th){ const z=nearestZeroCrossing(x, Math.max(0,i-backOff), ZERO_FALLBACK_SAMPLES); return Math.max(0,z) } return 0 }
-function applySeamCrossfade(buffer, xfadeMs=LOOP_XFADE_MS){
-  if(!buffer) return
+function clampTempo(t) { const x = Math.round(Number(t) || DEFAULT_TEMPO); return Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, x)) }
+function computeTargetFrames(sr, bpm, bars) { const beats = bars * 4; const seconds = beats * (60 / bpm); return Math.round(seconds * sr) }
+function removeDcOffset(buffer) { const ch = buffer.numberOfChannels; for (let c = 0; c < ch; c++) { const d = buffer.getChannelData(c); let sum = 0; for (let i = 0; i < d.length; i++) sum += d[i]; const mean = sum / d.length; if (Math.abs(mean) > 1e-6) { for (let i = 0; i < d.length; i++) d[i] -= mean } } }
+function nearestZeroCrossing(data, around, radius) { const n = data.length; let best = around, bestVal = Math.abs(data[around] || 0); const a = Math.max(0, around - radius), b = Math.min(n - 1, around + radius); for (let i = a; i <= b; i++) { const v = Math.abs(data[i]); if (v < bestVal) { bestVal = v; best = i } } return best }
+function detectHeadIndex(buffer) { const sr = buffer.sampleRate; const maxMs = 1000; const maxN = Math.min(buffer.length, Math.round((maxMs / 1000) * sr)); if (maxN <= 0) return 0; const x = buffer.getChannelData(0); const env = new Float32Array(maxN); for (let i = 0; i < maxN; i++) env[i] = Math.abs(x[i]); const win = Math.max(2, Math.round((8 / 1000) * sr)); let acc = 0; for (let i = 0; i < win && i < env.length; i++) acc += env[i]; const sm = new Float32Array(maxN); for (let i = 0; i < maxN; i++) { if (i >= win) acc += env[i] - env[i - win]; sm[i] = acc / Math.min(win, i + 1) } let peak = 0; for (let i = 0; i < maxN; i++) if (sm[i] > peak) peak = sm[i]; const th = Math.max(Math.pow(10, -45 / 20), peak * 0.12); const backOff = Math.round(0.0035 * sr); for (let i = 0; i < maxN; i++) if (sm[i] >= th) { const z = nearestZeroCrossing(x, Math.max(0, i - backOff), ZERO_FALLBACK_SAMPLES); return Math.max(0, z) } return 0 }
+function applySeamCrossfade(buffer, xfadeMs = LOOP_XFADE_MS) {
+  if (!buffer) return
   const sr = buffer.sampleRate || 44100
   const n = buffer.length || 0
-  if(n <= 2) return
-  const maxCross = Math.floor(n/2)
-  const xfadeN = Math.min(maxCross, Math.max(2, Math.round((xfadeMs/1000)*sr)))
-  if(xfadeN < 2) return
+  if (n <= 2) return
+  const maxCross = Math.floor(n / 2)
+  const xfadeN = Math.min(maxCross, Math.max(2, Math.round((xfadeMs / 1000) * sr)))
+  if (xfadeN < 2) return
   const fadeIn = new Float32Array(xfadeN)
   const fadeOut = new Float32Array(xfadeN)
-  for(let i=0;i<xfadeN;i++){
-    const t = i/(xfadeN-1)
-    const sinT = Math.sin(0.5*Math.PI*t)
-    const cosT = Math.cos(0.5*Math.PI*t)
-    fadeIn[i] = sinT*sinT
-    fadeOut[i] = cosT*cosT
+  for (let i = 0; i < xfadeN; i++) {
+    const t = i / (xfadeN - 1)
+    const sinT = Math.sin(0.5 * Math.PI * t)
+    const cosT = Math.cos(0.5 * Math.PI * t)
+    fadeIn[i] = sinT * sinT
+    fadeOut[i] = cosT * cosT
   }
-  for(let c=0;c<buffer.numberOfChannels;c++){
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
     const d = buffer.getChannelData(c)
     const blend = new Float32Array(xfadeN)
     const tailStart = n - xfadeN
-    for(let i=0;i<xfadeN;i++){
+    for (let i = 0; i < xfadeN; i++) {
       const headVal = d[i]
       const tailVal = d[tailStart + i]
       blend[i] = tailVal * fadeOut[i] + headVal * fadeIn[i]
     }
     d.set(blend, 0)
     d.set(blend, tailStart)
-    d[n-1] = d[0]
+    d[n - 1] = d[0]
   }
 }
-function applyEdgeRamps(buffer, rampMs=EDGE_RAMP_MS){
-  const sr=buffer.sampleRate, n=buffer.length
-  const ramp=Math.max(2, Math.round((rampMs/1000)*sr))
-  for(let c=0;c<buffer.numberOfChannels;c++){
-    const d=buffer.getChannelData(c)
-    for(let i=0;i<ramp && i<n;i++) d[i]*=Math.sin(0.5*Math.PI*(i/(ramp-1)))
-    for(let i=0;i<ramp && i<n;i++) d[n-1-i]*=Math.sin(0.5*Math.PI*(1-(i/(ramp-1))))
-  }
-}
-
-function smoothEnvelopeInPlace(arr, alpha=0.35){
-  if(!arr || arr.length===0) return
-  let prev=arr[0]
-  for(let i=0;i<arr.length;i++){
-    const current=arr[i]
-    prev = prev*(1-alpha) + current*alpha
-    arr[i]=prev
+function applyEdgeRamps(buffer, rampMs = EDGE_RAMP_MS) {
+  const sr = buffer.sampleRate, n = buffer.length
+  const ramp = Math.max(2, Math.round((rampMs / 1000) * sr))
+  for (let c = 0; c < buffer.numberOfChannels; c++) {
+    const d = buffer.getChannelData(c)
+    for (let i = 0; i < ramp && i < n; i++) d[i] *= Math.sin(0.5 * Math.PI * (i / (ramp - 1)))
+    for (let i = 0; i < ramp && i < n; i++) d[n - 1 - i] *= Math.sin(0.5 * Math.PI * (1 - (i / (ramp - 1))))
   }
 }
 
-function wrapSampleIndex(idx, length){
-  if(length<=0) return 0
-  let r=idx%length
-  if(r<0) r+=length
+function smoothEnvelopeInPlace(arr, alpha = 0.35) {
+  if (!arr || arr.length === 0) return
+  let prev = arr[0]
+  for (let i = 0; i < arr.length; i++) {
+    const current = arr[i]
+    prev = prev * (1 - alpha) + current * alpha
+    arr[i] = prev
+  }
+}
+
+function wrapSampleIndex(idx, length) {
+  if (length <= 0) return 0
+  let r = idx % length
+  if (r < 0) r += length
   return r
 }
 
@@ -2081,7 +2111,7 @@ function measureLocalPeak(data, totalLength, aroundIndex, windowSamples) {
   return Math.max(peak, 1e-5)
 }
 
-function snapHeadBackToSilence(data, totalLength, approxHead, opts={}) {
+function snapHeadBackToSilence(data, totalLength, approxHead, opts = {}) {
   if (!data || !data.length || totalLength <= 0) return wrapSampleIndex(Math.round(approxHead || 0), totalLength)
   const sr = opts.sampleRate || 44100
   const searchSamples = Math.min(totalLength, Math.max(1, opts.searchSamples || Math.round((opts.searchMs || 0.05) * sr)))
@@ -2119,7 +2149,7 @@ function computeWindowAbsEnergy(data, totalLength, startIndex, windowSamples) {
   return sum / windowSamples
 }
 
-function enforceQuietLoopStart(data, totalLength, approxHead, opts={}) {
+function enforceQuietLoopStart(data, totalLength, approxHead, opts = {}) {
   if (!data || !data.length || totalLength <= 0) return wrapSampleIndex(Math.round(approxHead || 0), totalLength)
   const sr = opts.sampleRate || 44100
   const tempo = clampTempo(opts.tempo || DEFAULT_TEMPO)
@@ -2153,7 +2183,7 @@ function enforceQuietLoopStart(data, totalLength, approxHead, opts={}) {
   return head
 }
 
-function refineLoopHead(raw, approxHead, opts={}) {
+function refineLoopHead(raw, approxHead, opts = {}) {
   if (!raw || !isFinite(raw.length) || raw.length <= 0) return 0
   const strategy = opts.strategy || 'melodic'
   const sr = raw.sampleRate || 44100
@@ -2192,124 +2222,124 @@ function refineLoopHead(raw, approxHead, opts={}) {
   })
 }
 
-function buildRhythmProfiles(buffer, hop=ENVELOPE_HOP_SAMPLES){
-  if(!buffer) return { sampleRate: 44100, hop: hop||1, kickEnv: new Float32Array(0), snareEnv: new Float32Array(0), length: 0 }
-  const sr=buffer.sampleRate||44100
-  const hopSize=Math.max(1, hop||1)
-  const data=buffer.numberOfChannels>0 ? buffer.getChannelData(0) : new Float32Array(0)
-  const len=Math.ceil(data.length / hopSize)
-  const kickEnv=new Float32Array(len)
-  const snareEnv=new Float32Array(len)
-  let idx=0
-  let prevSample=0
-  for(let frame=0; frame<len; frame++){
-    let kickSum=0
-    let snareSum=0
-    let count=0
-    for(let j=0; j<hopSize && idx<data.length; j++, idx++){
-      const sample=data[idx]
-      kickSum+=Math.abs(sample)
-      snareSum+=Math.abs(sample - prevSample)
-      prevSample=sample
+function buildRhythmProfiles(buffer, hop = ENVELOPE_HOP_SAMPLES) {
+  if (!buffer) return { sampleRate: 44100, hop: hop || 1, kickEnv: new Float32Array(0), snareEnv: new Float32Array(0), length: 0 }
+  const sr = buffer.sampleRate || 44100
+  const hopSize = Math.max(1, hop || 1)
+  const data = buffer.numberOfChannels > 0 ? buffer.getChannelData(0) : new Float32Array(0)
+  const len = Math.ceil(data.length / hopSize)
+  const kickEnv = new Float32Array(len)
+  const snareEnv = new Float32Array(len)
+  let idx = 0
+  let prevSample = 0
+  for (let frame = 0; frame < len; frame++) {
+    let kickSum = 0
+    let snareSum = 0
+    let count = 0
+    for (let j = 0; j < hopSize && idx < data.length; j++, idx++) {
+      const sample = data[idx]
+      kickSum += Math.abs(sample)
+      snareSum += Math.abs(sample - prevSample)
+      prevSample = sample
       count++
     }
-    const denom=count||1
-    kickEnv[frame]=kickSum/denom
-    snareEnv[frame]=snareSum/denom
+    const denom = count || 1
+    kickEnv[frame] = kickSum / denom
+    snareEnv[frame] = snareSum / denom
   }
   smoothEnvelopeInPlace(kickEnv, 0.3)
   smoothEnvelopeInPlace(snareEnv, 0.4)
   return { sampleRate: sr, hop: hopSize, kickEnv, snareEnv, length: len }
 }
 
-function sampleEnvelopeAt(envArr, hop, sampleIdx, windowSamples=0){
-  if(!envArr || envArr.length===0) return 0
-  const hopSize=Math.max(1, hop||1)
-  const n=envArr.length
-  const envIndex=wrapSampleIndex(Math.round(sampleIdx / hopSize), n)
-  const radius=Math.max(0, Math.round((windowSamples||0)/hopSize))
-  if(radius===0) return envArr[envIndex]
-  let sum=0
-  let count=0
-  for(let i=-radius;i<=radius;i++){
-    const j=wrapSampleIndex(envIndex+i, n)
-    sum+=envArr[j]
+function sampleEnvelopeAt(envArr, hop, sampleIdx, windowSamples = 0) {
+  if (!envArr || envArr.length === 0) return 0
+  const hopSize = Math.max(1, hop || 1)
+  const n = envArr.length
+  const envIndex = wrapSampleIndex(Math.round(sampleIdx / hopSize), n)
+  const radius = Math.max(0, Math.round((windowSamples || 0) / hopSize))
+  if (radius === 0) return envArr[envIndex]
+  let sum = 0
+  let count = 0
+  for (let i = -radius; i <= radius; i++) {
+    const j = wrapSampleIndex(envIndex + i, n)
+    sum += envArr[j]
     count++
   }
-  return sum/Math.max(1,count)
+  return sum / Math.max(1, count)
 }
 
-function scoreBeatAlignment(profiles, startSample, beatSamples, beatsToCheck){
-  if(!profiles || beatSamples<=0) return 0
-  const beats=Math.max(1, beatsToCheck)
-  const focusWin=Math.round(0.02 * profiles.sampleRate)
-  const snareWin=Math.round(0.025 * profiles.sampleRate)
-  const ghostWin=Math.round(0.03 * profiles.sampleRate)
-  let kickScore=0
-  let snareScore=0
-  let ghostScore=0
-  for(let beat=0; beat<beats; beat++){
-    const center=startSample + beat*beatSamples
+function scoreBeatAlignment(profiles, startSample, beatSamples, beatsToCheck) {
+  if (!profiles || beatSamples <= 0) return 0
+  const beats = Math.max(1, beatsToCheck)
+  const focusWin = Math.round(0.02 * profiles.sampleRate)
+  const snareWin = Math.round(0.025 * profiles.sampleRate)
+  const ghostWin = Math.round(0.03 * profiles.sampleRate)
+  let kickScore = 0
+  let snareScore = 0
+  let ghostScore = 0
+  for (let beat = 0; beat < beats; beat++) {
+    const center = startSample + beat * beatSamples
     kickScore += sampleEnvelopeAt(profiles.kickEnv, profiles.hop, center, focusWin)
-    if(beat % 4 === 1 || beat % 4 === 3){
+    if (beat % 4 === 1 || beat % 4 === 3) {
       snareScore += sampleEnvelopeAt(profiles.snareEnv, profiles.hop, center, snareWin)
     }
-    ghostScore += sampleEnvelopeAt(profiles.kickEnv, profiles.hop, center + beatSamples/2, ghostWin)
+    ghostScore += sampleEnvelopeAt(profiles.kickEnv, profiles.hop, center + beatSamples / 2, ghostWin)
   }
-  return kickScore*1.05 + snareScore*0.85 - ghostScore*0.65
+  return kickScore * 1.05 + snareScore * 0.85 - ghostScore * 0.65
 }
 
-function alignHeadToBeatGrid(raw, bpm, bars, approxHeadIndex=0, opts={}){
-  if(!raw || !isFinite(raw.length) || raw.length<=0) return approxHeadIndex||0
-  const strategy=opts.strategy || 'percussive'
-  const tempo=Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, bpm || DEFAULT_TEMPO))
-  const sr=raw.sampleRate||44100
-  const beatSamples=Math.max(1, Math.round((60/tempo)*sr))
-  const approx=wrapSampleIndex(Math.round(approxHeadIndex||0), raw.length)
-  if(strategy==='melodic'){
+function alignHeadToBeatGrid(raw, bpm, bars, approxHeadIndex = 0, opts = {}) {
+  if (!raw || !isFinite(raw.length) || raw.length <= 0) return approxHeadIndex || 0
+  const strategy = opts.strategy || 'percussive'
+  const tempo = Math.max(TEMPO_MIN, Math.min(TEMPO_MAX, bpm || DEFAULT_TEMPO))
+  const sr = raw.sampleRate || 44100
+  const beatSamples = Math.max(1, Math.round((60 / tempo) * sr))
+  const approx = wrapSampleIndex(Math.round(approxHeadIndex || 0), raw.length)
+  if (strategy === 'melodic') {
     return quantizeHeadToBeat(approx, beatSamples, raw.length)
   }
-  if(strategy==='ambient'){
+  if (strategy === 'ambient') {
     return approx
   }
-  const beatsToCheck=Math.min(32, Math.max(8, Math.round((bars || DEFAULT_BARS)*4)))
-  const searchRadius=Math.min(raw.length, Math.round(beatSamples*2))
-  const profiles=buildRhythmProfiles(raw)
-  const step=Math.max(1, Math.round(beatSamples/64))
-  let bestIdx=approx
-  let bestScore=scoreBeatAlignment(profiles, bestIdx, beatSamples, beatsToCheck)
-  for(let offset=approxHeadIndex - searchRadius; offset<=approxHeadIndex + searchRadius; offset+=step){
-    const candidate=wrapSampleIndex(Math.round(offset), raw.length)
-    const s=scoreBeatAlignment(profiles, candidate, beatSamples, beatsToCheck)
-    if(s>bestScore){
-      bestScore=s
-      bestIdx=candidate
+  const beatsToCheck = Math.min(32, Math.max(8, Math.round((bars || DEFAULT_BARS) * 4)))
+  const searchRadius = Math.min(raw.length, Math.round(beatSamples * 2))
+  const profiles = buildRhythmProfiles(raw)
+  const step = Math.max(1, Math.round(beatSamples / 64))
+  let bestIdx = approx
+  let bestScore = scoreBeatAlignment(profiles, bestIdx, beatSamples, beatsToCheck)
+  for (let offset = approxHeadIndex - searchRadius; offset <= approxHeadIndex + searchRadius; offset += step) {
+    const candidate = wrapSampleIndex(Math.round(offset), raw.length)
+    const s = scoreBeatAlignment(profiles, candidate, beatSamples, beatsToCheck)
+    if (s > bestScore) {
+      bestScore = s
+      bestIdx = candidate
     }
   }
-  if(!Number.isFinite(bestScore) || bestScore<=0){
+  if (!Number.isFinite(bestScore) || bestScore <= 0) {
     return quantizeHeadToBeat(approx, beatSamples, raw.length)
   }
   return bestIdx
 }
 
-function parsePromptTiming(promptText=''){
-  if(typeof promptText!=='string' || !promptText.trim()) return {}
-  const tempoMatch=promptText.match(/(\d+(?:\.\d+)?)\s*BPM/i)
-  const barsMatch=promptText.match(/(\d+(?:\.\d+)?)\s*(?:bars|bar\s*loop|bar-loop|bar\s*length|bar\s*phrase|bar\s*sequence)/i)
+function parsePromptTiming(promptText = '') {
+  if (typeof promptText !== 'string' || !promptText.trim()) return {}
+  const tempoMatch = promptText.match(/(\d+(?:\.\d+)?)\s*BPM/i)
+  const barsMatch = promptText.match(/(\d+(?:\.\d+)?)\s*(?:bars|bar\s*loop|bar-loop|bar\s*length|bar\s*phrase|bar\s*sequence)/i)
     || promptText.match(/(\d+(?:\.\d+)?)\s*-\s*bar/i)
-  const parsed={}
-  if(tempoMatch) parsed.tempo=Number(tempoMatch[1])
-  if(barsMatch) parsed.bars=Number(barsMatch[1])
+  const parsed = {}
+  if (tempoMatch) parsed.tempo = Number(tempoMatch[1])
+  if (barsMatch) parsed.bars = Number(barsMatch[1])
   return parsed
 }
 
-function createLoopIntent(meta={}){
-  if(meta && meta.__isLoopIntent) return { ...meta }
-  const parsed=parsePromptTiming(meta.promptText || '')
-  const tempo=clampTempo(isFinite(parsed.tempo)?parsed.tempo:meta.tempo)
-  const promptBars=normalizeBarsValue(isFinite(parsed.bars)?parsed.bars:meta.promptBars)
+function createLoopIntent(meta = {}) {
+  if (meta && meta.__isLoopIntent) return { ...meta }
+  const parsed = parsePromptTiming(meta.promptText || '')
+  const tempo = clampTempo(isFinite(parsed.tempo) ? parsed.tempo : meta.tempo)
+  const promptBars = normalizeBarsValue(isFinite(parsed.bars) ? parsed.bars : meta.promptBars)
   const playbackCandidate = meta.playbackBars ?? getPlaybackBars(promptBars, DEFAULT_BARS)
-  const playbackBars=normalizeBarsValue(playbackCandidate)
+  const playbackBars = normalizeBarsValue(playbackCandidate)
   const srCandidate = Number(meta.sampleRate)
   const frameCandidate = Number(meta.sourceFrames)
   const sourceFrames = Number.isFinite(frameCandidate) ? Math.max(1, Math.round(frameCandidate)) : null
@@ -2330,67 +2360,67 @@ function createLoopIntent(meta={}){
   }
 }
 
-function setStemLoopIntent(st, meta={}){
-  const intent=createLoopIntent(meta)
-  if(st) stemLoopIntent[st]=intent
+function setStemLoopIntent(st, meta = {}) {
+  const intent = createLoopIntent(meta)
+  if (st) stemLoopIntent[st] = intent
   return intent
 }
 
-function getStemLoopIntent(st, fallbackMeta={}){
-  if(st && stemLoopIntent[st]) return stemLoopIntent[st]
+function getStemLoopIntent(st, fallbackMeta = {}) {
+  if (st && stemLoopIntent[st]) return stemLoopIntent[st]
   return createLoopIntent(fallbackMeta)
 }
 
-function copyCircularRange(raw, startSample, desiredLength){
-  if(!raw || !isFinite(raw.length) || raw.length<=0) return null
-  const total=Math.max(1, Math.round(desiredLength || raw.length))
-  const sr=raw.sampleRate||44100
-  const channels=raw.numberOfChannels||1
-  const out=new AudioBuffer({ length: total, numberOfChannels: channels, sampleRate: sr })
-  const start=wrapSampleIndex(Math.round(startSample||0), raw.length)
-  for(let c=0;c<channels;c++){
-    const src=raw.getChannelData(c)
-    const dst=out.getChannelData(c)
-    let read=start
-    let write=0
-    let remaining=total
-    while(remaining>0){
-      const available=Math.min(remaining, raw.length-read)
-      if(available<=0){
-        read=0
+function copyCircularRange(raw, startSample, desiredLength) {
+  if (!raw || !isFinite(raw.length) || raw.length <= 0) return null
+  const total = Math.max(1, Math.round(desiredLength || raw.length))
+  const sr = raw.sampleRate || 44100
+  const channels = raw.numberOfChannels || 1
+  const out = new AudioBuffer({ length: total, numberOfChannels: channels, sampleRate: sr })
+  const start = wrapSampleIndex(Math.round(startSample || 0), raw.length)
+  for (let c = 0; c < channels; c++) {
+    const src = raw.getChannelData(c)
+    const dst = out.getChannelData(c)
+    let read = start
+    let write = 0
+    let remaining = total
+    while (remaining > 0) {
+      const available = Math.min(remaining, raw.length - read)
+      if (available <= 0) {
+        read = 0
         continue
       }
-      dst.set(src.subarray(read, read+available), write)
-      write+=available
-      remaining-=available
-      read+=available
-      if(read>=raw.length) read=0
+      dst.set(src.subarray(read, read + available), write)
+      write += available
+      remaining -= available
+      read += available
+      if (read >= raw.length) read = 0
     }
   }
   return out
 }
 
-function buildAlignedLoopFromIntent(raw, meta, approxHeadIndex=0, options={}){
-  if(!raw || !isFinite(raw.length) || raw.length<=0) return null
+function buildAlignedLoopFromIntent(raw, meta, approxHeadIndex = 0, options = {}) {
+  if (!raw || !isFinite(raw.length) || raw.length <= 0) return null
   const intent = meta && meta.__isLoopIntent ? { ...meta } : createLoopIntent(meta || {})
-  const tempo=intent.tempo
-  const promptBars=intent.promptBars
-  const playbackBars=intent.playbackBars
-  const strategy=options.strategy || getStemAlignmentStrategy(options.stem)
-  const head=alignHeadToBeatGrid(raw, tempo, promptBars, approxHeadIndex, { strategy })
-  const refinedHead=refineLoopHead(raw, head, { strategy, tempo, promptBars })
-  const sr=raw.sampleRate || audioContext?.sampleRate || 44100
-  const playbackTarget=computeTargetFrames(sr, tempo, playbackBars)
-  const promptTarget=computeTargetFrames(sr, tempo, promptBars)
+  const tempo = intent.tempo
+  const promptBars = intent.promptBars
+  const playbackBars = intent.playbackBars
+  const strategy = options.strategy || getStemAlignmentStrategy(options.stem)
+  const head = alignHeadToBeatGrid(raw, tempo, promptBars, approxHeadIndex, { strategy })
+  const refinedHead = refineLoopHead(raw, head, { strategy, tempo, promptBars })
+  const sr = raw.sampleRate || audioContext?.sampleRate || 44100
+  const playbackTarget = computeTargetFrames(sr, tempo, playbackBars)
+  const promptTarget = computeTargetFrames(sr, tempo, promptBars)
   const intentSourceFrames = intent.sampleRate && intent.sampleRate === sr && Number.isFinite(intent.sourceFrames)
     ? Math.max(1, Math.round(intent.sourceFrames))
     : null
   const expectedLength = intentSourceFrames || promptTarget || raw.length
   const promptLength = Math.min(raw.length, expectedLength)
-  const copyLength=Math.max(playbackTarget, promptLength)
-  const normalizedRaw=copyCircularRange(raw, refinedHead, copyLength)
-  if(!normalizedRaw) return null
-  const playbackLoop=buildLoopBufferFromRawStrict(normalizedRaw, tempo, playbackBars, 0)
+  const copyLength = Math.max(playbackTarget, promptLength)
+  const normalizedRaw = copyCircularRange(raw, refinedHead, copyLength)
+  if (!normalizedRaw) return null
+  const playbackLoop = buildLoopBufferFromRawStrict(normalizedRaw, tempo, playbackBars, 0)
   const updatedIntent = {
     ...intent,
     sampleRate: normalizedRaw.sampleRate,
@@ -2400,56 +2430,56 @@ function buildAlignedLoopFromIntent(raw, meta, approxHeadIndex=0, options={}){
   return { normalizedRaw, loop: playbackLoop, detectedHead: refinedHead, intent: updatedIntent }
 }
 
-function ensureTakeLoopReady(st, take){
-  if(!take || !take.raw) return null
+function ensureTakeLoopReady(st, take) {
+  if (!take || !take.raw) return null
   const fallbackTempo = take.tempo ?? stemControlValues.master?.tempo ?? DEFAULT_TEMPO
-  const fallbackBars  = take.bars  ?? stemControlValues.master?.bars  ?? DEFAULT_BARS
-  const approxHead = typeof take.detectedHeadIndex==='number'
+  const fallbackBars = take.bars ?? stemControlValues.master?.bars ?? DEFAULT_BARS
+  const approxHead = typeof take.detectedHeadIndex === 'number'
     ? take.detectedHeadIndex
-    : (typeof take.headIndex==='number' ? take.headIndex : 0)
+    : (typeof take.headIndex === 'number' ? take.headIndex : 0)
   const baseIntent = take.loopIntent && take.loopIntent.__isLoopIntent
     ? take.loopIntent
     : getStemLoopIntent(st, {
-        tempo: fallbackTempo,
-        promptBars: fallbackBars,
-        playbackBars: getPlaybackBars(fallbackBars, DEFAULT_BARS),
-        promptText: take.prompt || '',
-        sampleRate: take.raw?.sampleRate,
-        sourceFrames: take.raw?.length,
-        sourceDurationSec: take.raw?.duration
-      })
-  if(take.isHeadNormalized && baseIntent){
-    const playbackLoop=buildLoopBufferFromRawStrict(take.raw, baseIntent.tempo, baseIntent.playbackBars, take.headIndex || 0)
+      tempo: fallbackTempo,
+      promptBars: fallbackBars,
+      playbackBars: getPlaybackBars(fallbackBars, DEFAULT_BARS),
+      promptText: take.prompt || '',
+      sampleRate: take.raw?.sampleRate,
+      sourceFrames: take.raw?.length,
+      sourceDurationSec: take.raw?.duration
+    })
+  if (take.isHeadNormalized && baseIntent) {
+    const playbackLoop = buildLoopBufferFromRawStrict(take.raw, baseIntent.tempo, baseIntent.playbackBars, take.headIndex || 0)
     return { loop: playbackLoop, intent: baseIntent, detectedHead: take.detectedHeadIndex ?? approxHead }
   }
-  const aligned=buildAlignedLoopFromIntent(take.raw, baseIntent, approxHead, { stem: st, strategy: getStemAlignmentStrategy(st) })
-  if(!aligned) return null
-  take.raw=aligned.normalizedRaw
-  take.headIndex=0
-  take.detectedHeadIndex=aligned.detectedHead
-  take.loopIntent=aligned.intent
-  take.isHeadNormalized=true
+  const aligned = buildAlignedLoopFromIntent(take.raw, baseIntent, approxHead, { stem: st, strategy: getStemAlignmentStrategy(st) })
+  if (!aligned) return null
+  take.raw = aligned.normalizedRaw
+  take.headIndex = 0
+  take.detectedHeadIndex = aligned.detectedHead
+  take.loopIntent = aligned.intent
+  take.isHeadNormalized = true
   return aligned
 }
 
-function buildLoopBufferFromRawStrict(raw, bpm, bars, headIndex){
+function buildLoopBufferFromRawStrict(raw, bpm, bars, headIndex) {
   removeDcOffset(raw)
-  const sr=raw.sampleRate
-  const target=computeTargetFrames(sr,bpm,bars)
-  const ch=raw.numberOfChannels
-  const out=new AudioBuffer({ length: target, numberOfChannels: ch, sampleRate: sr })
-  const start=wrapSampleIndex(Math.round(headIndex||0), raw.length)
-  for(let c=0;c<ch;c++){
-    const src=raw.getChannelData(c)
-    const dst=out.getChannelData(c)
-    let writeIdx=0
-    let readIdx=start
-    while(writeIdx<target){
-      const remaining=target-writeIdx
-      const canCopy=Math.min(remaining, raw.length-readIdx)
-      dst.set(src.subarray(readIdx, readIdx+canCopy), writeIdx)
-      writeIdx+=canCopy
-      readIdx=(readIdx+canCopy)%raw.length
+  const sr = raw.sampleRate
+  const target = computeTargetFrames(sr, bpm, bars)
+  const ch = raw.numberOfChannels
+  const out = new AudioBuffer({ length: target, numberOfChannels: ch, sampleRate: sr })
+  const start = wrapSampleIndex(Math.round(headIndex || 0), raw.length)
+  for (let c = 0; c < ch; c++) {
+    const src = raw.getChannelData(c)
+    const dst = out.getChannelData(c)
+    let writeIdx = 0
+    let readIdx = start
+    while (writeIdx < target) {
+      const remaining = target - writeIdx
+      const canCopy = Math.min(remaining, raw.length - readIdx)
+      dst.set(src.subarray(readIdx, readIdx + canCopy), writeIdx)
+      writeIdx += canCopy
+      readIdx = (readIdx + canCopy) % raw.length
     }
   }
   applyEdgeRamps(out, EDGE_RAMP_MS)
@@ -2460,42 +2490,42 @@ function buildLoopBufferFromRawStrict(raw, bpm, bars, headIndex){
 /* =========================================================
    Validators (unchanged)
    ========================================================= */
-function countOnsets(buf, refractorySec=0.08, relThresh=0.35){
-  const sr=buf.sampleRate
-  const x=buf.getChannelData(0)
-  let sum=0; for(let i=0;i<x.length;i+=512){ const v=x[i]; sum+=v*v }
-  const rms=Math.sqrt(sum/Math.max(1, Math.floor(x.length/512)))
-  const thr=Math.max(0.02, rms*relThresh)
-  const refr=Math.max(1, Math.round(refractorySec*sr))
-  let peaks=0,i=0
-  while(i<x.length){ if(Math.abs(x[i])>=thr){ peaks++; i+=refr } else i++ }
+function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
+  const sr = buf.sampleRate
+  const x = buf.getChannelData(0)
+  let sum = 0; for (let i = 0; i < x.length; i += 512) { const v = x[i]; sum += v * v }
+  const rms = Math.sqrt(sum / Math.max(1, Math.floor(x.length / 512)))
+  const thr = Math.max(0.02, rms * relThresh)
+  const refr = Math.max(1, Math.round(refractorySec * sr))
+  let peaks = 0, i = 0
+  while (i < x.length) { if (Math.abs(x[i]) >= thr) { peaks++; i += refr } else i++ }
   return peaks
 }
-function validateSnare(buf, bpm, bars, tolMs=40){
-  const sr=buf.sampleRate
-  const barSec=4*(60/bpm)
-  const beatSec=60/bpm
-  const tol=Math.round((tolMs/1000)*sr)
-  const x=buf.getChannelData(0)
-  function hasPeakNear(sampleIdx, win=tol, mult=3.0){
-    const a=Math.max(0, sampleIdx-win), b=Math.min(x.length-1, sampleIdx+win)
-    let s=0,n=0; for(let i=a;i<=b;i+=4){ const v=x[i]; s+=v*v; n++ }
-    const rms=Math.sqrt(s/Math.max(1,n))
-    const thr=Math.max(0.02, rms*mult)
-    for(let i=a;i<=b;i+=2) if(Math.abs(x[i])>=thr) return true
+function validateSnare(buf, bpm, bars, tolMs = 40) {
+  const sr = buf.sampleRate
+  const barSec = 4 * (60 / bpm)
+  const beatSec = 60 / bpm
+  const tol = Math.round((tolMs / 1000) * sr)
+  const x = buf.getChannelData(0)
+  function hasPeakNear(sampleIdx, win = tol, mult = 3.0) {
+    const a = Math.max(0, sampleIdx - win), b = Math.min(x.length - 1, sampleIdx + win)
+    let s = 0, n = 0; for (let i = a; i <= b; i += 4) { const v = x[i]; s += v * v; n++ }
+    const rms = Math.sqrt(s / Math.max(1, n))
+    const thr = Math.max(0.02, rms * mult)
+    for (let i = a; i <= b; i += 2) if (Math.abs(x[i]) >= thr) return true
     return false
   }
-  for(let bar=0; bar<bars; bar++){
-    const barStart=Math.round(bar*barSec*sr)
-    const beat2=barStart+Math.round(1*beatSec*sr)
-    const beat4=barStart+Math.round(3*beatSec*sr)
-    if(!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false
+  for (let bar = 0; bar < bars; bar++) {
+    const barStart = Math.round(bar * barSec * sr)
+    const beat2 = barStart + Math.round(1 * beatSec * sr)
+    const beat4 = barStart + Math.round(3 * beatSec * sr)
+    if (!hasPeakNear(beat2) || !hasPeakNear(beat4)) return false
   }
   return true
 }
-function validateHihat(buf, bpm, bars){
-  const expected=bars*16
-  const found=countOnsets(buf, 0.07, 0.35)
+function validateHihat(buf, bpm, bars) {
+  const expected = bars * 16
+  const found = countOnsets(buf, 0.07, 0.35)
   return found >= Math.max(10, Math.round(expected * 0.6))
 }
 
@@ -3574,14 +3604,14 @@ async function separateCurrentStem(st) {
     const parentIntent = currentTake.loopIntent && currentTake.loopIntent.__isLoopIntent
       ? currentTake.loopIntent
       : getStemLoopIntent(st, {
-          tempo,
-          promptBars: bars,
-          playbackBars,
-          promptText: currentTake.prompt || '',
-          sampleRate: decodedBuffer.sampleRate,
-          sourceFrames: decodedBuffer.length,
-          sourceDurationSec: decodedBuffer.duration
-        })
+        tempo,
+        promptBars: bars,
+        playbackBars,
+        promptText: currentTake.prompt || '',
+        sampleRate: decodedBuffer.sampleRate,
+        sourceFrames: decodedBuffer.length,
+        sourceDurationSec: decodedBuffer.duration
+      })
 
     const aligned = buildAlignedLoopFromIntent(decodedBuffer, parentIntent, 0, { stem: st, strategy: getStemAlignmentStrategy(st) })
     if (!aligned) {
@@ -3661,7 +3691,7 @@ async function separateCurrentStem(st) {
     updateCardNumberColor(st)
 
     // Update the edit modal canvas with the new waveform
-      drawEditWaveform(st, aligned.loop)
+    drawEditWaveform(st, aligned.loop)
 
     // Reapply the preserved endpoint factor (Gemini loop fix) to maintain loop quality
     if (preservedEndpointFactor !== 1) {
@@ -3673,7 +3703,7 @@ async function separateCurrentStem(st) {
     // Show success message with loop fix method
     if (separateHint) {
       const loopFixInfo = loopFixResult?.method === 'gemini' ? ' (AI-enhanced)' :
-                          loopFixResult?.method === 'heuristic' ? ' (optimized)' : ''
+        loopFixResult?.method === 'heuristic' ? ' (optimized)' : ''
       separateHint.textContent = `Successfully extracted ${data.stemType} stem${loopFixInfo}!`
       separateHint.classList.remove('text-white/50', 'text-blue-400')
       separateHint.classList.add('text-green-400')
@@ -3862,7 +3892,7 @@ function startTransport() {
   // We no longer compute a global loop duration.  Each stem uses its own
   // buffer length for looping.  Record the start time of this transport so
   // that per‑stem phases can be computed relative to a common origin.
-  const t0 = audioContext.currentTime + START_ENV_MS/1000
+  const t0 = audioContext.currentTime + START_ENV_MS / 1000
   loopStartTime = t0
 
   Object.keys(stemConfigs).forEach(st => {
@@ -3879,8 +3909,8 @@ function startTransport() {
     const nodes = createStemNodes(st, buf)
     stemNodes[st] = nodes
     nodes.env.gain.setValueAtTime(0, t0)
-    nodes.env.gain.linearRampToValueAtTime(1, t0 + START_ENV_MS/1000)
-    const vol = (stemControlValues[st]?.volume ?? 80)/100
+    nodes.env.gain.linearRampToValueAtTime(1, t0 + START_ENV_MS / 1000)
+    const vol = (stemControlValues[st]?.volume ?? 80) / 100
     const muted = stemMuteStates[st]
     const soloedOther = (soloedStem && soloedStem !== st)
     nodes.gain.gain.setValueAtTime((muted || soloedOther) ? 0 : vol, t0)
@@ -3911,7 +3941,7 @@ function stopTransport() {
     n.env.gain.cancelScheduledValues(audioContext.currentTime)
     n.env.gain.setValueAtTime(n.env.gain.value, audioContext.currentTime)
     n.env.gain.linearRampToValueAtTime(0, stopAt)
-    try { n.source.stop(stopAt) } catch {}
+    try { n.source.stop(stopAt) } catch { }
   })
   Object.keys(stemNodes).forEach(k => delete stemNodes[k])
   if (transportTicker) cancelAnimationFrame(transportTicker)
@@ -3940,9 +3970,9 @@ function restartStemNextBoundary(st) {
   next.env.gain.setValueAtTime(1, startAt)
   try {
     next.source.start(startAt, elapsed)
-  } catch {}
+  } catch { }
   if (prev?.source) {
-    try { prev.source.stop(startAt) } catch {}
+    try { prev.source.stop(startAt) } catch { }
   }
   updateMixerGlow(st)
 }
@@ -3951,9 +3981,9 @@ function restartStemNextBoundary(st) {
    Eleven Music compose (unchanged core)
    ========================================================= */
 const genControllers = new Map()
-function getNewStemController(st){ const prev=genControllers.get(st); if(prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded','AbortError')); const ctrl=new AbortController(); genControllers.set(st, ctrl); return ctrl }
-function buildCompositionPlan({ tempo, bars }, descriptor){ const ms=Math.round(bars*4*(60/tempo)*1000); return { positive_global_styles:["techno","instrumental","loop"], negative_global_styles:["vocals","fade-in","fade-out","free-time"], sections:[{ section_name:"Loop", positive_local_styles:[descriptor||"modern techno"], negative_local_styles:["rubato","modulation","improv cadenza"], duration_ms: ms, lines: [] }] } }
-async function composeOnce(payload, signal, statusEl = null){
+function getNewStemController(st) { const prev = genControllers.get(st); if (prev && !prev.signal.aborted) prev.abort(new DOMException('Superseded', 'AbortError')); const ctrl = new AbortController(); genControllers.set(st, ctrl); return ctrl }
+function buildCompositionPlan({ tempo, bars }, descriptor) { const ms = Math.round(bars * 4 * (60 / tempo) * 1000); return { positive_global_styles: ["techno", "instrumental", "loop"], negative_global_styles: ["vocals", "fade-in", "fade-out", "free-time"], sections: [{ section_name: "Loop", positive_local_styles: [descriptor || "modern techno"], negative_local_styles: ["rubato", "modulation", "improv cadenza"], duration_ms: ms, lines: [] }] } }
+async function composeOnce(payload, signal, statusEl = null) {
   const tryPayload = (fmt) => ({ ...payload, output_format: fmt, model_id: 'music_v1', respect_sections_durations: true })
   let lastErr = null
   let retryCount = 0
@@ -4035,29 +4065,29 @@ async function composeOnce(payload, signal, statusEl = null){
 
   throw lastErr || new Error('composeOnce failed with all formats')
 }
-async function composeWithRetries(st, tempo, bars, signal, statusEl){
+async function composeWithRetries(st, tempo, bars, signal, statusEl) {
   // Always generate 16 bars for better segment selection
   const generationBars = 16
-  const beats=generationBars*4
-  const seconds=beats*(60/tempo)
-  let music_length_ms=Math.round(seconds*1000)+GEN_TAIL_PAD_MS
-  music_length_ms=Math.max(10000, Math.min(300000, music_length_ms))
+  const beats = generationBars * 4
+  const seconds = beats * (60 / tempo)
+  let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
+  music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
   console.log(`[Generation] User requested: ${bars} bars, Generating: ${generationBars} bars (${music_length_ms}ms)`)
-  const master=getMasterForPrompt()
-  const controls=stemControlValues[st]||{}
-  for(let tier=0;tier<3;tier++){
-    const prompt=(st==='hihat')?buildHihatPrompt(controls, master, tier):buildSnarePrompt(controls, master, tier)
-    if (statusEl) statusEl.textContent=`Creating… (${st}, tier ${tier+1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
-    const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt, music_length_ms }
-    const ab=await composeOnce(body, signal, statusEl)
-    const buf=await audioContext.decodeAudioData(ab)
-    const ok=(st==='hihat')?validateHihat(buf, tempo, bars):validateSnare(buf, tempo, bars)
-    if(ok) return { buffer: buf, usedPrompt: prompt, tier }
+  const master = getMasterForPrompt()
+  const controls = stemControlValues[st] || {}
+  for (let tier = 0; tier < 3; tier++) {
+    const prompt = (st === 'hihat') ? buildHihatPrompt(controls, master, tier) : buildSnarePrompt(controls, master, tier)
+    if (statusEl) statusEl.textContent = `Creating… (${st}, tier ${tier + 1}/3 @ 44.1k ${PRIMARY_OUTPUT_FORMAT})`
+    const body = USE_COMPOSITION_PLAN ? { composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null } : { prompt, music_length_ms }
+    const ab = await composeOnce(body, signal, statusEl)
+    const buf = await audioContext.decodeAudioData(ab)
+    const ok = (st === 'hihat') ? validateHihat(buf, tempo, bars) : validateSnare(buf, tempo, bars)
+    if (ok) return { buffer: buf, usedPrompt: prompt, tier }
   }
-  const finalPrompt=(st==='hihat')?buildHihatPrompt(controls, master, 2):buildSnarePrompt(controls, master, 2)
-  const body=USE_COMPOSITION_PLAN?{ composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null }:{ prompt: finalPrompt, music_length_ms }
-  const ab=await composeOnce(body, signal, statusEl)
-  const buf=await audioContext.decodeAudioData(ab)
+  const finalPrompt = (st === 'hihat') ? buildHihatPrompt(controls, master, 2) : buildSnarePrompt(controls, master, 2)
+  const body = USE_COMPOSITION_PLAN ? { composition_plan: buildCompositionPlan(master, stemConfigs[st]?.basePrompt), prompt: null } : { prompt: finalPrompt, music_length_ms }
+  const ab = await composeOnce(body, signal, statusEl)
+  const buf = await audioContext.decodeAudioData(ab)
   return { buffer: buf, usedPrompt: finalPrompt, tier: 2, failedValidation: true }
 }
 
@@ -4135,7 +4165,7 @@ async function generateStem(st) {
     if (statusEl) statusEl.textContent = `Creating… (Eleven Music v1)`
 
     const tempo = clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO)
-    const bars  = stemControlValues.master?.bars  ?? DEFAULT_BARS
+    const bars = stemControlValues.master?.bars ?? DEFAULT_BARS
     const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
     let loopIntent = null
     const sessionContext = buildSessionGenerationContext(st)
@@ -4205,7 +4235,7 @@ async function generateStem(st) {
       const aligned = buildAlignedLoopFromIntent(audioBuffer, loopIntent, referenceHeadIndex, { stem: st, strategy: getStemAlignmentStrategy(st) })
       if (!aligned) throw new Error('Failed to align generated audio')
       referenceHeadIndex = aligned.detectedHead
-      stemRaw[st]  = aligned.normalizedRaw
+      stemRaw[st] = aligned.normalizedRaw
       stemLoop[st] = aligned.loop
       stemLoopDuration[st] = aligned.loop.duration
       endpointFactors[st] = 1
@@ -4267,7 +4297,7 @@ async function generateStem(st) {
       const aligned = buildAlignedLoopFromIntent(audioBuffer, loopIntent, referenceHeadIndex, { stem: st, strategy: getStemAlignmentStrategy(st) })
       if (!aligned) throw new Error('Failed to align locally generated audio')
       referenceHeadIndex = aligned.detectedHead
-      stemRaw[st]  = aligned.normalizedRaw
+      stemRaw[st] = aligned.normalizedRaw
       stemLoop[st] = aligned.loop
       stemLoopDuration[st] = aligned.loop.duration
       endpointFactors[st] = 1
@@ -4808,7 +4838,7 @@ async function initializeAutoDownloadSupport() {
  * @returns {Blob} WAV file blob
  * @throws {Error} If buffer is invalid or encoding fails
  */
-function encodeWAV(audioBuffer){
+function encodeWAV(audioBuffer) {
   return encodeWAVSync(audioBuffer)
 }
 
@@ -4819,7 +4849,7 @@ function encodeWAV(audioBuffer){
  * @throws {Error} If buffer is invalid or encoding fails
  * @deprecated Kept for backward compatibility
  */
-function encodeWAVLegacy(audioBuffer){
+function encodeWAVLegacy(audioBuffer) {
   // Comprehensive validation
   if (!audioBuffer) {
     throw new Error('Audio buffer is null or undefined')
@@ -4939,7 +4969,7 @@ function encodeWAVLegacy(audioBuffer){
  * @param {string} st - Stem identifier
  * @param {string} mode - Download mode: 'loop' (edited playback loop) or 'raw' (full generated audio)
  */
-function downloadStem(st, mode = 'loop'){
+function downloadStem(st, mode = 'loop') {
   try {
     // Determine which buffer to use based on mode
     let buf
@@ -5032,7 +5062,7 @@ function downloadStem(st, mode = 'loop'){
  * download button naming scheme and include a timestamp.
  * @param {string} mode - Download mode: 'loop' (edited playback loop) or 'raw' (full generated audio)
  */
-function downloadAllActiveStems(mode = 'loop'){
+function downloadAllActiveStems(mode = 'loop') {
   // Iterate over the keys of stemConfigs to include all stems defined in
   // the current session.  For each stem, check whether there is an
   // active history entry (active index >= 0) and that a buffer
@@ -5049,79 +5079,79 @@ function downloadAllActiveStems(mode = 'loop'){
 /* =========================================================
    UI rendering (per card) — with black generate btn, wider sliders, click‑overlay for toggles
    ========================================================= */
-function knobToDb(val){
-  const v=Math.max(0, Math.min(100, Number(val)||0))
+function knobToDb(val) {
+  const v = Math.max(0, Math.min(100, Number(val) || 0))
   // Shift the 0 dB point to 75% of the slider to mirror professional DAW faders.
   const pivot = 75
   if (v <= pivot) return EQ_MIN_DB + (v / pivot) * (0 - EQ_MIN_DB)
   return ((v - pivot) / (100 - pivot)) * EQ_MAX_DB
 }
-function formatDb(db){
+function formatDb(db) {
   if (db <= EQ_MIN_DB + 0.5) return 'CUT'
   if (Math.abs(db) < 0.05) return '0 dB'
   return `${db.toFixed(1)} dB`
 }
-function knobAngle(val){ return -135 + (val/100)*270 }
-function applyEqValuesToNodes(eqNodes, vals){
+function knobAngle(val) { return -135 + (val / 100) * 270 }
+function applyEqValuesToNodes(eqNodes, vals) {
   if (!eqNodes || !audioContext) return
-  const now=audioContext.currentTime
+  const now = audioContext.currentTime
   eqNodes.low.gain.setTargetAtTime(knobToDb(vals.low), now, EQ_SMOOTH_TC)
   eqNodes.mid.gain.setTargetAtTime(knobToDb(vals.mid), now, EQ_SMOOTH_TC)
   eqNodes.high.gain.setTargetAtTime(knobToDb(vals.high), now, EQ_SMOOTH_TC)
 }
-function applyFilterValuesToNode(filterNode, vals){
+function applyFilterValuesToNode(filterNode, vals) {
   if (!filterNode || !audioContext) return
-  const now=audioContext.currentTime
-  filterNode.type=vals.mode
+  const now = audioContext.currentTime
+  filterNode.type = vals.mode
   filterNode.Q.setTargetAtTime(FILTER_Q, now, FILTER_SMOOTH_TC)
   filterNode.frequency.setTargetAtTime(knobToFreq(vals.cutoff), now, FILTER_SMOOTH_TC)
 }
-function updateEqKnobVisual(knobEl, val){
-  if(!knobEl) return
-  knobEl.dataset.value=String(val)
-  const ptr=knobEl.querySelector('[data-eq-pointer]')
-  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
+function updateEqKnobVisual(knobEl, val) {
+  if (!knobEl) return
+  knobEl.dataset.value = String(val)
+  const ptr = knobEl.querySelector('[data-eq-pointer]')
+  if (ptr) ptr.style.transform = `translateX(-50%) rotate(${knobAngle(val)}deg)`
 }
-function updateEqReadout(st, band){
-  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
-  const db=knobToDb(v)
-  const ro=document.querySelector(`[data-eq-readout="${st}:${band}"]`)
-  if (ro) ro.textContent=formatDb(db)
+function updateEqReadout(st, band) {
+  const v = (stemEqValues[st] || {})[band] ?? EQ_DEFAULT
+  const db = knobToDb(v)
+  const ro = document.querySelector(`[data-eq-readout="${st}:${band}"]`)
+  if (ro) ro.textContent = formatDb(db)
 }
 
 /* ---------- Filter UI ---------- */
-function updateFilterKnobVisual(knobEl, val){
-  if(!knobEl) return
-  knobEl.dataset.value=String(val)
-  const ptr=knobEl.querySelector('[data-filter-pointer]')
-  if (ptr) ptr.style.transform=`translateX(-50%) rotate(${knobAngle(val)}deg)`
+function updateFilterKnobVisual(knobEl, val) {
+  if (!knobEl) return
+  knobEl.dataset.value = String(val)
+  const ptr = knobEl.querySelector('[data-filter-pointer]')
+  if (ptr) ptr.style.transform = `translateX(-50%) rotate(${knobAngle(val)}deg)`
 }
-function updateFilterReadout(st){
-  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
-  const hz=knobToFreq(v)
-  const ro=document.querySelector(`[data-filter-readout="${st}"]`)
-  if (ro) ro.textContent = hz >= 1000 ? `${(hz/1000).toFixed(hz>=10000?0:1)} kHz` : `${Math.round(hz)} Hz`
+function updateFilterReadout(st) {
+  const v = (stemFilterValues[st] || {}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const hz = knobToFreq(v)
+  const ro = document.querySelector(`[data-filter-readout="${st}"]`)
+  if (ro) ro.textContent = hz >= 1000 ? `${(hz / 1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
 }
-function updateFilterModeButton(st){
-  const btn=document.querySelector(`[data-filter-mode="${st}"]`)
-  if(!btn) return
-  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
+function updateFilterModeButton(st) {
+  const btn = document.querySelector(`[data-filter-mode="${st}"]`)
+  if (!btn) return
+  const mode = (stemFilterValues[st] || {}).mode || 'lowpass'
   btn.textContent = mode === 'lowpass' ? 'LP' : 'HP'
 }
 
 /* ---------- Per-card HTML ---------- */
-function eqKnobHTML(st, band, label){
-  const v=(stemEqValues[st]||{})[band] ?? EQ_DEFAULT
-  const ang=knobAngle(v)
+function eqKnobHTML(st, band, label) {
+  const v = (stemEqValues[st] || {})[band] ?? EQ_DEFAULT
+  const ang = knobAngle(v)
   return `\n        <div class="flex flex-col items-center select-none">\n          <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n               data-eq-knob data-stem="${st}" data-band="${band}" data-value="${v}" title="${label}: drag to adjust">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                 data-eq-pointer\n                 style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] tracking-wider text-white/80">${label.toUpperCase()}</div>\n          <div class="text-[10px] text-white/60" data-eq-readout="${st}:${band}">${formatDb(knobToDb(v))}</div>\n        </div>\n      `
 }
-function filterKnobHTML(st){
-  const v=(stemFilterValues[st]||{}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
-  const ang=knobAngle(v)
-  const mode=(stemFilterValues[st]||{}).mode || 'lowpass'
+function filterKnobHTML(st) {
+  const v = (stemFilterValues[st] || {}).cutoff ?? freqToKnob(FILTER_DEFAULT_HZ)
+  const ang = knobAngle(v)
+  const mode = (stemFilterValues[st] || {}).mode || 'lowpass'
   return `\n        <div class="flex items-center gap-2">\n          <div class="flex flex-col items-center select-none">\n            <div class="relative w-10 h-10 rounded-full border border-white/20 bg-white/5 shadow-inner cursor-[ns-resize]"\n                 data-filter-knob data-stem="${st}" data-value="${v}" title="Filter Cutoff: drag to adjust">\n              <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n              <div class="absolute w-0.5 h-3 bg-white/90 rounded pointer-events-none"\n                   data-filter-pointer\n                   style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n            </div>\n            <div class="mt-1 text-[10px] tracking-wider text-white/80">CUTOFF</div>\n            <div class="text-[10px] text-white/60" data-filter-readout="${st}"></div>\n          </div>\n          <button class="h-6 px-2 rounded-md border border-white/15 bg-white/80 text-black text-[10px] font-semibold tracking-wider hover:bg-white active:translate-y-[1px] transition"\n                  data-action="toggle-filter-mode" data-stem="${st}" data-filter-mode="${st}" title="Toggle LP/HP">\n            ${mode === 'lowpass' ? 'LP' : 'HP'}\n          </button>\n        </div>\n      `
 }
-function headerActionButtonsHTML(st){
+function headerActionButtonsHTML(st) {
   return `
         <div class="flex items-center gap-1.5">
           <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
@@ -5171,7 +5201,7 @@ function headerActionButtonsMobileHTML(st) {
       `
 }
 
-function createBuilderStemCard(st, cfg){
+function createBuilderStemCard(st, cfg) {
   const card = document.createElement('div')
   // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
   card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
@@ -5262,22 +5292,22 @@ function createBuilderStemCard(st, cfg){
     // the take even when its volume is set to zero.  Visual feedback
     // for volume changes is provided exclusively in the edit modal.
 
-      // On small screens, show the number indicator within the header row; hide it on
-      // desktop so that it can be shown in the top-right corner of the card.
-      const numEl = card.querySelector(`[data-card-number="${st}"]`)
-      if (numEl) numEl.classList.add('sm:hidden')
+    // On small screens, show the number indicator within the header row; hide it on
+    // desktop so that it can be shown in the top-right corner of the card.
+    const numEl = card.querySelector(`[data-card-number="${st}"]`)
+    if (numEl) numEl.classList.add('sm:hidden')
 
-      // Make the card relative so absolute positioning inside works for desktop indicators
-      card.classList.add('relative')
+    // Make the card relative so absolute positioning inside works for desktop indicators
+    card.classList.add('relative')
 
-      // Create a desktop-only number indicator positioned at the top right of the card.
-      const desktopNum = document.createElement('span')
-      desktopNum.setAttribute('data-card-number-desktop', st)
-      desktopNum.textContent = String(idx)
-      // Position with extra padding on desktop (sm:top-5 sm:right-5) so the number indicator isn't flush
-      // against the edges. Hidden on mobile (sm:hidden applied on the header indicator instead).
-      desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2 sm:top-5 sm:right-5'
-      card.appendChild(desktopNum)
+    // Create a desktop-only number indicator positioned at the top right of the card.
+    const desktopNum = document.createElement('span')
+    desktopNum.setAttribute('data-card-number-desktop', st)
+    desktopNum.textContent = String(idx)
+    // Position with extra padding on desktop (sm:top-5 sm:right-5) so the number indicator isn't flush
+    // against the edges. Hidden on mobile (sm:hidden applied on the header indicator instead).
+    desktopNum.className = 'hidden sm:flex items-center justify-center w-5 h-5 text-xs font-semibold rounded-full border border-white/30 absolute top-2 right-2 sm:top-5 sm:right-5'
+    card.appendChild(desktopNum)
 
   }
 
@@ -5298,8 +5328,8 @@ function initializeStemControlValues() {
   Object.entries(stemConfigs).forEach(([st, cfg]) => {
     stemControlValues[st] = {}
     stemMuteStates[st] = false
-      // Initialise endpoint stretch factor for each stem (1.0 = no stretch)
-      endpointFactors[st] = 1
+    // Initialise endpoint stretch factor for each stem (1.0 = no stretch)
+    endpointFactors[st] = 1
     if (!stemEqValues[st]) stemEqValues[st] = { low: 75, mid: 75, high: 75 }
     if (!stemFilterValues[st]) stemFilterValues[st] = { mode: 'lowpass', cutoff: defCutKnob }
     if (cfg.controls) {
@@ -5316,14 +5346,14 @@ function initializeStemControlValues() {
 }
 
 /* ---------- Mixer glow ---------- */
-function isStemActuallyPlaying(st){ return isPlaying && !!stemNodes[st]?.source && !stemMuteStates[st] && (!soloedStem || soloedStem === st) }
-function updateMixerGlow(st){ const card=document.querySelector(`[data-mix-card="${st}"]`); if(!card) return; card.classList.toggle('sg-glow', isStemActuallyPlaying(st)) }
-function updateAllMixerGlows(){ Object.keys(stemConfigs).forEach(updateMixerGlow) }
+function isStemActuallyPlaying(st) { return isPlaying && !!stemNodes[st]?.source && !stemMuteStates[st] && (!soloedStem || soloedStem === st) }
+function updateMixerGlow(st) { const card = document.querySelector(`[data-mix-card="${st}"]`); if (!card) return; card.classList.toggle('sg-glow', isStemActuallyPlaying(st)) }
+function updateAllMixerGlows() { Object.keys(stemConfigs).forEach(updateMixerGlow) }
 
 /* ---------- Toggle visuals (Mute/Solo) ---------- */
-function setToggleVisual(el, active){ if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
-function reflectMuteSoloButtons(st){
-  const muted  = !!stemMuteStates[st]
+function setToggleVisual(el, active) { if (!el) return; el.classList.toggle('sg-toggle-active', !!active); el.setAttribute('aria-pressed', active ? 'true' : 'false') }
+function reflectMuteSoloButtons(st) {
+  const muted = !!stemMuteStates[st]
   const soloed = (soloedStem === st)
   // Update all mute buttons on the instrument card (desktop and mobile)
   document.querySelectorAll(`[data-stem="${st}"] [data-action="mute-stem"]`).forEach(btn => setToggleVisual(btn, muted))
@@ -5335,55 +5365,55 @@ function reflectMuteSoloButtons(st){
 }
 
 /* ---------- Volume link ---------- */
-function setVolumeUnified(st, newVal){
-  const v=Math.max(0, Math.min(100, Math.round(Number(newVal)||0)))
-  stemControlValues[st].volume=v
+function setVolumeUnified(st, newVal) {
+  const v = Math.max(0, Math.min(100, Math.round(Number(newVal) || 0)))
+  stemControlValues[st].volume = v
 
   // Update legacy card volume slider if present
-  const cardSlider=document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
+  const cardSlider = document.querySelector(`[data-stem="${st}"] [data-control="volume"]`)
   if (cardSlider) {
-    cardSlider.value=v
-    const display=cardSlider.parentElement?.querySelector('span:last-child')
-    const cfg=stemConfigs[st]?.controls?.volume
-    if (display && cfg) display.textContent=`${v}${cfg.unit}`
+    cardSlider.value = v
+    const display = cardSlider.parentElement?.querySelector('span:last-child')
+    const cfg = stemConfigs[st]?.controls?.volume
+    if (display && cfg) display.textContent = `${v}${cfg.unit}`
   }
   // Update new mixer volume slider if present; value display is handled via tooltip
-  const mixSlider=document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
+  const mixSlider = document.querySelector(`input[data-mix-slider="volume"][data-stem="${st}"]`)
   if (mixSlider) {
-    mixSlider.value=String(v)
+    mixSlider.value = String(v)
   }
 
   if (isPlaying && stemNodes[st]?.gain) {
-    const vol=v/100
-    const muted=stemMuteStates[st]
-    const blocked=(soloedStem && soloedStem !== st)
+    const vol = v / 100
+    const muted = stemMuteStates[st]
+    const blocked = (soloedStem && soloedStem !== st)
     if (!muted && !blocked) {
-      const p=stemNodes[st].gain.gain, t=audioContext.currentTime
+      const p = stemNodes[st].gain.gain, t = audioContext.currentTime
       p.cancelScheduledValues(t); p.setValueAtTime(p.value, t); p.linearRampToValueAtTime(vol, t + 0.01)
     }
   }
 }
 
 /* ---------- Master state helpers ---------- */
-function getRootText(){
-  const base=stemControlValues.master?.rootBase || 'A'
-  const acc =stemControlValues.master?.accidental || 'natural'
-  return acc==='sharp'?`${base}#` : acc==='flat'?`${base}b` : base
+function getRootText() {
+  const base = stemControlValues.master?.rootBase || 'A'
+  const acc = stemControlValues.master?.accidental || 'natural'
+  return acc === 'sharp' ? `${base}#` : acc === 'flat' ? `${base}b` : base
 }
-function getMasterForPrompt(){
+function getMasterForPrompt() {
   return {
     tempo: clampTempo(stemControlValues.master?.tempo ?? DEFAULT_TEMPO),
-    bars:  stemControlValues.master?.bars ?? DEFAULT_BARS,
-    root:  getRootText(),
-    mode:  stemControlValues.master?.mode || 'Minor'
+    bars: stemControlValues.master?.bars ?? DEFAULT_BARS,
+    root: getRootText(),
+    mode: stemControlValues.master?.mode || 'Minor'
   }
 }
 
 /* ---------- Mixer (Docked tray) ---------- */
-function volumeKnobHTML(st){
-  const v=stemControlValues[st]?.volume ?? 80
-  const label=stemConfigs[st]?.name || st
-  const ang=knobAngle(v)
+function volumeKnobHTML(st) {
+  const v = stemControlValues[st]?.volume ?? 80
+  const label = stemConfigs[st]?.name || st
+  const ang = knobAngle(v)
   // Use position in visibleInstruments for sequential numbering (1, 2, 3, etc.)
   const idx = visibleInstruments.indexOf(st) + 1
   return `\n        <div class="sg-mix-card relative flex flex-col items-center justify-center rounded-xl border border-white/15 bg-white/10 p-2 aspect-square select-none"\n             data-mix-card="${st}">\n          <span data-mix-number="${st}" class="absolute left-1 top-1 flex items-center justify-center w-4 h-4 rounded-full border border-white/30 text-[10px] font-semibold">${idx}</span>\n          <div class="text-[10px] mb-1 text-white/85">${label}</div>\n          <div class="relative w-12 h-12 rounded-full border border-white/25 bg-white/10 shadow-inner cursor-[ns-resize]"\n               data-mix-knob data-stem="${st}" data-value="${v}" title="${label} Volume">\n            <div class="absolute inset-0 rounded-full" style="box-shadow: inset 0 2px 6px rgba(0,0,0,0.35), inset 0 -1px 2px rgba(255,255,255,0.05)"></div>\n            <div class="absolute w-0.5 h-4 bg-white/90 rounded pointer-events-none"\n                 data-mix-pointer style="left:50%; bottom:50%; transform: translateX(-50%) rotate(${ang}deg); transform-origin: bottom center;"></div>\n          </div>\n          <div class="mt-1 text-[10px] text-white/80"><span data-mix-readout="${st}">${v}</span>%</div>\n          <div class="mt-1 flex gap-1">\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-mute" data-stem="${st}" aria-pressed="false">Mute</button>\n            <button class="sg-toggle px-1.5 py-0.5 text-[10px] rounded border border-white/15 hover:bg-white/10"\n                    data-action="mix-solo" data-stem="${st}" aria-pressed="false">Solo</button>\n          </div>\n        </div>\n      `
@@ -5395,10 +5425,10 @@ function volumeKnobHTML(st){
 // controls cutoff frequency.  Mute and Solo buttons are included
 // along with the channel number.  Use data attributes to attach
 // event handlers.
-function mixChannelRowHTML(st){
+function mixChannelRowHTML(st) {
   const name = stemConfigs[st]?.name || st
   // Use position in visibleInstruments for sequential numbering (1, 2, 3, etc.)
-  const idx  = visibleInstruments.indexOf(st) + 1
+  const idx = visibleInstruments.indexOf(st) + 1
   // Retrieve current state values; initialise to defaults (50 => 0 dB) if undefined
   const volVal = stemControlValues[st]?.volume ?? 50
   const eq = stemEqValues[st] || { low: EQ_DEFAULT, mid: EQ_DEFAULT, high: EQ_DEFAULT }
@@ -5453,8 +5483,8 @@ function mixChannelRowHTML(st){
     </div>
   `
 }
-function buildFloatingMixerPanel(){
-  const tray=document.getElementById('mixerTray')
+function buildFloatingMixerPanel() {
+  const tray = document.getElementById('mixerTray')
   if (!tray) return
   let grid = tray.querySelector('#mixerGrid')
   // Create the grid element if it doesn't exist
@@ -5476,8 +5506,8 @@ function buildFloatingMixerPanel(){
   visibleInstruments.forEach(updateMixerGlow)
   visibleInstruments.forEach(updateCardNumberColor)
 }
-function setMixerOpen(open){
-  const tray=document.getElementById('mixerTray')
+function setMixerOpen(open) {
+  const tray = document.getElementById('mixerTray')
   if (!tray) return
   // Expand the mixer to full viewport height when open; collapse to zero when closed
   tray.style.maxHeight = open ? '100vh' : '0px'
@@ -5487,7 +5517,7 @@ function setMixerOpen(open){
   if (toggleBtn) {
     // Update the desktop label only.  The mobile label remains 'mixer' regardless of state.
     const desktopSpan = toggleBtn.querySelector('span.hidden.sm\\:inline')
-    const mobileSpan  = toggleBtn.querySelector('span.inline.sm\\:hidden')
+    const mobileSpan = toggleBtn.querySelector('span.inline.sm\\:hidden')
     if (desktopSpan) desktopSpan.textContent = open ? 'close mixer' : 'open mixer'
     // Do not modify the mobile label (mobileSpan) so it stays 'mixer'
     toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
@@ -5515,17 +5545,17 @@ function setMixerOpen(open){
     if (closeBtn) closeBtn.classList.add('hidden')
   }
 }
-function toggleMixerOpen(){
-  const tray=document.getElementById('mixerTray')
+function toggleMixerOpen() {
+  const tray = document.getElementById('mixerTray')
   if (!tray) return
   const open = tray.dataset.open === '1'
   setMixerOpen(!open)
 }
 
 /* ---------- Hotkey helpers ---------- */
-function toggleMute(st){
+function toggleMute(st) {
   stemMuteStates[st] = !stemMuteStates[st]
-  const vol = (stemControlValues[st]?.volume ?? 80)/100
+  const vol = (stemControlValues[st]?.volume ?? 80) / 100
   const target = stemMuteStates[st] ? 0 : vol
   if (stemNodes[st]?.gain) {
     const p = stemNodes[st].gain.gain, t = audioContext.currentTime
@@ -5544,7 +5574,7 @@ function toggleMute(st){
 // the app no longer exposes a master tempo slider or readout.
 
 // new helper functions for card numbers and history indicators
-function updateHistoryIndicator(st){
+function updateHistoryIndicator(st) {
   ensureStemHistory(st)
   const count = stemHistory[st]?.length || 0
   const active = (stemActiveIndex[st] != null && stemActiveIndex[st] >= 0) ? (stemActiveIndex[st] + 1) : 0
@@ -5781,7 +5811,7 @@ function updateCleanButtonState(st) {
   }
 }
 
-function updateCardNumberColor(st){
+function updateCardNumberColor(st) {
   const nTakes = (stemHistory[st]?.length || 0)
   const muted = stemMuteStates[st]
   const color = (nTakes === 0 || muted) ? '#ef4444' : '#ffffff'
@@ -5796,13 +5826,13 @@ function updateCardNumberColor(st){
     mixNumEl.style.borderColor = color
   }
 }
-function updateMutedBorder(st){
+function updateMutedBorder(st) {
   const card = document.querySelector(`[data-stem="${st}"]`)
   if (card) {
     if (stemMuteStates[st]) card.classList.add('sg-muted-border')
     else card.classList.remove('sg-muted-border')
   }
-  const mixCard=document.querySelector(`[data-mix-card="${st}"]`)
+  const mixCard = document.querySelector(`[data-mix-card="${st}"]`)
   if (mixCard) {
     if (stemMuteStates[st]) mixCard.classList.add('sg-muted-border')
     else mixCard.classList.remove('sg-muted-border')
@@ -5850,8 +5880,8 @@ function setupEventListeners() {
 
   // Generate settings modal buttons.  Cancel simply closes the modal; Start applies settings and triggers generation.
   const genCancelBtn = document.getElementById('generateSettingsCancelBtn')
-  const genStartBtn  = document.getElementById('generateSettingsStartBtn')
-  const genOverlay   = document.getElementById('generateSettingsOverlay')
+  const genStartBtn = document.getElementById('generateSettingsStartBtn')
+  const genOverlay = document.getElementById('generateSettingsOverlay')
   if (genCancelBtn) genCancelBtn.addEventListener('click', () => hideGenerateSettingsModal())
   if (genOverlay) genOverlay.addEventListener('click', () => hideGenerateSettingsModal())
   if (genStartBtn) genStartBtn.addEventListener('click', () => { applyGenerateSettingsAndStart() })
@@ -5916,7 +5946,7 @@ function setupEventListeners() {
   document.addEventListener('keydown', async (e) => {
     const ae = document.activeElement
     const tag = (ae && ae.tagName) || ''
-    const editing = (ae && (ae.isContentEditable || ['INPUT','TEXTAREA','SELECT'].includes(tag)))
+    const editing = (ae && (ae.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)))
     if (editing) return
 
     // Space: toggle transport
@@ -5999,7 +6029,7 @@ function setupEventListeners() {
 
   // Master Volume: controls the global output gain.  Updates the text display and ramps the master gain.
   const masterVolSlider = document.getElementById('masterVolumeSlider')
-  const masterVolValue  = document.getElementById('masterVolumeValue')
+  const masterVolValue = document.getElementById('masterVolumeValue')
   if (masterVolSlider) {
     // Initialize the slider display based on the current masterGain value, if available
     if (masterVolValue && typeof masterGain?.gain?.value === 'number') {
@@ -6077,7 +6107,7 @@ function setupEventListeners() {
         const muted = stemMuteStates[st]
         const soloedOther = (soloedStem && soloedStem !== st)
         const previewActive = !!likePreviewSource
-        const val = (muted || soloedOther || previewActive) ? 0 : (v/100)
+        const val = (muted || soloedOther || previewActive) ? 0 : (v / 100)
         g.linearRampToValueAtTime(val, now + 0.01)
       }
       return
@@ -6150,7 +6180,7 @@ function setupEventListeners() {
     } else if (sliderEl.dataset.mixFilter === 'cutoff') {
       // Show frequency
       const hz = knobToFreq(val)
-      text = hz >= 1000 ? `${(hz/1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
+      text = hz >= 1000 ? `${(hz / 1000).toFixed(hz >= 10000 ? 0 : 1)} kHz` : `${Math.round(hz)} Hz`
     }
     sliderTooltipEl.textContent = text
     // Position tooltip relative to pointer
@@ -6214,7 +6244,7 @@ function setupEventListeners() {
   function applyDialButtonStep(btn) {
     if (!btn) return
     const type = btn.getAttribute('data-dial-type')
-    const st   = btn.getAttribute('data-stem')
+    const st = btn.getAttribute('data-stem')
     const stepAttr = btn.getAttribute('data-dial-step')
     const step = stepAttr ? parseFloat(stepAttr) || 0 : 0
     if (!type || !st || !step) return
@@ -6281,13 +6311,13 @@ function setupEventListeners() {
 
   // EQ knob gestures
   let activeEqKnob = null, startX = 0, startY = 0, startVal = 0
-  function onEqMove(e){ if(!activeEqKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,startVal+delta*0.5)); setEqValue(activeEqKnob.stem, activeEqKnob.band, v) }
-  function onEqUp(){ activeEqKnob=null; window.removeEventListener('pointermove',onEqMove); window.removeEventListener('pointerup',onEqUp) }
+  function onEqMove(e) { if (!activeEqKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, startVal + delta * 0.5)); setEqValue(activeEqKnob.stem, activeEqKnob.band, v) }
+  function onEqUp() { activeEqKnob = null; window.removeEventListener('pointermove', onEqMove); window.removeEventListener('pointerup', onEqUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-eq-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); const val=Number(k.getAttribute('data-value'))||EQ_DEFAULT
+    const st = k.getAttribute('data-stem'); const band = k.getAttribute('data-band'); const val = Number(k.getAttribute('data-value')) || EQ_DEFAULT
     if (e.shiftKey) { setEqValue(st, band, 0); return }
-    activeEqKnob={stem:st, band}; startX=e.clientX??0; startY=e.clientY??0; startVal=val
+    activeEqKnob = { stem: st, band }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; startVal = val
     window.addEventListener('pointermove', onEqMove); window.addEventListener('pointerup', onEqUp)
   })
   document.addEventListener('dblclick', e => {
@@ -6297,13 +6327,13 @@ function setupEventListeners() {
 
   // Filter knob gestures
   let activeFilterKnob = null, fStartVal = 0
-  function onFilterMove(e){ if(!activeFilterKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,fStartVal+delta*0.5)); setFilterCutoff(activeFilterKnob.stem, v) }
-  function onFilterUp(){ activeFilterKnob=null; window.removeEventListener('pointermove',onFilterMove); window.removeEventListener('pointerup',onFilterUp) }
+  function onFilterMove(e) { if (!activeFilterKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, fStartVal + delta * 0.5)); setFilterCutoff(activeFilterKnob.stem, v) }
+  function onFilterUp() { activeFilterKnob = null; window.removeEventListener('pointermove', onFilterMove); window.removeEventListener('pointerup', onFilterUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-filter-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value'))||freqToKnob(FILTER_DEFAULT_HZ)
+    const st = k.getAttribute('data-stem'); const val = Number(k.getAttribute('data-value')) || freqToKnob(FILTER_DEFAULT_HZ)
     if (e.shiftKey) { setFilterCutoff(st, freqToKnob(FILTER_DEFAULT_HZ)); return }
-    activeFilterKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; fStartVal=val
+    activeFilterKnob = { stem: st }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; fStartVal = val
     window.addEventListener('pointermove', onFilterMove); window.addEventListener('pointerup', onFilterUp)
   })
   document.addEventListener('dblclick', e => {
@@ -6313,13 +6343,13 @@ function setupEventListeners() {
 
   // Mixer knobs
   let activeMixKnob = null, mStartVal = 0
-  function onMixMove(e){ if(!activeMixKnob) return; const dx=(e.clientX??0)-startX; const dy=startY-(e.clientY??0); const delta=dy+dx*0.35; const v=Math.max(0,Math.min(100,mStartVal+delta*0.5)); setVolumeUnified(activeMixKnob.stem, v) }
-  function onMixUp(){ activeMixKnob=null; window.removeEventListener('pointermove',onMixMove); window.removeEventListener('pointerup',onMixUp) }
+  function onMixMove(e) { if (!activeMixKnob) return; const dx = (e.clientX ?? 0) - startX; const dy = startY - (e.clientY ?? 0); const delta = dy + dx * 0.35; const v = Math.max(0, Math.min(100, mStartVal + delta * 0.5)); setVolumeUnified(activeMixKnob.stem, v) }
+  function onMixUp() { activeMixKnob = null; window.removeEventListener('pointermove', onMixMove); window.removeEventListener('pointerup', onMixUp) }
   document.addEventListener('pointerdown', e => {
     const k = e.target.closest('[data-mix-knob]'); if (!k) return
-    const st = k.getAttribute('data-stem'); const val=Number(k.getAttribute('data-value')) || (stemControlValues[st]?.volume ?? 80)
+    const st = k.getAttribute('data-stem'); const val = Number(k.getAttribute('data-value')) || (stemControlValues[st]?.volume ?? 80)
     if (e.shiftKey) { setVolumeUnified(st, 0); return }
-    activeMixKnob={stem:st}; startX=e.clientX??0; startY=e.clientY??0; mStartVal=val
+    activeMixKnob = { stem: st }; startX = e.clientX ?? 0; startY = e.clientY ?? 0; mStartVal = val
     window.addEventListener('pointermove', onMixMove); window.addEventListener('pointerup', onMixUp)
   })
   document.addEventListener('dblclick', e => {
@@ -6826,7 +6856,7 @@ function setupEventListeners() {
     const target = e.target
     if (!target || !target.getAttribute) return
     const action = target.getAttribute('data-action')
-    const st     = target.getAttribute('data-stem')
+    const st = target.getAttribute('data-stem')
     if (!st || !action) return
     if (action === 'adjust-volume') {
       handleVolumeSlider(st, target.value)
@@ -6845,80 +6875,80 @@ function setupEventListeners() {
 }
 
 /* ---------- EQ/Filter setters ---------- */
-function setEqValue(st, band, newVal){
-  const v=Math.max(0, Math.min(100, Math.round(newVal)))
+function setEqValue(st, band, newVal) {
+  const v = Math.max(0, Math.min(100, Math.round(newVal)))
   stemEqValues[st] = { ...(stemEqValues[st] || {}), [band]: v }
-  const knob=document.querySelector(`[data-eq-knob][data-stem="${st}"][data-band="${band}"]`)
+  const knob = document.querySelector(`[data-eq-knob][data-stem="${st}"][data-band="${band}"]`)
   if (knob) updateEqKnobVisual(knob, v)
   updateEqReadout(st, band)
-  const eq=stemNodes[st]?.eq
+  const eq = stemNodes[st]?.eq
   if (eq) applyEqValuesToNodes(eq, stemEqValues[st])
 }
-function setFilterCutoff(st, newVal){
-  const v=Math.max(0, Math.min(100, Math.round(newVal)))
+function setFilterCutoff(st, newVal) {
+  const v = Math.max(0, Math.min(100, Math.round(newVal)))
   stemFilterValues[st] = { ...(stemFilterValues[st] || {}), cutoff: v }
-  const knob=document.querySelector(`[data-filter-knob][data-stem="${st}"]`)
+  const knob = document.querySelector(`[data-filter-knob][data-stem="${st}"]`)
   if (knob) updateFilterKnobVisual(knob, v)
   updateFilterReadout(st)
-  const filter=stemNodes[st]?.filter
+  const filter = stemNodes[st]?.filter
   if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
 }
-function toggleFilterMode(st){
-  const current=(stemFilterValues[st]||{}).mode || 'lowpass'
-  const next=current==='lowpass' ? 'highpass' : 'lowpass'
+function toggleFilterMode(st) {
+  const current = (stemFilterValues[st] || {}).mode || 'lowpass'
+  const next = current === 'lowpass' ? 'highpass' : 'lowpass'
   stemFilterValues[st] = { ...(stemFilterValues[st] || {}), mode: next }
   updateFilterModeButton(st)
-  const filter=stemNodes[st]?.filter
+  const filter = stemNodes[st]?.filter
   if (filter) applyFilterValuesToNode(filter, stemFilterValues[st])
 }
 
 /* =========================================================
    History UI
    ========================================================= */
-function updateHistoryBadge(st){
-  const badgeEls=document.querySelectorAll(`[data-history-count="${st}"]`)
-  const n=stemHistory[st]?.length || 0
-  badgeEls.forEach(badge => { badge.textContent=n; badge.style.opacity = n > 0 ? '1' : '0.4' })
+function updateHistoryBadge(st) {
+  const badgeEls = document.querySelectorAll(`[data-history-count="${st}"]`)
+  const n = stemHistory[st]?.length || 0
+  badgeEls.forEach(badge => { badge.textContent = n; badge.style.opacity = n > 0 ? '1' : '0.4' })
   updateHistoryIndicator(st)
   updateCardNumberColor(st)
   safeUpdateButtonStates(st)
 }
-function toggleHistoryDrawer(st, forceOpen=null){
-  const drawer=document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
-  const isOpen=drawer.classList.contains('open')
-  const open=forceOpen===null ? !isOpen : !!forceOpen
+function toggleHistoryDrawer(st, forceOpen = null) {
+  const drawer = document.querySelector(`[data-history-drawer="${st}"]`); if (!drawer) return
+  const isOpen = drawer.classList.contains('open')
+  const open = forceOpen === null ? !isOpen : !!forceOpen
   drawer.classList.toggle('open', open)
   drawer.style.maxHeight = open ? '160px' : '0px'
   if (open) renderHistoryDrawer(st)
 }
-function renderHistoryDrawer(st){
-  const list=document.querySelector(`[data-history-list="${st}"]`); if (!list) return
+function renderHistoryDrawer(st) {
+  const list = document.querySelector(`[data-history-list="${st}"]`); if (!list) return
   ensureStemHistory(st)
-  list.innerHTML=''
-  const takes=stemHistory[st]
+  list.innerHTML = ''
+  const takes = stemHistory[st]
   if (!takes.length) { list.innerHTML = `<div class="text-xs text-white/60 px-2 py-6">No takes yet. Create some!</div>`; return }
-  const active=stemActiveIndex[st]
+  const active = stemActiveIndex[st]
   takes.forEach((take, i) => {
-    const item=document.createElement('button')
-    item.className=`relative shrink-0 w-28 h-16 rounded-md border ${i===active?'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]':'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
+    const item = document.createElement('button')
+    item.className = `relative shrink-0 w-28 h-16 rounded-md border ${i === active ? 'border-purple-400 shadow-[0_0_0_2px_rgba(168,85,247,0.35)]' : 'border-white/10 hover:border-white/30'} bg-white/5 focus:outline-none focus:ring-2 focus:ring-purple-500/30`
     item.setAttribute('data-take-index', i)
     item.setAttribute('data-stem', st)
-    item.title=`v${i+1} • ${take.tempo} BPM • ${formatBarsForDisplay(take.bars, DEFAULT_BARS)} bars${take.isSeparated ? ' • Separated' : ''}`
+    item.title = `v${i + 1} • ${take.tempo} BPM • ${formatBarsForDisplay(take.bars, DEFAULT_BARS)} bars${take.isSeparated ? ' • Separated' : ''}`
 
-    const c=document.createElement('canvas'); c.width=112; c.height=64; c.className='w-full h-full rounded-md'
+    const c = document.createElement('canvas'); c.width = 112; c.height = 64; c.className = 'w-full h-full rounded-md'
     item.appendChild(c)
 
     // Add separated badge if this is a separated take
     if (take.isSeparated) {
-      const badge=document.createElement('div')
-      badge.className='absolute top-1 right-1 px-1.5 py-0.5 text-[9px] leading-none bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded flex items-center gap-0.5'
-      badge.innerHTML='<svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg><span>SEP</span>'
+      const badge = document.createElement('div')
+      badge.className = 'absolute top-1 right-1 px-1.5 py-0.5 text-[9px] leading-none bg-gradient-to-r from-blue-500 to-cyan-500 text-white rounded flex items-center gap-0.5'
+      badge.innerHTML = '<svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg><span>SEP</span>'
       item.appendChild(badge)
     }
 
-    const meta=document.createElement('div')
-    meta.className='absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
-    meta.textContent=`v${i+1} • ${take.tempo} • ${formatBarsForDisplay(take.bars, DEFAULT_BARS)}b`
+    const meta = document.createElement('div')
+    meta.className = 'absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[10px] leading-none bg-black/50 text-white/90 truncate'
+    meta.textContent = `v${i + 1} • ${take.tempo} • ${formatBarsForDisplay(take.bars, DEFAULT_BARS)}b`
     item.appendChild(meta)
 
     list.appendChild(item)
@@ -6929,17 +6959,17 @@ function renderHistoryDrawer(st){
     drawTinyWaveform(c, take.raw)
   })
 }
-function selectStemVersion(st, index){
+function selectStemVersion(st, index) {
   ensureStemHistory(st)
-  const takes=stemHistory[st]; if (!takes || index<0 || index>=takes.length) return
-  stemActiveIndex[st]=index
-  const take=takes[index]
+  const takes = stemHistory[st]; if (!takes || index < 0 || index >= takes.length) return
+  stemActiveIndex[st] = index
+  const take = takes[index]
   // Use the stored tempo and bar count from the take itself to build a
   // loop that matches the original generation.  Do not reference the current
   // master tempo, as each stem may have been generated at a different BPM.
-  const tempo  = take.tempo
-  const bars   = take.bars
-  stemRaw[st]  = take.raw
+  const tempo = take.tempo
+  const bars = take.bars
+  stemRaw[st] = take.raw
   const playbackBars = getPlaybackBars(bars, DEFAULT_BARS)
   const aligned = ensureTakeLoopReady(st, take)
   let playbackLoop = aligned?.loop
@@ -6974,16 +7004,16 @@ function selectStemVersion(st, index){
     const rawBuffer = take.raw || playbackLoop
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
-    console.log(`[Version] Extracted PCM for ${st} v${index+1} (${rawBuffer === take.raw ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
+    console.log(`[Version] Extracted PCM for ${st} v${index + 1} (${rawBuffer === take.raw ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
   } catch (pcmErr) {
     console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
-  const canvas=document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
+  const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
-    const cfg=stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
+    const cfg = stemConfigs[st]; drawWaveform(canvas, stemLoop[st], `rgb(${getColorRGB(cfg.color)})`)
   }
-  const statusEl=document.querySelector(`[data-stem="${st}"] .status-line`)
-  if (statusEl) statusEl.textContent=`Selected v${index+1} (${tempo} BPM • ${formatBarsForDisplay(bars, DEFAULT_BARS)} bars)`
+  const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
+  if (statusEl) statusEl.textContent = `Selected v${index + 1} (${tempo} BPM • ${formatBarsForDisplay(bars, DEFAULT_BARS)} bars)`
   renderHistoryDrawer(st)
   // Restore the saved endpoint factor and start offset for this take
   {
@@ -7009,10 +7039,10 @@ function selectStemVersion(st, index){
 /* =========================================================
    App init + navigation
    ========================================================= */
-function showPage(pageId){
-  const pages=['login-page', 'selection-page', 'techno-generator-page', 'favorites-page']
-  pages.forEach(id => { const page=document.getElementById(id); if (page) page.classList.add('hidden') })
-  const targetPage=document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
+function showPage(pageId) {
+  const pages = [ 'selection-page', 'techno-generator-page', 'favorites-page']
+  pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
+  const targetPage = document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
   currentPageId = pageId
   if (pageId !== 'favorites-page') {
     lastPageBeforeFavorites = pageId
@@ -7023,25 +7053,30 @@ function showPage(pageId){
   }
 
   // Show studio header on studio page
-  const studioHeader=document.getElementById('studioHeader')
+  const studioHeader = document.getElementById('studioHeader')
   const showStudioHeader = pageId === 'techno-generator-page'
   if (studioHeader) studioHeader.classList.toggle('hidden', !showStudioHeader)
 
   // Show bottom player only on Studio page
-  const playerBar=document.getElementById('playerBar')
+  const playerBar = document.getElementById('playerBar')
   const showDock = pageId === 'techno-generator-page'
   if (playerBar) playerBar.classList.toggle('hidden', !showDock)
   if (!showDock) setMixerOpen(false)
 }
 
-function openFavoritesPage(){
+// Expose navigation for fallback handlers
+if (typeof window !== 'undefined') {
+  window.showPage = showPage
+}
+
+function openFavoritesPage() {
   showPage('favorites-page')
   refreshFavoritesUI()
   window.lucide?.createIcons()
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
-function setupFavoritesPageNavigation(){
+function setupFavoritesPageNavigation() {
   const backBtn = document.getElementById('favoritesBackButton')
   if (backBtn) backBtn.addEventListener('click', () => showPage(lastPageBeforeFavorites))
 
@@ -7051,13 +7086,21 @@ function setupFavoritesPageNavigation(){
   const studioBtn = document.getElementById('favoritesOpenStudio')
   if (studioBtn) studioBtn.addEventListener('click', () => showPage('techno-generator-page'))
 }
-function setupNavigationListeners(){
+function setupNavigationListeners() {
   const loginBtn = document.getElementById('loginBtn')
-  if (loginBtn) loginBtn.addEventListener('click', () => { showPage('selection-page') })
+  if (loginBtn) loginBtn.addEventListener('click', async () => {
+    try {
+      const { showLoginModal } = await import('./Auth/loginPage.js')
+      if (typeof showLoginModal === 'function') {
+        showLoginModal()
+        return
+      }
+    } catch {}
+  })
   const launchTechno = document.getElementById('launchTechno')
   if (launchTechno) launchTechno.addEventListener('click', () => { showPage('techno-generator-page'); initTechnoGenerator() })
-  const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => {})
-  const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => {})
+  const launchHipHop = document.getElementById('launchHipHop'); if (launchHipHop) launchHipHop?.addEventListener('click', () => { })
+  const launchHouse = document.getElementById('launchHouse'); if (launchHouse) launchHouse?.addEventListener('click', () => { })
 }
 
 /* =========================================================
@@ -7253,7 +7296,7 @@ function updatePlusButtonVisibility() {
   }
 }
 
-function initTechnoGenerator(){
+function initTechnoGenerator() {
   // Prevent duplicate initialization
   if (technoGeneratorInitialized) {
     console.log('🎛️ Techno Generator already initialized')
@@ -7349,6 +7392,11 @@ function initTechnoGenerator(){
   console.log('✅ App ready (session ' + SESSION_TAG + ')')
 }
 
+// Expose init function for external triggers
+if (typeof window !== 'undefined') {
+  window.initTechnoGenerator = initTechnoGenerator
+}
+
 /**
  * Check Windows UAC elevation status and warn if running as Administrator
  */
@@ -7425,20 +7473,82 @@ function showBrowserDragWarning() {
   }
 }
 
-export async function initApp(){
+export async function initApp() {
   console.log('🎬 Initializing App Navigation System…')
 
   // Initialize WAV encoder worker for non-blocking audio encoding
   initWavEncoder()
   await initializeAutoDownloadSupport()
 
+  // Initialize authentication guard so auth events broadcast properly
+  try {
+    const { initializeAuthGuard } = await import('./Auth/authGuard.js')
+    await initializeAuthGuard()
+  } catch (err) {
+    console.error('AuthGuard initialization failed:', err)
+  }
+
   setupNavigationListeners()
-  // Start directly on the genre selection page instead of the login page
-  showPage('selection-page')
+  // Start directly in the studio
+  showPage('techno-generator-page')
+  initTechnoGenerator()
+  // Setup techno generator auth-aware UI and user menu handlers
+  setTimeout(async () => {
+    try {
+      const { setupTechnoGeneratorPage, checkAuthenticationStatus } = await import('./Auth/tecnoGeneratorPage.js')
+      if (typeof setupTechnoGeneratorPage === 'function') setupTechnoGeneratorPage()
+      if (typeof checkAuthenticationStatus === 'function') checkAuthenticationStatus()
+    } catch (error) {
+      console.error('Error setting up techno generator page auth:', error)
+    }
+  }, 100)
+  // Setup hash-based routing
+  setupRouteHandling()
+  // Wire auth listener to update menus and broadcast changes
+  setTimeout(async () => {
+    try {
+      const { getAuthGuard } = await import('./Auth/authGuard.js')
+      const { updateUserMenuVisibility, updateUserMenu } = await import('./UI/userMenu.js')
+      const guard = getAuthGuard()
+      guard.addAuthListener((event, session, user) => {
+        try { updateUserMenuVisibility() } catch { }
+        try { updateUserMenu() } catch { }
+        ;(async () => {
+          try {
+            const { updateEmailConfirmationNotification } = await import('./UI/emailConfirmationNotification.js')
+            if (typeof updateEmailConfirmationNotification === 'function') {
+              await updateEmailConfirmationNotification()
+            }
+          } catch {}
+        })()
+        try { window.dispatchEvent(new CustomEvent('authStateChanged', { detail: { event, session, user } })) } catch { }
+      })
+    } catch (error) {
+      console.error('Error wiring auth listener:', error)
+    }
+  }, 100)
   window.lucide?.createIcons()
   setupHelpModal()
   // Initialise the user menu in the header
   setupUserMenu()
+  try {
+    const { setupLoginPage } = await import('./Auth/loginPage.js')
+    const { setupResetPasswordPage } = await import('./Auth/resetPasswordPage.js')
+    const { setupProfilePage } = await import('./Auth/profilePage.js')
+    const { setupSelectionPage } = await import('./Auth/tecnoGeneratorPage.js')
+    if (typeof setupLoginPage === 'function') setupLoginPage()
+    if (typeof setupResetPasswordPage === 'function') setupResetPasswordPage()
+    if (typeof setupProfilePage === 'function') setupProfilePage()
+    if (typeof setupSelectionPage === 'function') setupSelectionPage()
+  } catch (e) { }
+  ;(async () => {
+    try {
+      const { updateEmailConfirmationNotification } = await import('./UI/emailConfirmationNotification.js')
+      if (typeof updateEmailConfirmationNotification === 'function') {
+        await updateEmailConfirmationNotification()
+      }
+    } catch {}
+  })()
   initLikesSetsMenu({
     getSessionInfo: getSessionSummaryInfo,
     onLoadSet: (idx) => openLoadSetModal(idx),
@@ -7484,6 +7594,66 @@ export async function initApp(){
     terminateWavEncoder()
   })
 }
+
+function setupRouteHandling() {
+  window.addEventListener('hashchange', handleHashChange)
+  handleHashChange()
+}
+
+async function handleHashChange() {
+  const rawHash = window.location.hash.substring(1)
+  const baseRoute = rawHash.split('?')[0].replace(/\/$/, '')
+  const hashParams = new URLSearchParams(rawHash.split('?')[1] || '')
+  const hasResetToken = hashParams.get('token') || hashParams.get('access_token')
+  switch (baseRoute) {
+    case 'login':
+      try {
+        const { showLoginModal } = await import('./Auth/loginPage.js')
+        if (typeof showLoginModal === 'function') {
+          showLoginModal()
+          break
+        }
+      } catch {}
+      break
+    case 'selection':
+      showPage('selection-page')
+      break
+    case 'studio':
+    case 'techno-generator':
+      showPage('techno-generator-page')
+      initTechnoGenerator()
+      break
+    case 'reset-password':
+      showPage('reset-password-page')
+      break
+    case 'confirm-email':
+      showPage('confirm-email-page')
+      break
+    case 'profile':
+      try {
+        const { getAuthGuard } = await import('./Auth/authGuard.js')
+        const authGuard = getAuthGuard()
+        if (!authGuard.getIsAuthenticated()) {
+          showPage('techno-generator-page')
+          initTechnoGenerator()
+          break
+        }
+      } catch { }
+      showPage('profile-page')
+      break
+    default:
+      if (/access_token|type=recovery|token=/.test(rawHash)) {
+        showPage('reset-password-page')
+        break
+      }
+      if (!baseRoute) {
+        showPage('techno-generator-page')
+        initTechnoGenerator()
+      }
+      break
+  }
+}
+
 
 // -----------------------------------------------------------------------------
 // UI Overrides
@@ -7541,11 +7711,11 @@ function customHeaderActionButtonsMobileHTML(st) {
 /* =========================================================
    Global styles
    ========================================================= */
-function injectGlobalStyles(){
+function injectGlobalStyles() {
   if (document.getElementById('sg-global-styles')) return
-  const style=document.createElement('style')
-  style.id='sg-global-styles'
-  style.textContent=
+  const style = document.createElement('style')
+  style.id = 'sg-global-styles'
+  style.textContent =
     `@keyframes soft-pulse-glow {\n      0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.28), 0 0 16px rgba(255,255,255,0.12); transform: translateY(0) scale(1); }\n      50%      { box-shadow: 0 0 0 12px rgba(255,255,255,0), 0 0 22px rgba(255,255,255,0.22); transform: translateY(-0.5px) scale(1.012); }\n    }\n    #playBtn { animation: soft-pulse-glow 2.6s ease-in-out infinite; transition: transform 160ms ease, box-shadow 160ms ease; will-change: transform, box-shadow; }\n    #playBtn:hover { transform: translateY(-1px) scale(1.02); }\n    #playBtn:active { transform: translateY(0); }\n    .sg-mix-card.sg-glow { animation: soft-pulse-glow 2.6s ease-in-out infinite; }\n    .sg-toggle-active { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); }`;
   document.head.appendChild(style)
 }
@@ -7553,13 +7723,13 @@ function injectGlobalStyles(){
 /* =========================================================
    Help Modal setup
    ========================================================= */
-function setupHelpModal(){
+function setupHelpModal() {
   const helpBtn = document.getElementById('helpBtn')
   const helpModal = document.getElementById('helpModal')
   const overlay = document.getElementById('helpModalOverlay')
   const closeBtn = document.getElementById('helpModalCloseBtn')
   if (!helpModal) return
-  function openModal(){
+  function openModal() {
     helpModal.classList.remove('hidden')
     requestAnimationFrame(() => {
       helpModal.style.opacity = '1'
@@ -7567,7 +7737,7 @@ function setupHelpModal(){
     // Disable body scroll while help modal is open
     document.body.style.overflow = 'hidden'
   }
-  function closeModal(){
+  function closeModal() {
     helpModal.style.opacity = '0'
     setTimeout(() => {
       helpModal.classList.add('hidden')
@@ -7613,17 +7783,17 @@ function buildGenerateSettingsContent(st) {
     if (c.type === 'knob') {
       // Use a taller track for mobile (h-3) and add touch-action-none to prevent page scrolling while dragging.
       html += `<div class="flex items-center gap-2">\n` +
-              `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
-              // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
-              `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
-              `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
-              `</div>`
+        `  <label class="w-24 shrink-0 text-xs text-white/80">${c.label}</label>\n` +
+        // Make sliders taller on mobile for easier dragging.  Use h-4 on small screens and h-2 on larger screens.
+        `  <input type="range" data-gen-control="${key}" data-unit="${c.unit || ''}" min="${c.min}" max="${c.max}" value="${val}" step="1" class="flex-1 h-4 sm:h-2 bg-white/10 rounded-lg cursor-pointer touch-action-none">\n` +
+        `  <span class="text-xs w-8 text-right">${val}${c.unit || ''}</span>\n` +
+        `</div>`
     } else if (c.type === 'toggle') {
       const checked = val ? 'checked' : ''
       html += `<label class="flex items-center gap-2 text-xs text-white/90">\n` +
-              `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
-              `  <span>${c.label}</span>\n` +
-              `</label>`
+        `  <input type="checkbox" data-gen-control="${key}" ${checked} class="w-4 h-4 rounded border-white/40 bg-transparent">\n` +
+        `  <span>${c.label}</span>\n` +
+        `</label>`
     }
   }
   return html

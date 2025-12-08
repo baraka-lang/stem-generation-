@@ -73,15 +73,17 @@ function setupLoginButton() {
   loginBtn.addEventListener('click', (e) => {
     e.preventDefault()
     e.stopPropagation()
-    console.log('🔑 Login button clicked - navigating to login page')
-    
-    // Navigate to login page
-    if (typeof window.showPage === 'function') {
-      window.showPage('login-page')
-    } else {
-      // Fallback: navigate to login page URL
-      window.location.href = '#login-page'
-    }
+    console.log('🔑 Login button clicked')
+    ;(async () => {
+      try {
+        const { showLoginModal } = await import('../Auth/loginPage.js')
+        if (typeof showLoginModal === 'function') {
+          showLoginModal()
+          return
+        }
+      } catch {}
+      window.location.hash = '#login'
+    })()
   })
 }
 

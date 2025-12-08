@@ -57,7 +57,7 @@ export async function checkAuthenticationStatus() {
 
   if (!userStatusContainer) {
     console.error('❌ userStatusContainer not found in techno generator page')
-    return
+    return 
   }
   if (!loggedInUserMenu) {
     console.error('❌ loggedInUserMenu not found in techno generator page')
@@ -83,13 +83,34 @@ export async function checkAuthenticationStatus() {
 function renderAuthenticatedUI(user) {
   const userMenuBtn = document.getElementById('userMenuBtn')
   const loginBtn = document.getElementById('loginBtn')
+  const studioMenu = document.querySelector('[data-anchor-id="studio-menu"]')
+  const userMenu = document.getElementById('userMenu')
   
   // Show user menu button, hide login button
   if (userMenuBtn) {
     userMenuBtn.classList.remove('hidden')
+    userMenuBtn.setAttribute('title', `User menu (${user.email})`)
   }
   if (loginBtn) {
     loginBtn.classList.add('hidden')
+  }
+
+  if (studioMenu) {
+    studioMenu.setAttribute('title', `Likes & Sets (${user.email})`)
+  }
+
+  if (userMenu) {
+    const existingEmail = userMenu.querySelector('#userEmail')
+    if (existingEmail) {
+      existingEmail.textContent = user.email
+    } else {
+      const emailRow = document.createElement('div')
+      emailRow.className = 'px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center'
+      emailRow.innerHTML = '<span>Email</span><span id="userEmail" class="font-medium"></span>'
+      userMenu.insertBefore(emailRow, userMenu.firstChild)
+      const emailSpan = userMenu.querySelector('#userEmail')
+      if (emailSpan) emailSpan.textContent = user.email
+    }
   }
 
   // Setup dropdown functionality (with a small delay to ensure DOM is ready)
@@ -122,13 +143,15 @@ function renderGuestUI() {
   // Add event listener for the login button
   if (loginBtn) {
     loginBtn.addEventListener('click', () => {
-      window.location.hash = '#login'
-      // Fallback: directly show login page if hash change doesn't work
-      setTimeout(() => {
-        if (window.showPage) {
-          window.showPage('login-page')
-        }
-      }, 50)
+      ;(async () => {
+        try {
+          const { showLoginModal } = await import('./loginPage.js')
+          if (typeof showLoginModal === 'function') {
+            showLoginModal()
+            return
+          }
+        } catch {}
+      })()
     })
   }
 }
@@ -466,4 +489,189 @@ export function showDownloadRestrictionModal() {
       document.body.removeChild(modal)
     }
   })
+}
+
+export function setupSelectionPage() {
+  try {
+    selectionCheckAuthenticationStatus()
+  } catch {}
+  window.addEventListener('authStateChanged', () => { selectionCheckAuthenticationStatus() })
+}
+
+export async function selectionCheckAuthenticationStatus() {
+  try {
+    const authGuard = getAuthGuard()
+    const isAuthenticated = authGuard.getIsAuthenticated()
+    const currentUser = authGuard.getCurrentUser()
+    const userStatusContainer = document.getElementById('userStatusContainer')
+    const loggedInUserMenu = document.getElementById('logedInUserMenu')
+    const guestModeNotice = document.getElementById('guestModeNotice')
+    if (isAuthenticated && currentUser) {
+      renderSelectionAuthenticatedUI(currentUser)
+      if (loggedInUserMenu) loggedInUserMenu.classList.remove('hidden')
+      if (guestModeNotice) guestModeNotice.classList.add('hidden')
+    } else {
+      renderSelectionGuestUI()
+      if (loggedInUserMenu) loggedInUserMenu.classList.add('hidden')
+      if (guestModeNotice) guestModeNotice.classList.remove('hidden')
+    }
+  } catch { }
+}
+
+function renderSelectionAuthenticatedUI(user) {
+  const userStatusContainer = document.getElementById('userStatusContainer')
+  const loggedInUserMenu = document.getElementById('logedInUserMenu')
+  if (!userStatusContainer || !loggedInUserMenu) return
+  userStatusContainer.innerHTML = `<div class="flex items-center space-x-4"><span class="text-sm text-white/60">Welcome, ${user.email}</span></div>`
+  loggedInUserMenu.innerHTML = `
+    <div class="flex items-center space-x-4">
+      <button data-likes-menu-toggle data-anchor-id="selection-menu"
+        class="w-9 h-9 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10 transition"
+        title="Likes &amp; Sets">
+        <i data-lucide="memory-stick" class="w-4 h-4"></i>
+      </button>
+      <button id="helpBtnSel" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
+        <i data-lucide="help-circle" class="w-4 h-4"></i>
+      </button>
+      <div class="relative">
+        <button id="userMenuBtnSel" class="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10" aria-haspopup="true" aria-expanded="false" title="User menu">
+          <i data-lucide="user" class="w-4 h-4"></i>
+        </button>
+        <div id="userMenuSel" class="absolute right-0 top-full mt-2 w-40 bg-zinc-800 border border-white/10 rounded-md shadow-lg hidden z-40">
+          
+          <div class="px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center">
+            <span>Credits</span>
+            <span id="headerCreditsValue" class="font-medium">100</span>
+          </div>
+          <button id="userMenuLibrary" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Library</button>
+          <button id="userMenuAccountSel" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Account</button>
+          <button id="userMenuLogoutSel" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Log out</button>
+        </div>
+      </div>
+    </div>
+  `
+  setTimeout(() => { setupSelectionUserMenuDropdown() }, 50)
+  setupSelectionHelpButton()
+  updateSelectionUserMenuInfo(user)
+  try { window.lucide?.createIcons() } catch {}
+  ;(async () => {
+    try {
+      const { initLikesSetsMenu } = await import('../UI/likesSetsMenu.js')
+      if (typeof initLikesSetsMenu === 'function') initLikesSetsMenu()
+    } catch {}
+  })()
+}
+
+function renderSelectionGuestUI() {
+  const userStatusContainer = document.getElementById('userStatusContainer')
+  if (!userStatusContainer) return
+  userStatusContainer.innerHTML = `
+    <div class="flex items-center space-x-4">
+      <span class="text-sm text-white/60">Guest Mode</span>
+      <button id="loginBtnSel" class="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105">Login</button>
+    </div>
+  `
+  const loginBtn = document.getElementById('loginBtnSel')
+  if (loginBtn) {
+    loginBtn.addEventListener('click', () => {
+      ;(async () => {
+        try {
+          const { showLoginModal } = await import('./loginPage.js')
+          if (typeof showLoginModal === 'function') {
+            showLoginModal()
+            return
+          }
+        } catch {}
+      })()
+    })
+  }
+}
+
+function setupSelectionHelpButton() {
+  const helpBtn = document.getElementById('helpBtnSel')
+  if (helpBtn) {
+    helpBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const helpModal = document.getElementById('helpModal')
+      if (helpModal) {
+        helpModal.classList.remove('hidden')
+        requestAnimationFrame(() => { helpModal.style.opacity = '1' })
+        document.body.style.overflow = 'hidden'
+      }
+    })
+  }
+}
+
+function setupSelectionUserMenuDropdown() {
+  setTimeout(() => {
+    const userMenuBtn = document.getElementById('userMenuBtnSel')
+    const userMenu = document.getElementById('userMenuSel')
+    if (!userMenuBtn || !userMenu) return
+    const newUserMenuBtn = userMenuBtn.cloneNode(true)
+    const newUserMenu = userMenu.cloneNode(true)
+    userMenuBtn.parentNode.replaceChild(newUserMenuBtn, userMenuBtn)
+    userMenu.parentNode.replaceChild(newUserMenu, userMenu)
+    newUserMenuBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const isHidden = newUserMenu.classList.contains('hidden')
+      if (isHidden) {
+        newUserMenu.classList.remove('hidden')
+        newUserMenuBtn.setAttribute('aria-expanded', 'true')
+      } else {
+        newUserMenu.classList.add('hidden')
+        newUserMenuBtn.setAttribute('aria-expanded', 'false')
+      }
+    })
+    const clickOutsideHandler = (e) => {
+      if (newUserMenu.classList.contains('hidden')) return
+      const target = e.target
+      if (newUserMenu.contains(target) || newUserMenuBtn.contains(target)) return
+      newUserMenu.classList.add('hidden')
+      newUserMenuBtn.setAttribute('aria-expanded', 'false')
+    }
+    document.addEventListener('click', clickOutsideHandler)
+    setupSelectionUserMenuItems()
+  }, 100)
+}
+
+function setupSelectionUserMenuItems() {
+  const libraryBtn = document.getElementById('userMenuLibrary')
+  if (libraryBtn) {
+    libraryBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      alert('Library feature coming soon!')
+    })
+  }
+  const accountBtn = document.getElementById('userMenuAccountSel')
+  if (accountBtn) {
+    accountBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      window.location.hash = '#profile'
+      setTimeout(() => { if (window.showPage) window.showPage('profile-page') }, 50)
+    })
+  }
+  const logoutBtn = document.getElementById('userMenuLogoutSel')
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      await handleSelectionLogout()
+    })
+  }
+}
+
+async function updateSelectionUserMenuInfo(user) {
+  try {
+    const creditsElement = document.getElementById('headerCreditsValue')
+    if (creditsElement) creditsElement.textContent = '100'
+  } catch { }
+}
+
+async function handleSelectionLogout() {
+  try {
+    const { error } = await signOut()
+    if (error) return
+    await selectionCheckAuthenticationStatus()
+  } catch { }
 }

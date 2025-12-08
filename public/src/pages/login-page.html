@@ -1,45 +1,19 @@
-<!-- Login Page -->
-<div id="login-page" class="hidden min-h-screen flex flex-col">
-  <!-- Header -->
-  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
-    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-      <!-- Logo Section -->
-      <div class="flex items-center space-x-3">
-        <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
-          <i data-lucide="music" class="w-6 h-6 text-white"></i>
-        </div>
-        <div>
-          <h1 class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
-            343 Labs
-          </h1>
-          <p class="text-xs text-white/60">AI Music Studio</p>
-        </div>
-      </div>
+<!-- Login Modal -->
+<div id="loginModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="loginModalOverlay"></div>
+  <div class="relative w-full max-w-md max-h-[90vh] overflow-y-auto">
+    <div class="player-surface card-border rounded-2xl p-8 transform scale-95 transition-all duration-300 ease-out">
+      <!-- Close Button -->
+      <button id="loginModalCloseBtn" class="absolute top-4 right-4 text-white/60 hover:text-white transition-colors" aria-label="Close">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
 
-      <!-- Navigation -->
-      <nav style="display: none;" class="hidden md:flex items-center space-x-8">
-        <a href="#features" class="text-white/70 hover:text-white transition">Features</a>
-        <a href="#how-it-works" class="text-white/70 hover:text-white transition">How It Works</a>
-        <a href="#pricing" class="text-white/70 hover:text-white transition">Pricing</a>
-        <a href="#contact" class="text-white/70 hover:text-white transition">Contact</a>
-      </nav>
-
-      <!-- Login Button -->
-      <a href="" class="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105">
-        Go Demo
-      </a>
-    </div>
-  </header>
-
-  <!-- Main Content -->
-  <div class="flex-1 flex items-center justify-center p-4">
-    <div class="max-w-md w-full">
       <!-- Page Header -->
-      <div class="text-center mb-8">
-        <h1 class="text-5xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
-          343 Labs AI Music Studio
+      <div class="text-center mb-6">
+        <h1 class="text-3xl font-bold mb-2 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+          TunePal AI Studio. (BETA Version)
         </h1>
-        <p class="text-xl text-white/60 mb-8">
+        <p class="text-sm text-white/60">
           Create professional-quality stems with AI-powered music generation
         </p>
       </div>
@@ -298,6 +272,7 @@
           <span>Demo Mode: Supabase not configured. Authentication features are disabled.</span>
         </div>
       </div>
+    </div>
     </div>
   </div>
 </div>

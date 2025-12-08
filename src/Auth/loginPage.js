@@ -6,6 +6,34 @@
 import { signIn, signUp, resetPassword } from './index.js'
 import { initializeUserProfile } from './userProfile.js'
 
+export function showLoginModal() {
+  const modal = document.getElementById('loginModal')
+  if (!modal) return
+  modal.classList.remove('hidden')
+  setTimeout(() => {
+    modal.classList.remove('opacity-0')
+    const panel = modal.querySelector('.transform')
+    if (panel) {
+      panel.classList.remove('scale-95')
+      panel.classList.add('scale-100')
+    }
+  }, 10)
+}
+
+export function hideLoginModal() {
+  const modal = document.getElementById('loginModal')
+  if (!modal) return
+  modal.classList.add('opacity-0')
+  const panel = modal.querySelector('.transform')
+  if (panel) {
+    panel.classList.remove('scale-100')
+    panel.classList.add('scale-95')
+  }
+  setTimeout(() => {
+    modal.classList.add('hidden')
+  }, 300)
+}
+
 /**
  * Initialize login page functionality
  */
@@ -377,7 +405,20 @@ export function setupLoginPage() {
       const { user, error } = await signIn(email, password)
 
       if (error) {
-        showError(getErrorMessage(error))
+        const msg = getErrorMessage(error)
+        showError(msg)
+        ;(async () => {
+          try {
+            const lower = (msg || '').toLowerCase()
+            if (lower.includes('verify your email') || lower.includes('email not confirmed')) {
+              try { localStorage.setItem('pendingEmail', email) } catch {}
+              const { showEmailConfirmationNotification } = await import('../UI/emailConfirmationNotification.js')
+              if (typeof showEmailConfirmationNotification === 'function') {
+                showEmailConfirmationNotification(email)
+              }
+            }
+          } catch {}
+        })()
         return
       }
 
@@ -385,10 +426,10 @@ export function setupLoginPage() {
         // Initialize user profile
         await initializeUserProfile(user)
 
-        showSuccess('Login successful! Redirecting...')
-
-
-        document.location.href = '/'
+        showSuccess('Login successful!')
+        setTimeout(() => {
+          hideLoginModal()
+        }, 1200)
       }
     } catch (error) {
       console.error('Login error:', error)
@@ -818,3 +859,17 @@ export function setupLoginPage() {
   }
 
 }
+  const loginModal = document.getElementById('loginModal')
+  const loginModalOverlay = document.getElementById('loginModalOverlay')
+  const loginModalCloseBtn = document.getElementById('loginModalCloseBtn')
+
+  if (loginModalOverlay) {
+    loginModalOverlay.addEventListener('click', () => {
+      hideLoginModal()
+    })
+  }
+  if (loginModalCloseBtn) {
+    loginModalCloseBtn.addEventListener('click', () => {
+      hideLoginModal()
+    })
+  }

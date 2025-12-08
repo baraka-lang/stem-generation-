@@ -23,6 +23,7 @@ let filters = { ...DEFAULT_FILTERS }
 let sessionInfoProvider = () => ({ bpm: 130, key: 'A Minor' })
 let loadSetHandler = null
 let anchorButtons = []
+let overlayEl = null
 let insertLikeHandler = null
 let playLikeHandler = null
 let stopPreviewHandler = null
@@ -372,9 +373,15 @@ function generateBPMOptions(selected, min = 110, max = 140) {
 }
 
 function buildDropdown() {
+  if (dropdownEl) return
+  const existing = document.getElementById('likesSetsDropdown')
+  if (existing) {
+    dropdownEl = existing
+    return
+  }
   dropdownEl = document.createElement('div')
   dropdownEl.id = 'likesSetsDropdown'
-  dropdownEl.className = 'fixed z-40 w-full max-w-md sm:max-w-lg player-surface card-border border border-white/10 rounded-2xl shadow-2xl hidden opacity-0 transition-all duration-200'
+  dropdownEl.className = 'fixed z-50 w-full max-w-md sm:max-w-lg player-surface card-border border border-white/10 rounded-2xl shadow-2xl hidden opacity-0 transition-all duration-200'
   dropdownEl.innerHTML = `
     <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
       <div class="inline-flex bg-white/5 border border-white/10 rounded-lg overflow-hidden text-sm">
@@ -410,10 +417,28 @@ function buildDropdown() {
   })
 }
 
+function ensureOverlay() {
+  if (overlayEl) return
+  const existing = document.getElementById('likesSetsOverlay')
+  if (existing) {
+    overlayEl = existing
+    return
+  }
+  overlayEl = document.createElement('div')
+  overlayEl.id = 'likesSetsOverlay'
+  overlayEl.className = 'fixed inset-0 z-40 bg-black/60 backdrop-blur-sm hidden opacity-0 transition-opacity'
+  overlayEl.addEventListener('click', () => closeMenu())
+  document.body.appendChild(overlayEl)
+}
+
 function attachAnchorHandlers() {
   anchorButtons.forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation()
+      if (btn.dataset.anchorId === 'studio-menu' || btn.dataset.anchorId === 'selection-menu') {
+        openLikesModal(btn)
+        return
+      }
       if (shouldUsePageView()) {
         openFavoritesPageView()
         return
@@ -445,10 +470,42 @@ function openMenu(anchor) {
   window.lucide?.createIcons()
 }
 
+function openLikesModal(anchor) {
+  if (!dropdownEl) buildDropdown()
+  ensureOverlay()
+  if (!dropdownEl || !overlayEl) return
+  dropdownEl.dataset.anchor = anchor.dataset.anchorId || ''
+  overlayEl.classList.remove('hidden')
+  // Force reflow then fade in overlay
+  void overlayEl.offsetHeight
+  overlayEl.classList.remove('opacity-0')
+  dropdownEl.classList.remove('hidden')
+  // Center the dropdown as a modal
+  dropdownEl.style.right = 'auto'
+  dropdownEl.style.left = '50%'
+  dropdownEl.style.top = '50%'
+  dropdownEl.style.transform = 'translate(-50%, -50%)'
+  // Force reflow then fade in dropdown
+  void dropdownEl.offsetHeight
+  dropdownEl.classList.remove('opacity-0')
+  anchorButtons.forEach((btn) => btn.classList.remove('ring-2', 'ring-purple-400/60', 'bg-white/5'))
+  anchor.classList.add('ring-2', 'ring-purple-400/60', 'bg-white/5')
+  window.lucide?.createIcons()
+}
+
 function closeMenu() {
   if (!dropdownEl) return
   dropdownEl.classList.add('opacity-0')
   dropdownEl.classList.add('hidden')
+  // Reset modal positioning
+  dropdownEl.style.right = ''
+  dropdownEl.style.left = ''
+  dropdownEl.style.top = ''
+  dropdownEl.style.transform = ''
+  if (overlayEl) {
+    overlayEl.classList.add('opacity-0')
+    setTimeout(() => { overlayEl.classList.add('hidden') }, 150)
+  }
   anchorButtons.forEach((btn) => btn.classList.remove('ring-2', 'ring-purple-400/60', 'bg-white/5'))
   // Stop any active like preview when closing menu
   if (stopPreviewHandler) {
