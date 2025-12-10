@@ -7628,6 +7628,17 @@ async function handleHashChange() {
       break
     case 'confirm-email':
       showPage('confirm-email-page')
+      try {
+        const { initConfirmEmailPage } = await import('./Auth/confirmEmail.js')
+        if (typeof initConfirmEmailPage === 'function') {
+          console.log('[router] Initializing confirm email page logic')
+          initConfirmEmailPage()
+        } else {
+          console.warn('[router] initConfirmEmailPage not a function')
+        }
+      } catch (e) {
+        console.error('[router] Failed to initialize confirm email page:', e?.message || e)
+      }
       break
     case 'profile':
       try {
