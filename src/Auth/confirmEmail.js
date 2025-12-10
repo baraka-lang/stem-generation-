@@ -8,15 +8,33 @@ import { sendConfirmationEmail } from '../Config/emailService.js'
 
 // Get email from URL parameters or localStorage
 function getEmailFromParams() {
-  const urlParams = new URLSearchParams(window.location.search)
-  const email = urlParams.get('email') || localStorage.getItem('pendingEmail')
+  const search = new URLSearchParams(window.location.search)
+  const hash = window.location.hash || ''
+  const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+  const hashParams = new URLSearchParams(hashQuery)
+  const email = search.get('email') || hashParams.get('email') || localStorage.getItem('pendingEmail')
   return email || 'user@example.com'
 }
 
 // Get confirmation token from URL parameters
 function getTokenFromParams() {
-  const urlParams = new URLSearchParams(window.location.search)
-  return urlParams.get('token') || urlParams.get('token_hash')
+  const search = new URLSearchParams(window.location.search)
+  const hash = window.location.hash || ''
+  const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+  const hashParams = new URLSearchParams(hashQuery)
+  let token = search.get('token') || search.get('token_hash') || search.get('access_token') || search.get('refresh_token')
+  if (!token) {
+    token = hashParams.get('token') || hashParams.get('token_hash') || hashParams.get('access_token') || hashParams.get('refresh_token')
+  }
+  return token
+}
+
+function getTypeFromParams() {
+  const search = new URLSearchParams(window.location.search)
+  const hash = window.location.hash || ''
+  const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+  const hashParams = new URLSearchParams(hashQuery)
+  return search.get('type') || hashParams.get('type') || 'signup'
 }
 
 // Update email display
@@ -33,6 +51,7 @@ async function handleConfirmEmail() {
   const confirmEmailBtn = document.getElementById('confirmEmailBtn')
   const email = getEmailFromParams()
   const token = getTokenFromParams()
+  const type = getTypeFromParams()
   
   // Show loading state
   confirmEmailBtn.innerHTML = `
@@ -51,13 +70,21 @@ async function handleConfirmEmail() {
     }
 
     // Verify the email using Supabase's verifyOtp function
-    const { data, error } = await supabase.auth.verifyOtp({
-      token_hash: token,
-      type: 'signup'
-    })
+    const { data, error } = await supabase.auth.verifyOtp({ token_hash: token, type })
 
     if (error) {
-      throw new Error(error.message)
+      const search = new URLSearchParams(window.location.search)
+      const hash = window.location.hash || ''
+      const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+      const hashParams = new URLSearchParams(hashQuery)
+      const accessToken = search.get('access_token') || hashParams.get('access_token')
+      const refreshToken = search.get('refresh_token') || hashParams.get('refresh_token')
+      if (accessToken && refreshToken) {
+        const setRes = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+        if (setRes?.error) throw new Error(setRes.error.message)
+      } else {
+        throw new Error(error.message)
+      }
     }
 
     // Show success state
@@ -68,8 +95,11 @@ async function handleConfirmEmail() {
     confirmEmailBtn.classList.remove('from-purple-500', 'to-pink-600', 'hover:from-purple-600', 'hover:to-pink-700')
     confirmEmailBtn.classList.add('from-green-500', 'to-emerald-600', 'hover:from-green-600', 'hover:to-emerald-700')
     
-    // Clear pending email from localStorage
     localStorage.removeItem('pendingEmail')
+    try {
+      localStorage.setItem('emailVerified', 'true')
+      localStorage.setItem('verifiedEmail', email)
+    } catch {}
     
     // Redirect to login after 2 seconds
     setTimeout(() => {
@@ -213,11 +243,8 @@ export function initConfirmEmailPage() {
 
   // Check if we have a token in the URL (for display purposes only)
   const token = getTokenFromParams()
-  if (token) {
-    console.log('Token found in URL - user can click Confirm Email button')
-    // Don't auto-confirm - let user click the button
-  } else {
-    console.log('No token found in URL - user needs to request new confirmation email')
+  if (token && confirmEmailBtn) {
+    setTimeout(() => { handleConfirmEmail() }, 500)
   }
 }
 

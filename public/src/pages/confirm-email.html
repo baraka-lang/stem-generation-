@@ -113,6 +113,8 @@
 <script>
 // Email Confirmation Logic - Inline version for reliability
 document.addEventListener('DOMContentLoaded', function() {
+  var root = document.getElementById('confirm-email-page')
+  if (root) root.classList.remove('hidden')
   console.log('Confirm email page loaded')
   
   const confirmEmailBtn = document.getElementById('confirmEmailBtn')
@@ -147,6 +149,15 @@ document.addEventListener('DOMContentLoaded', function() {
     return token
   }
 
+  function getTypeFromParams() {
+    const urlParams = new URLSearchParams(window.location.search)
+    const hash = window.location.hash || ''
+    const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+    const hashParams = new URLSearchParams(hashQuery)
+    const type = urlParams.get('type') || hashParams.get('type') || 'signup'
+    return type
+  }
+
   // Update email display
   function updateEmailDisplay() {
     const email = getEmailFromParams()
@@ -160,6 +171,7 @@ document.addEventListener('DOMContentLoaded', function() {
     console.log('Confirm email button clicked')
     const email = getEmailFromParams()
     const token = getTokenFromParams()
+    const type = getTypeFromParams()
     
     // Show loading state
     confirmEmailBtn.innerHTML = `
@@ -184,15 +196,21 @@ document.addEventListener('DOMContentLoaded', function() {
       // Based on the URL format, this is a token hash for email confirmation
       console.log('Attempting to verify token with verifyOtp...')
       
-      const { data, error } = await window.supabase.auth.verifyOtp({
-        token_hash: token,
-        type: 'signup'
-      })
+      const { data, error } = await window.supabase.auth.verifyOtp({ token_hash: token, type })
       
       console.log('verifyOtp result:', { data, error })
 
       if (error) {
-        throw new Error(error.message)
+        const accessToken = new URLSearchParams(window.location.search).get('access_token') || new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('access_token')
+        const refreshToken = new URLSearchParams(window.location.search).get('refresh_token') || new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('refresh_token')
+        if (accessToken && refreshToken) {
+          const setRes = await window.supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+          if (setRes?.error) {
+            throw new Error(setRes.error.message)
+          }
+        } else {
+          throw new Error(error.message)
+        }
       }
 
       console.log('Email confirmed successfully:', data)

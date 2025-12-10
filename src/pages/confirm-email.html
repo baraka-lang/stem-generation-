@@ -90,114 +90,84 @@
   </div>
 </div>
 
-<script>
-// Email Confirmation Logic
-document.addEventListener('DOMContentLoaded', function() {
+<script type="module">
+document.addEventListener('DOMContentLoaded', async () => {
+  const page = document.getElementById('confirm-email-page')
+  if (page) page.classList.remove('hidden')
+  const emailDisplay = document.getElementById('emailDisplay')
   const confirmEmailBtn = document.getElementById('confirmEmailBtn')
   const resendEmailBtn = document.getElementById('resendEmailBtn')
-  const emailDisplay = document.getElementById('emailDisplay')
   const landingLoginBtn = document.getElementById('landingLoginBtn')
 
-  // Get email from URL parameters or localStorage
-  function getEmailFromParams() {
-    const urlParams = new URLSearchParams(window.location.search)
-    const email = urlParams.get('email') || localStorage.getItem('pendingEmail')
-    return email || 'user@example.com'
-  }
+  const search = new URLSearchParams(window.location.search)
+  const hash = window.location.hash || ''
+  const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+  const hashParams = new URLSearchParams(hashQuery)
+  const email = search.get('email') || hashParams.get('email') || localStorage.getItem('pendingEmail') || 'user@example.com'
+  if (emailDisplay) emailDisplay.textContent = email
 
-  // Update email display
-  function updateEmailDisplay() {
-    const email = getEmailFromParams()
-    if (emailDisplay) {
-      emailDisplay.textContent = email
-    }
-  }
+  const token = search.get('token') || search.get('token_hash') || search.get('access_token') || search.get('refresh_token') || hashParams.get('token') || hashParams.get('token_hash') || hashParams.get('access_token') || hashParams.get('refresh_token')
+  const type = search.get('type') || hashParams.get('type') || 'signup'
 
-  // Handle confirm email button click
-  function handleConfirmEmail() {
-    const email = getEmailFromParams()
-    
-    // Show loading state
-    confirmEmailBtn.innerHTML = `
-      <i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>
-      Confirming...
-    `
+  const { supabase } = await import('../Auth/index.js')
+
+  async function verify() {
+    if (!supabase) return
+    if (!token) return
+    confirmEmailBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>Confirming...'
     confirmEmailBtn.disabled = true
-
-    // Simulate API call to confirm email
-    setTimeout(() => {
-      // In a real app, this would make an API call to confirm the email
-      console.log('Confirming email for:', email)
-      
-      // Show success state
-      confirmEmailBtn.innerHTML = `
-        <i data-lucide="check" class="w-5 h-5 mr-2"></i>
-        Email Confirmed!
-      `
-      confirmEmailBtn.classList.remove('from-purple-500', 'to-pink-600', 'hover:from-purple-600', 'hover:to-pink-700')
-      confirmEmailBtn.classList.add('from-green-500', 'to-emerald-600', 'hover:from-green-600', 'hover:to-emerald-700')
-      
-      // Redirect to login after 2 seconds
-      setTimeout(() => {
-        window.location.href = '#login'
-      }, 2000)
-    }, 2000)
+    const res = await supabase.auth.verifyOtp({ token_hash: token, type })
+    if (res.error) {
+      const accessToken = search.get('access_token') || hashParams.get('access_token')
+      const refreshToken = search.get('refresh_token') || hashParams.get('refresh_token')
+      if (accessToken && refreshToken) {
+        const setRes = await supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+        if (setRes.error) {
+          confirmEmailBtn.innerHTML = '<i data-lucide="x" class="w-5 h-5 mr-2"></i>Confirmation Failed'
+          confirmEmailBtn.classList.remove('from-purple-500','to-pink-600','hover:from-purple-600','hover:to-pink-700')
+          confirmEmailBtn.classList.add('from-red-500','to-red-600','hover:from-red-600','hover:to-red-700')
+          confirmEmailBtn.disabled = false
+          return
+        }
+      } else {
+        confirmEmailBtn.innerHTML = '<i data-lucide="x" class="w-5 h-5 mr-2"></i>Confirmation Failed'
+        confirmEmailBtn.classList.remove('from-purple-500','to-pink-600','hover:from-purple-600','hover:to-pink-700')
+        confirmEmailBtn.classList.add('from-red-500','to-red-600','hover:from-red-600','hover:to-red-700')
+        confirmEmailBtn.disabled = false
+        return
+      }
+    }
+    confirmEmailBtn.innerHTML = '<i data-lucide="check" class="w-5 h-5 mr-2"></i>Email Confirmed!'
+    confirmEmailBtn.classList.remove('from-purple-500','to-pink-600','hover:from-purple-600','hover:to-pink-700')
+    confirmEmailBtn.classList.add('from-green-500','to-emerald-600','hover:from-green-600','hover:to-emerald-700')
+    try { localStorage.setItem('emailVerified','true'); localStorage.setItem('verifiedEmail',email); localStorage.removeItem('pendingEmail') } catch {}
+    setTimeout(() => { window.location.href = '#login' }, 2000)
   }
 
-  // Handle resend email button click
-  function handleResendEmail() {
-    const email = getEmailFromParams()
-    
-    // Show loading state
-    resendEmailBtn.innerHTML = `
-      <i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>
-      Sending...
-    `
-    resendEmailBtn.disabled = true
-
-    // Simulate API call to resend email
-    setTimeout(() => {
-      console.log('Resending confirmation email to:', email)
-      
-      // Show success state
-      resendEmailBtn.innerHTML = `
-        <i data-lucide="check" class="w-5 h-5 mr-2"></i>
-        Email Sent!
-      `
-      resendEmailBtn.classList.remove('bg-white/5', 'hover:bg-white/10', 'border-white/10')
-      resendEmailBtn.classList.add('bg-green-500/20', 'border-green-500/30', 'text-green-400')
-      
-      // Reset button after 3 seconds
-      setTimeout(() => {
-        resendEmailBtn.innerHTML = 'Resend Confirmation Email'
-        resendEmailBtn.classList.remove('bg-green-500/20', 'border-green-500/30', 'text-green-400')
-        resendEmailBtn.classList.add('bg-white/5', 'hover:bg-white/10', 'border-white/10', 'text-white/70')
-        resendEmailBtn.disabled = false
-      }, 3000)
-    }, 1500)
-  }
-
-  // Event listeners
-  if (confirmEmailBtn) {
-    confirmEmailBtn.addEventListener('click', handleConfirmEmail)
-  }
-
+  if (confirmEmailBtn) confirmEmailBtn.addEventListener('click', verify)
   if (resendEmailBtn) {
-    resendEmailBtn.addEventListener('click', handleResendEmail)
-  }
-
-  if (landingLoginBtn) {
-    landingLoginBtn.addEventListener('click', () => {
-      window.location.href = '#login'
+    resendEmailBtn.addEventListener('click', async () => {
+      const { supabase } = await import('../Auth/index.js')
+      if (!supabase) return
+      resendEmailBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>Sending...'
+      resendEmailBtn.disabled = true
+      const confirmationUrl = `${window.location.origin}/#confirm-email`
+      const { error } = await supabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: confirmationUrl } })
+      if (!error) {
+        resendEmailBtn.innerHTML = '<i data-lucide="check" class="w-5 h-5 mr-2"></i>Email Sent!'
+        resendEmailBtn.classList.remove('bg-white/5','hover:bg-white/10','border-white/10')
+        resendEmailBtn.classList.add('bg-green-500/20','border-green-500/30','text-green-400')
+        setTimeout(() => { resendEmailBtn.innerHTML='Resend Confirmation Email'; resendEmailBtn.classList.remove('bg-green-500/20','border-green-500/30','text-green-400'); resendEmailBtn.classList.add('bg-white/5','hover:bg-white/10','border-white/10','text-white/70'); resendEmailBtn.disabled=false }, 3000)
+      } else {
+        resendEmailBtn.innerHTML = '<i data-lucide="x" class="w-5 h-5 mr-2"></i>Failed to Send'
+        resendEmailBtn.classList.remove('bg-white/5','hover:bg-white/10','border-white/10')
+        resendEmailBtn.classList.add('bg-red-500/20','border-red-500/30','text-red-400')
+        setTimeout(() => { resendEmailBtn.innerHTML='Resend Confirmation Email'; resendEmailBtn.classList.remove('bg-red-500/20','border-red-500/30','text-red-400'); resendEmailBtn.classList.add('bg-white/5','hover:bg-white/10','border-white/10','text-white/70'); resendEmailBtn.disabled=false }, 3000)
+      }
     })
   }
-
-  // Initialize email display
-  updateEmailDisplay()
-
-  // Initialize Lucide icons
-  if (window.lucide) {
-    window.lucide.createIcons()
-  }
+  if (landingLoginBtn) landingLoginBtn.addEventListener('click', () => { window.location.href = '#login' })
+  if (window.lucide) window.lucide.createIcons()
+  if (token) setTimeout(verify, 500)
 })
 </script>
