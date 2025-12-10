@@ -48,18 +48,35 @@ export async function getUserProfile(userId) {
  * @param {number} initialCredits - Initial credit balance
  * @returns {Promise<{profile: Object | null, error: Error | null}>}
  */
-export async function createUserProfile(userId, initialCredits = 100) {
+export async function createUserProfile(userId, initialCredits = 100, email = null, fullName = null) {
   if (!supabase) {
     console.warn('Supabase not configured - cannot create user profile')
     return { profile: null, error: { message: 'Supabase not configured' } }
   }
 
   try {
+    // Ensure we have email (profiles.email is NOT NULL UNIQUE)
+    let resolvedEmail = email
+    let resolvedFullName = fullName
+    if (!resolvedEmail || resolvedEmail === '') {
+      try {
+        const { data } = await supabase.auth.getUser()
+        resolvedEmail = data?.user?.email || null
+        resolvedFullName = resolvedFullName ?? data?.user?.user_metadata?.full_name ?? null
+      } catch {}
+    }
+
+    if (!resolvedEmail) {
+      return { profile: null, error: { message: 'Email is required to create profile' } }
+    }
+
     const { data, error } = await supabase
       .from('profiles')
       .insert([
         {
           id: userId,
+          email: resolvedEmail,
+          full_name: resolvedFullName || null,
           credits: initialCredits
         }
       ])
@@ -241,7 +258,7 @@ export async function initializeUserProfile(user) {
     
     // Create new profile if trigger didn't work
     console.log('Creating profile manually for user:', user.id)
-    return await createUserProfile(user.id, 100)
+    return await createUserProfile(user.id, 100, user.email, user.user_metadata?.full_name)
   } catch (error) {
     console.error('Initialize user profile exception:', error)
     return { profile: null, error: { message: 'An unexpected error occurred' } }

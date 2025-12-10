@@ -471,7 +471,12 @@ export function setupLoginPage() {
       const { user, error, isNewUser } = await signUp(email, password, fullName)
 
       if (error) {
-        showSignupError(getErrorMessage(error))
+        const msg = getErrorMessage(error)
+        showSignupError(msg)
+        try {
+          const details = { name: error?.name, message: error?.message, status: error?.status, code: error?.code }
+          console.error('[signup] UI error details:', details)
+        } catch {}
         return
       }
 
@@ -798,6 +803,9 @@ export function setupLoginPage() {
     }
     if (message.includes('too many requests')) {
       return 'Too many attempts. Please try again later'
+    }
+    if (message.includes('error sending confirmation') || message.includes('email service failed to send')) {
+      return 'We could not send the confirmation email. Please try again in a few minutes or contact support.'
     }
     // Handle various forms of "user already registered" messages
     if (message.includes('user already registered') || 

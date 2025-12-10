@@ -5,6 +5,7 @@
 
 import { createClient } from '@supabase/supabase-js'
 import { sendPasswordResetEmail, sendConfirmationEmail, sendWelcomeEmail } from '../Config/emailService.js'
+import { supabaseConfig } from '../Config/environment.js'
 
 // Check if Supabase environment variables are loaded
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -48,7 +49,10 @@ export async function signUp(email, password, fullName) {
   }
 
   try {
-    // Proceed directly with signup - Supabase will handle duplicate detection
+    console.group('[auth] signUp')
+    console.log('endpoint:', supabaseUrl?.replace(/:\/\/.+?\//, '://<hidden>/'))
+    console.log('payload:', { email, hasPassword: !!password, hasFullName: !!fullName })
+    console.time('[auth] supabase.auth.signUp')
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -56,13 +60,33 @@ export async function signUp(email, password, fullName) {
         data: {
           full_name: fullName
         },
-        emailRedirectTo: null, // Disable default email redirect
+        emailRedirectTo: supabaseConfig?.auth?.confirmationUrl || null,
         captchaToken: null
       }
     })
+    console.timeEnd('[auth] supabase.auth.signUp')
     
     if (error) {
-      console.error('Sign up error:', error.message)
+      const details = {
+        name: error?.name,
+        message: error?.message,
+        status: error?.status,
+        code: error?.code
+      }
+      console.error('Sign up error details:', details)
+      try { console.error('Sign up error raw:', JSON.stringify(error)) } catch {}
+      if (String(error?.message || '').toLowerCase().includes('error sending confirmation')) {
+        const wrappedError = {
+          name: error?.name || 'AuthApiError',
+          status: error?.status || 500,
+          code: error?.code || 'unexpected_failure',
+          message: 'Email service failed to send the confirmation email. Please try again later.'
+        }
+        console.warn('[auth] Hint: Verify Supabase Auth settings — SMTP provider, Confirm Email toggle, and Site URL/Redirect URLs.')
+        console.groupEnd()
+        return { user: null, error: wrappedError }
+      }
+      console.groupEnd()
       return { user: null, error }
     }
     
@@ -88,6 +112,7 @@ export async function signUp(email, password, fullName) {
       hasSession: !!data.session,
       emailConfirmedAt: data.user?.email_confirmed_at
     })
+    console.groupEnd()
     
     // Store email in localStorage for confirm-email page only for new users
     if (data.user?.email && isNewUser) {
@@ -96,7 +121,14 @@ export async function signUp(email, password, fullName) {
     
     return { user: data.user, error: null, isNewUser }
   } catch (error) {
-    console.error('Sign up exception:', error)
+    const details = {
+      name: error?.name,
+      message: error?.message,
+      status: error?.status,
+      code: error?.code
+    }
+    console.error('Sign up exception details:', details)
+    try { console.error('Sign up exception raw:', JSON.stringify(error)) } catch {}
     return { user: null, error: { message: 'An unexpected error occurred' } }
   }
 }
