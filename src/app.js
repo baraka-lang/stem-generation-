@@ -11,6 +11,7 @@ import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Uti
 import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper.js'
 import { loopFixConfig } from './Config/environment.js'
 import { initFavoritesPageView, initLikesSetsMenu, isTrackLiked, refreshFavoritesUI, syncSavedSetsMenu, toggleLikeForStem } from './UI/likesSetsMenu.js'
+import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl } from './TechnoGenerators/sessionSetup.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -6597,6 +6598,8 @@ function setupEventListeners() {
       knobIgnoreClick = false
       return
     }
+    const inSessionSetupModal = e.target.closest('#sessionSetupModal')
+    if (inSessionSetupModal) return
 
     // Toggle mute/unmute when clicking on an instrument card outside of interactive elements.
     {
@@ -7384,6 +7387,40 @@ function initTechnoGenerator() {
     updateTempoIndicator(st)
     safeUpdateButtonStates(st)
   })
+  const changeBtn = document.getElementById('changeSessionSettings')
+  if (changeBtn) {
+    changeBtn.addEventListener('click', () => {
+      const modal = document.getElementById('sessionSetupModal')
+      if (!modal) return
+      const sessionNameInput = document.getElementById('setupSessionName')
+      const tempoSlider = document.getElementById('setupTempoSlider')
+      const tempoValue = document.getElementById('setupTempoValue')
+      const barsSelector = document.getElementById('setupBarsSelector')
+      const rootSelector = document.getElementById('setupRootSelector')
+      const accidentalSelector = document.getElementById('setupAccidentalSelector')
+      const modeSelector = document.getElementById('setupModeSelector')
+      const master = stemControlValues.master || {}
+      const generateDefaultSessionName = () => {
+        const now = new Date()
+        const year = now.getFullYear()
+        const month = String(now.getMonth() + 1).padStart(2, '0')
+        const day = String(now.getDate()).padStart(2, '0')
+        const hours = String(now.getHours()).padStart(2, '0')
+        const minutes = String(now.getMinutes()).padStart(2, '0')
+        return `Session Setting (${year}-${month}-${day}_${hours}:${minutes})`
+      }
+      if (sessionNameInput) sessionNameInput.value = master.sessionName || generateDefaultSessionName()
+      if (tempoSlider) tempoSlider.value = String(master.tempo ?? DEFAULT_TEMPO)
+      if (tempoValue) tempoValue.textContent = String(master.tempo ?? DEFAULT_TEMPO)
+      if (barsSelector) barsSelector.value = String(master.bars ?? DEFAULT_BARS)
+      if (rootSelector) rootSelector.value = String(master.rootBase ?? 'A')
+      if (accidentalSelector) accidentalSelector.value = String(master.accidental ?? 'natural')
+      if (modeSelector) modeSelector.value = String(master.mode ?? 'Minor')
+      modal.classList.remove('hidden')
+      requestAnimationFrame(() => { modal.style.opacity = '1' })
+      document.body.style.overflow = 'hidden'
+    })
+  }
   // Present the session setup modal if settings have not been chosen
   // yet.  This ensures the user sets the master tempo, bars and key
   // before generating any stems.  The modal will only appear once
@@ -7900,64 +7937,13 @@ async function applyGenerateSettingsAndStart() {
 // disabled accordingly.  The selected values persist for the
 // remainder of the session.
 function showSessionSetupModal() {
-  if (sessionSetupDone) return
-  const modal = document.getElementById('sessionSetupModal')
-  if (!modal) return
-  const overlay = document.getElementById('sessionSetupOverlay')
-  const tempoSlider = document.getElementById('setupTempoSlider')
-  const tempoValue = document.getElementById('setupTempoValue')
-  const barsSelector = document.getElementById('setupBarsSelector')
-  const rootSelector = document.getElementById('setupRootSelector')
-  const accidentalSelector = document.getElementById('setupAccidentalSelector')
-  const modeSelector = document.getElementById('setupModeSelector')
-  // The cancel button has been removed (the session setup cannot be dismissed).  It may
-  // still exist in older templates, but we treat it as optional.
-  const cancelBtn = document.getElementById('setupCancelBtn')
-  const saveBtn = document.getElementById('setupSaveBtn')
-  if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !saveBtn) return
-  // Update displayed tempo when slider moves
-  tempoSlider.addEventListener('input', e => {
-    const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
-    tempoValue.textContent = String(val)
-  })
-  // If a cancel button exists (legacy HTML), wire it to simply hide the modal.
-  if (cancelBtn) {
-    cancelBtn.addEventListener('click', () => {
-      modal.style.opacity = '0'
-      setTimeout(() => { modal.classList.add('hidden') }, 300)
-      document.body.style.overflow = ''
-    })
-  }
-  // Save button applies settings and locks them
-  saveBtn.addEventListener('click', () => {
-    const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
-    const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
-    const rootText = String(rootSelector.value || 'A')
-    // Determine base letter and accidental from the root selection
-    let rootBase = rootText.replace(/[♯♭]/g, '').toUpperCase()
-    const selectedAccidental = accidentalSelector.value
-    const modeVal = String(modeSelector.value || 'Minor')
-    // Set master values
-    stemControlValues.master.tempo = tempoVal
-    stemControlValues.master.bars = barsVal
-    stemControlValues.master.rootBase = rootBase
-    stemControlValues.master.accidental = selectedAccidental
-    stemControlValues.master.mode = modeVal
-    sessionSetupDone = true
-    applySessionSettingsToUI()
-    // Hide modal
-    modal.style.opacity = '0'
-    setTimeout(() => { modal.classList.add('hidden') }, 300)
-    // Restore page scrolling when the session setup modal is closed
-    document.body.style.overflow = ''
-  })
-  // Show the modal
-  modal.classList.remove('hidden')
-  requestAnimationFrame(() => {
-    modal.style.opacity = '1'
-  })
-  // Disable page scrolling while the session setup modal is visible
-  document.body.style.overflow = 'hidden'
+  showSessionSetupModalImpl(
+    sessionSetupDone,
+    stemControlValues,
+    (value) => { sessionSetupDone = value },
+    applySessionSettingsToUI,
+    updateTempoIndicator
+  )
 }
 
 // Apply the session settings to the UI: update the bottom controls
@@ -7965,55 +7951,7 @@ function showSessionSetupModal() {
 // them mid-session.  Also refresh the tempo indicators on the
 // waveform cards and update the history drawer where needed.
 function applySessionSettingsToUI() {
-  const master = stemControlValues.master
-  // If any of the old master controls exist (tempo, bars, key selectors), disable them and set their values.
-  // This keeps compatibility in case those elements are still present in the DOM for other generators.
-  const tempoSlider = document.getElementById('tempoSlider')
-  const tempoValueEl = document.getElementById('tempoValue')
-  if (tempoSlider) {
-    tempoSlider.value = String(master.tempo)
-    tempoSlider.disabled = true
-  }
-  if (tempoValueEl) {
-    tempoValueEl.textContent = String(master.tempo)
-  }
-  const barsSelector = document.getElementById('barsSelector')
-  if (barsSelector) {
-    barsSelector.value = String(master.bars)
-    barsSelector.disabled = true
-  }
-  const rootSelector = document.getElementById('rootSelector')
-  const accidentalSelector = document.getElementById('accidentalSelector')
-  const modeSelector = document.getElementById('modeSelector')
-  if (rootSelector) {
-    let rootDisplay = master.rootBase
-    if (master.accidental === 'sharp') rootDisplay += '#'
-    else if (master.accidental === 'flat') rootDisplay += 'b'
-    rootSelector.value = rootDisplay
-    rootSelector.disabled = true
-  }
-  if (accidentalSelector) {
-    accidentalSelector.value = master.accidental
-    accidentalSelector.disabled = true
-  }
-  if (modeSelector) {
-    modeSelector.value = master.mode
-    modeSelector.disabled = true
-  }
-  // Update the session info card in the player bar.
-  const infoEl = document.getElementById('sessionInfoText')
-  const infoElMob = document.getElementById('sessionInfoTextMobile')
-  const infoString = (() => {
-    const rootName = getRootText()
-    const displayBars = getPlaybackBars(master.bars ?? DEFAULT_BARS, DEFAULT_BARS)
-    return `${master.tempo} BPM • ${displayBars} bars • ${rootName} ${master.mode}`
-  })()
-  if (infoEl) infoEl.textContent = infoString
-  if (infoElMob) infoElMob.textContent = infoString
-  // Refresh tempo indicators on all cards
-  STEM_ORDER.forEach(st => {
-    updateTempoIndicator(st)
-  })
+  applySessionSettingsToUIImpl(stemControlValues, updateTempoIndicator)
 }
 
 /* =========================================================

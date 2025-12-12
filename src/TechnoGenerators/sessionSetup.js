@@ -104,7 +104,7 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
   if (!tempoSlider || !tempoValue || !barsSelector || !rootSelector || !accidentalSelector || !modeSelector || !saveBtn) return
 
   // Generate default session name with current date and time
-  // Format: Session_YYYY-MM-DD_HH-MM-SS
+  // Format: Session Setting (YYYY-MM-DD_HH:mm)
   const generateDefaultSessionName = () => {
     const now = new Date()
     const year = now.getFullYear()
@@ -112,8 +112,7 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
     const day = String(now.getDate()).padStart(2, '0')
     const hours = String(now.getHours()).padStart(2, '0')
     const minutes = String(now.getMinutes()).padStart(2, '0')
-    const seconds = String(now.getSeconds()).padStart(2, '0')
-    return `Session_${year}-${month}-${day}_${hours}-${minutes}-${seconds}`
+    return `Session Setting (${year}-${month}-${day}_${hours}:${minutes})`
   }
 
   // Set default session name if input exists
@@ -134,7 +133,10 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
     }
   }
   // Save button applies settings and locks them (single handler to avoid duplicates)
-  saveBtn.onclick = () => {
+  saveBtn.onclick = (e) => {
+    console.log('saveBtn clicked');
+    try { e.preventDefault() } catch {}
+    try { e.stopPropagation() } catch {}
     const sessionName = sessionNameInput ? sessionNameInput.value.trim() || generateDefaultSessionName() : generateDefaultSessionName()
     const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
     const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS

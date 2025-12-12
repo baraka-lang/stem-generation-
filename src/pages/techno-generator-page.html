@@ -9,6 +9,16 @@
       <p class="text-xs text-red-500 font-bold sm:hidden mb-2">Please disable silent mode on your mobile device for audio playback.</p>
       <p class="text-xs text-white/60 mb-4">Choose the tempo, number of bars and key before starting. These values cannot be changed later in the session.</p>
       <div class="space-y-4">
+        <!-- Session name -->
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-white/60 w-16">Name</span>
+          <input
+            id="setupSessionName"
+            type="text"
+            class="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-sm text-white placeholder-white/40"
+            placeholder="Session Setting (YYYY-MM-DD_HH:mm)"
+          />
+        </div>
         <!-- Tempo selection -->
         <div class="flex items-center gap-3">
           <span class="text-xs text-white/60 w-16">Tempo</span>
