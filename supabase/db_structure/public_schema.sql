@@ -28,6 +28,20 @@ CREATE TABLE public.profiles (
   CONSTRAINT profiles_pkey PRIMARY KEY (id),
   CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
 );
+CREATE TABLE public.session_settings (
+  session_setting_id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  user_id uuid DEFAULT gen_random_uuid(),
+  session_name character varying,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  tempo bigint,
+  bars bigint,
+  root_base character varying,
+  selected_accidental character varying,
+  mode character varying,
+  is_deleted boolean DEFAULT false,
+  CONSTRAINT session_settings_pkey PRIMARY KEY (session_setting_id),
+  CONSTRAINT session_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
 CREATE TABLE public.stem_set_items (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   set_id uuid,
@@ -53,6 +67,16 @@ CREATE TABLE public.stem_sets (
   updated_at timestamp with time zone DEFAULT now(),
   CONSTRAINT stem_sets_pkey PRIMARY KEY (id),
   CONSTRAINT stem_sets_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.stem_states (
+  stem_state_id bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+  state_name character varying,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  stems_snapshot json,
+  is_deleted boolean DEFAULT false,
+  session_settings_id bigint,
+  CONSTRAINT stem_states_pkey PRIMARY KEY (stem_state_id),
+  CONSTRAINT stem_states_session_settings_id_fkey FOREIGN KEY (session_settings_id) REFERENCES public.session_settings(session_setting_id)
 );
 CREATE TABLE public.stems (
   id uuid NOT NULL DEFAULT gen_random_uuid(),

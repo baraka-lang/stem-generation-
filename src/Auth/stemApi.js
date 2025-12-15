@@ -169,38 +169,35 @@ export async function saveSessionSetting(sessionData) {
     // Check if session setting already exists for this user with same settings
     const { data: existing, error: checkError } = await supabase
       .from('session_settings')
-      .select('id')
-      .eq('user_uuid', user.id)
-      .eq('genre', sessionData.genre)
-      .eq('temp', sessionData.temp)
-      .eq('bars', sessionData.bars)
-      .eq('root_base', sessionData.rootBase)
-      .eq('selected_accidental', sessionData.selectedAccidental)
+      .select('session_setting_id')
+      .eq('user_id', user.id)
+      .eq('tempo', Number(sessionData.tempo ?? sessionData.temp))
+      .eq('bars', Number(sessionData.bars))
+      .eq('root_base', sessionData.root_base ?? sessionData.rootBase)
+      .eq('selected_accidental', sessionData.selected_accidental ?? sessionData.selectedAccidental)
       .eq('mode', sessionData.mode)
-      .order('date_created', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(1)
-      .single()
+      .maybeSingle()
 
     if (existing && !checkError) {
       // Return existing session setting
-      return { success: true, sessionSettingId: existing.id }
+      return { success: true, sessionSettingId: existing.session_setting_id }
     }
 
     // Create new session setting
     const { data, error } = await supabase
       .from('session_settings')
       .insert({
-        user_uuid: user.id,
-        genre: sessionData.genre || 'techno',
-        session_name: sessionData.sessionName || `Session ${new Date().toLocaleDateString()}`,
-        temp: String(sessionData.temp),
-        bars: String(sessionData.bars),
-        root_base: sessionData.rootBase,
-        selected_accidental: sessionData.selectedAccidental,
-        mode: sessionData.mode,
-        date_created: new Date().toISOString()
+        user_id: user.id,
+        session_name: sessionData.session_name ?? sessionData.sessionName ?? `Session ${new Date().toLocaleDateString()}`,
+        tempo: Number(sessionData.tempo ?? sessionData.temp),
+        bars: Number(sessionData.bars),
+        root_base: sessionData.root_base ?? sessionData.rootBase,
+        selected_accidental: sessionData.selected_accidental ?? sessionData.selectedAccidental,
+        mode: sessionData.mode
       })
-      .select('id')
+      .select('session_setting_id')
       .single()
 
     if (error) {
@@ -208,7 +205,7 @@ export async function saveSessionSetting(sessionData) {
       return { success: false, error: error.message }
     }
 
-    return { success: true, sessionSettingId: data.id }
+    return { success: true, sessionSettingId: data.session_setting_id }
   } catch (error) {
     console.error('Exception saving session setting:', error)
     return { success: false, error: error.message }
@@ -539,7 +536,7 @@ export async function getSessionSettingById(sessionSettingId) {
     const { data, error } = await supabase
       .from('session_settings')
       .select('*')
-      .eq('id', sessionSettingId)
+      .eq('session_setting_id', sessionSettingId)
       .single()
 
     if (error) {
@@ -720,38 +717,35 @@ export async function saveSessionSettingToDb(sessionData) {
     // Check if session setting already exists for this user with same settings
     const { data: existing, error: checkError } = await supabase
       .from('session_settings')
-      .select('id')
-      .eq('user_uuid', user.id)
-      .eq('genre', sessionData.genre || 'techno')
-      .eq('temp', String(sessionData.temp || ''))
-      .eq('bars', String(sessionData.bars || ''))
-      .eq('root_base', sessionData.rootBase || '')
-      .eq('selected_accidental', sessionData.selectedAccidental || 'natural')
-      .eq('mode', sessionData.mode || 'Major')
-      .order('date_created', { ascending: false })
+      .select('session_setting_id')
+      .eq('user_id', user.id)
+      .eq('tempo', Number(sessionData.tempo ?? sessionData.temp))
+      .eq('bars', Number(sessionData.bars))
+      .eq('root_base', sessionData.root_base ?? sessionData.rootBase ?? '')
+      .eq('selected_accidental', sessionData.selected_accidental ?? sessionData.selectedAccidental ?? 'natural')
+      .eq('mode', sessionData.mode ?? 'Major')
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
 
     if (existing && !checkError) {
       // Return existing session setting ID
-      return { success: true, session_setting_id: Number(existing.id) }
+      return { success: true, session_setting_id: Number(existing.session_setting_id) }
     }
 
     // Create new session setting only if it doesn't exist
     const { data, error } = await supabase
       .from('session_settings')
       .insert({
-        user_uuid: user.id,
-        genre: sessionData.genre || 'techno',
-        session_name: sessionData.sessionName || `Session ${new Date().toLocaleDateString()}`,
-        temp: String(sessionData.temp || ''),
-        bars: String(sessionData.bars || ''),
-        root_base: sessionData.rootBase || '',
-        selected_accidental: sessionData.selectedAccidental || 'natural',
-        mode: sessionData.mode || 'Major',
-        date_created: new Date().toISOString()
+        user_id: user.id,
+        session_name: sessionData.session_name ?? sessionData.sessionName ?? `Session ${new Date().toLocaleDateString()}`,
+        tempo: Number(sessionData.tempo ?? sessionData.temp),
+        bars: Number(sessionData.bars),
+        root_base: sessionData.root_base ?? sessionData.rootBase ?? '',
+        selected_accidental: sessionData.selected_accidental ?? sessionData.selectedAccidental ?? 'natural',
+        mode: sessionData.mode ?? 'Major'
       })
-      .select('id')
+      .select('session_setting_id')
       .single()
 
     if (error) {
@@ -759,7 +753,7 @@ export async function saveSessionSettingToDb(sessionData) {
       return { success: false, error: error.message }
     }
 
-    return { success: true, session_setting_id: Number(data.id) }
+    return { success: true, session_setting_id: Number(data.session_setting_id) }
   } catch (error) {
     console.error('Exception saving session setting:', error)
     return { success: false, error: error.message }
@@ -786,6 +780,53 @@ export async function getSetsById(sessionSettingId) {
     return { success: true, sets: data || [] }
   } catch (err) {
     console.error('Exception fetching stem sets by session_setting_id:', err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function saveSessionSettingsToCloud(sessionValues) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    // Save session setting to database
+    const sessionResult = await saveSessionSettingToDb(sessionValues)
+    if (!sessionResult.success) {
+      return { success: false, error: sessionResult.error }
+    }
+    return { success: true, session_setting_id: sessionResult.session_setting_id }
+  } catch (error) {
+    console.error('Exception saving session settings to cloud:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+export async function saveStemStateToDb(sessionSettingId, stemState) {
+  
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const name = stemState?.state_name || null
+    const snapshot = stemState?.stems_snapshot || null
+    if (!sessionSettingId || !snapshot) {
+      return { success: false, error: 'Missing sessionSettingId or snapshot' }
+    }
+    const { data, error } = await supabase
+      .from('stem_states')
+      .insert({
+        session_settings_id: Number(sessionSettingId),
+        state_name: name,
+        stems_snapshot: snapshot
+      })
+      .select('stem_state_id')
+      .single()
+    if (error) {
+      return { success: false, error: error.message }
+    }
+    return { success: true, stem_state_id: Number(data.stem_state_id) }
+  } catch (err) {
     return { success: false, error: err.message }
   }
 }

@@ -7,6 +7,7 @@
 import { DEFAULT_TEMPO, DEFAULT_BARS } from '../Config/constants.js'
 import { STEM_ORDER } from '../Config/stems.js'
 import { getPlaybackBars } from '../Utilities/barUtils.js'
+import { saveSessionSettingsToCloud } from '../Auth/stemApi.js'
 
 /**
  * Load session settings from localStorage if available
@@ -62,13 +63,14 @@ export function clearSessionSettingsFromStorage() {
  * disabled accordingly.  The selected values persist for the
  * remainder of the session.
  */
-export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSessionSetupDone, applySessionSettingsToUI, updateTempoIndicator) {
-  if (sessionSetupDone) return
+export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSessionSetupDone, applySessionSettingsToUI, updateTempoIndicator, options = {}) {
+  const forceShow = options?.forceShow === true
+  if (sessionSetupDone && !forceShow) return
 
   // Check localStorage for existing settings
   const savedSettings = loadSessionSettingsFromStorage()
   console.log('savedSettings', savedSettings)
-  if (savedSettings) {
+  if (savedSettings && !forceShow) {
     console.log('Loading session settings from localStorage:', savedSettings)
     // Apply the saved settings
     stemControlValues.master.sessionName = savedSettings.sessionName
@@ -117,8 +119,16 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
 
   // Set default session name if input exists
   if (sessionNameInput) {
-    sessionNameInput.value = generateDefaultSessionName()
+    sessionNameInput.value = stemControlValues?.master?.sessionName || generateDefaultSessionName()
   }
+  // Prepopulate controls from current master settings
+  const master = stemControlValues?.master || {}
+  if (tempoSlider) tempoSlider.value = String(master.tempo ?? DEFAULT_TEMPO)
+  if (tempoValue) tempoValue.textContent = String(master.tempo ?? DEFAULT_TEMPO)
+  if (barsSelector) barsSelector.value = String(master.bars ?? DEFAULT_BARS)
+  if (rootSelector) rootSelector.value = String(master.rootBase ?? 'A')
+  if (accidentalSelector) accidentalSelector.value = String(master.accidental ?? 'natural')
+  if (modeSelector) modeSelector.value = String(master.mode ?? 'Minor')
   // Update displayed tempo when slider moves (ensure single handler)
   tempoSlider.oninput = e => {
     const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
@@ -133,7 +143,7 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
     }
   }
   // Save button applies settings and locks them (single handler to avoid duplicates)
-  saveBtn.onclick = (e) => {
+  saveBtn.onclick = async (e) => {
     console.log('saveBtn clicked');
     try { e.preventDefault() } catch {}
     try { e.stopPropagation() } catch {}
@@ -163,9 +173,18 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
       selected_accidental: selectedAccidental,
       mode: modeVal
     }
-    console.log(['Session setup values:', sessionValues])
+
+
+    // console.log(['Session setup values:', sessionValues])
 
     // Save to localStorage
+    saveSessionSettingsToStorage(sessionValues)
+    const cloudResult = await saveSessionSettingsToCloud(sessionValues)
+    if (!cloudResult.success) {
+      console.error('Error saving session settings to cloud:', cloudResult.error)
+      return
+    }
+    sessionValues.session_setting_id = cloudResult.session_setting_id
     saveSessionSettingsToStorage(sessionValues)
 
     setSessionSetupDone(true)

@@ -639,6 +639,7 @@ function initSavedStateFeature() {
   const saveModalConfirm = document.getElementById('saveSetConfirmBtn')
   if (saveModalConfirm) {
     saveModalConfirm.onclick = () => {
+      
       saveNewSet() // This will handle saving in background and show toast
     }
   }
@@ -737,7 +738,7 @@ function closeSaveSetModal() {
  * saving, updates the dropdown, selects the new set and closes the
  * modal when complete.
  */
-function saveNewSet() {
+async function saveNewSet() {
   const spinner = document.getElementById('saveSetSpinner')
   const label = document.getElementById('saveSetConfirmLabel')
   if (spinner && label) {
@@ -746,6 +747,34 @@ function saveNewSet() {
   }
   // Save the state
   const snapshot = buildSavedSetRecord(`Set ${savedSets.length + 1}`)
+  console.log('snapshot', snapshot)
+ 
+
+  const stemStateForDb = {
+    state_name: snapshot?.metadata?.name || null,
+    stems_snapshot: snapshot,
+  }
+
+  try {
+    const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+    const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
+    const sessionSettingIdRaw = parsed?.session_setting_id ?? parsed?.id ?? null
+    const sessionSettingId =
+      typeof sessionSettingIdRaw === 'number'
+        ? sessionSettingIdRaw
+        : (typeof sessionSettingIdRaw === 'string' && /^\d+$/.test(sessionSettingIdRaw)
+            ? Number(sessionSettingIdRaw)
+            : null)
+    if (sessionSettingId) {
+      const { saveStemStateToDb } = await import('./Auth/stemApi.js')
+      console.log('[SaveSet] Calling saveStemStateToDb with session_setting_id:', sessionSettingId)
+      await saveStemStateToDb(sessionSettingId, stemStateForDb)
+      console.log('[SaveSet] Stem state saved to cloud')
+    } else {
+      console.log('[SaveSet] No session_setting_id in localStorage; skipping cloud save')
+    }
+  } catch {}
+  // Also persist locally in savedSets for immediate UI feedback
   savedSets.push(snapshot)
   // Determine new index
   const newIndex = savedSets.length - 1
@@ -6600,6 +6629,8 @@ function setupEventListeners() {
     }
     const inSessionSetupModal = e.target.closest('#sessionSetupModal')
     if (inSessionSetupModal) return
+    const inSaveSetModal = e.target.closest('#saveSetModal')
+    if (inSaveSetModal) return
 
     // Toggle mute/unmute when clicking on an instrument card outside of interactive elements.
     {
@@ -7390,35 +7421,14 @@ function initTechnoGenerator() {
   const changeBtn = document.getElementById('changeSessionSettings')
   if (changeBtn) {
     changeBtn.addEventListener('click', () => {
-      const modal = document.getElementById('sessionSetupModal')
-      if (!modal) return
-      const sessionNameInput = document.getElementById('setupSessionName')
-      const tempoSlider = document.getElementById('setupTempoSlider')
-      const tempoValue = document.getElementById('setupTempoValue')
-      const barsSelector = document.getElementById('setupBarsSelector')
-      const rootSelector = document.getElementById('setupRootSelector')
-      const accidentalSelector = document.getElementById('setupAccidentalSelector')
-      const modeSelector = document.getElementById('setupModeSelector')
-      const master = stemControlValues.master || {}
-      const generateDefaultSessionName = () => {
-        const now = new Date()
-        const year = now.getFullYear()
-        const month = String(now.getMonth() + 1).padStart(2, '0')
-        const day = String(now.getDate()).padStart(2, '0')
-        const hours = String(now.getHours()).padStart(2, '0')
-        const minutes = String(now.getMinutes()).padStart(2, '0')
-        return `Session Setting (${year}-${month}-${day}_${hours}:${minutes})`
-      }
-      if (sessionNameInput) sessionNameInput.value = master.sessionName || generateDefaultSessionName()
-      if (tempoSlider) tempoSlider.value = String(master.tempo ?? DEFAULT_TEMPO)
-      if (tempoValue) tempoValue.textContent = String(master.tempo ?? DEFAULT_TEMPO)
-      if (barsSelector) barsSelector.value = String(master.bars ?? DEFAULT_BARS)
-      if (rootSelector) rootSelector.value = String(master.rootBase ?? 'A')
-      if (accidentalSelector) accidentalSelector.value = String(master.accidental ?? 'natural')
-      if (modeSelector) modeSelector.value = String(master.mode ?? 'Minor')
-      modal.classList.remove('hidden')
-      requestAnimationFrame(() => { modal.style.opacity = '1' })
-      document.body.style.overflow = 'hidden'
+      showSessionSetupModalImpl(
+        false,
+        stemControlValues,
+        (value) => { sessionSetupDone = value },
+        applySessionSettingsToUI,
+        updateTempoIndicator,
+        { forceShow: true }
+      )
     })
   }
   // Present the session setup modal if settings have not been chosen
