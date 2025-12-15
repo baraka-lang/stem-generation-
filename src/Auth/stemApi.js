@@ -142,6 +142,87 @@ export async function getUserStems() {
   }
 }
 
+export async function upsertUserLike(like) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+    const payload = {
+      user_id: user.id,
+      stem_id: like.stemId,
+      take_index: like.takeIndex ?? -1,
+      stem_name: like.stemName || like.stemId,
+      stem_color: like.stemColor || 'purple',
+      bpm: like.bpm || null,
+      key_signature: like.key || null,
+      bars: like.bars || null,
+      rating: like.rating ?? 3,
+      audio_key: like.audioKey || null,
+      unsaved_stem_id: like.unsavedId || null
+    }
+    const { data, error } = await supabase
+      .from('user_likes')
+      .upsert(payload, { onConflict: 'user_id,stem_id,take_index' })
+      .select('id,updated_at')
+      .single()
+    if (error) {
+      return { success: false, error: error.message }
+    }
+    return { success: true, id: data.id, updated_at: data.updated_at }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+export async function getUserLikes() {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+    const { data, error } = await supabase
+      .from('user_likes')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('updated_at', { ascending: false })
+    if (error) {
+      return { success: false, error: error.message }
+    }
+    return { success: true, likes: data || [] }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+export async function removeUserLike(stemId, takeIndex) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+    const { error } = await supabase
+      .from('user_likes')
+      .delete()
+      .match({ user_id: user.id, stem_id: stemId, take_index: takeIndex ?? -1 })
+    if (error) {
+      return { success: false, error: error.message }
+    }
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
 /**
  * Save or update session settings
  * @param {Object} sessionData - Session settings data
@@ -760,7 +841,7 @@ export async function saveSessionSettingToDb(sessionData) {
   }
 }
 
-// Fetch stem set ids and names by session_setting_id
+// Fetch stem states and loads them to UI
 export async function getSetsById(sessionSettingId) {
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }

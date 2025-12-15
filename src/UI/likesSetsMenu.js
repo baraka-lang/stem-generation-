@@ -14,6 +14,7 @@ const DEFAULT_FILTERS = {
   stars: null
 }
 
+const LS_KEY_LIKES = 'likedTracks'
 const likedTracks = []
 let savedSetsCache = []
 let dropdownEl = null
@@ -29,6 +30,8 @@ let playLikeHandler = null
 let stopPreviewHandler = null
 let activePreviewId = null
 let previewStopListenerAttached = false
+let cloudSyncInProgress = false
+const externalLikesContainers = []
 
 export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
   sessionInfoProvider = getSessionInfo || sessionInfoProvider
@@ -40,6 +43,30 @@ export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onP
   anchorButtons = Array.from(document.querySelectorAll('[data-likes-menu-toggle]'))
   if (!anchorButtons.length) return
 
+  try {
+    const raw = localStorage.getItem(LS_KEY_LIKES)
+    if (raw) {
+      const arr = JSON.parse(raw)
+      if (Array.isArray(arr)) {
+        arr.forEach((item) => {
+          likedTracks.push({
+            id: item.id,
+            stemId: item.stemId,
+            takeIndex: item.takeIndex,
+            stemName: item.stemName,
+            stemColor: item.stemColor,
+            bpm: item.bpm,
+            key: item.key,
+            bars: item.bars,
+            audioKey: item.audioKey || null,
+            timestamp: item.timestamp || Date.now(),
+            rating: item.rating ?? 3
+          })
+        })
+      }
+    }
+  } catch {}
+
   buildDropdown()
   attachAnchorHandlers()
   renderFilters()
@@ -49,6 +76,14 @@ export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onP
   document.addEventListener('click', handleOutsideClick)
   document.addEventListener('keydown', handleEscape)
   attachPreviewStopListener()
+  try {
+    window.addEventListener('authStateChanged', async (e) => {
+      const ev = e.detail?.event
+      if (ev === 'SIGNED_IN') {
+        await syncLikesWithCloud()
+      }
+    })
+  } catch {}
 }
 
 export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
@@ -83,6 +118,24 @@ export function refreshFavoritesUI() {
   renderSets()
 }
 
+export function getLikedTracks() {
+  return likedTracks.map((t) => ({ ...t }))
+}
+
+export function addLikesContainer(el, variant = 'page') {
+  if (!el) return
+  externalLikesContainers.push({ el, variant })
+  renderLikes()
+}
+
+export function removeLikesContainer(el) {
+  const idx = externalLikesContainers.findIndex((c) => c.el === el)
+  if (idx >= 0) {
+    externalLikesContainers.splice(idx, 1)
+    renderLikes()
+  }
+}
+
 export function toggleLikeForStem(stemId, track) {
   if (!stemId || !track) return false
   const takeIndex = track.takeIndex ?? -1
@@ -92,6 +145,7 @@ export function toggleLikeForStem(stemId, track) {
     likedTracks.splice(existingIndex, 1)
     renderLikes()
     notifyLikeChange(stemId)
+    persistLikesToLocalStorage()
     return false
   }
 
@@ -105,11 +159,13 @@ export function toggleLikeForStem(stemId, track) {
     key: track.key || sessionInfoProvider().key || 'A Minor',
     bars: track.bars || null,
     audioBuffer: track.audioBuffer || null,
+    audioKey: track.audioKey || null,
     timestamp: Date.now(),
     rating: 3
   })
   renderLikes()
   notifyLikeChange(stemId)
+  persistLikesToLocalStorage()
   return true
 }
 
@@ -726,6 +782,7 @@ function getLikesContainers() {
   const dropdownList = dropdownEl?.querySelector('#likesList')
   if (dropdownList) containers.push({ el: dropdownList, variant: 'dropdown' })
   if (favoritesPageRefs?.likesList) containers.push({ el: favoritesPageRefs.likesList, variant: 'page' })
+  externalLikesContainers.forEach((c) => containers.push(c))
   return containers
 }
 
@@ -894,6 +951,7 @@ function removeLike(stemId, takeIndex) {
     stopPreviewForItem(removed)
     renderLikes()
     notifyLikeChange(stemId)
+    persistLikesToLocalStorage()
   }
 }
 
@@ -1065,4 +1123,78 @@ function notifyLikeChange(stemId) {
 
 function openFavoritesPageView() {
   window.dispatchEvent(new CustomEvent('openFavoritesPage'))
+}
+
+function persistLikesToLocalStorage() {
+  try {
+    const slim = likedTracks.map((t) => ({
+      id: t.id,
+      stemId: t.stemId,
+      takeIndex: t.takeIndex,
+      stemName: t.stemName,
+      stemColor: t.stemColor,
+      bpm: t.bpm,
+      key: t.key,
+      bars: t.bars,
+      audioKey: t.audioKey || null,
+      timestamp: t.timestamp || Date.now(),
+      rating: t.rating ?? 3
+    }))
+    localStorage.setItem(LS_KEY_LIKES, JSON.stringify(slim))
+  } catch {}
+}
+
+async function syncLikesWithCloud() {
+  if (cloudSyncInProgress) return
+  cloudSyncInProgress = true
+  try {
+    const { getUserLikes, upsertUserLike, removeUserLike } = await import('../Auth/stemApi.js')
+    const res = await getUserLikes()
+    if (!res.success) { cloudSyncInProgress = false; return }
+    const cloud = Array.isArray(res.likes) ? res.likes : []
+    const key = (x) => `${x.stem_id || x.stemId}|${x.take_index ?? x.takeIndex ?? -1}`
+    const localMap = new Map(likedTracks.map((t) => [key({ stemId: t.stemId, takeIndex: t.takeIndex }), t]))
+    const cloudMap = new Map(cloud.map((c) => [key(c), c]))
+    for (const [k, v] of localMap) {
+      const c = cloudMap.get(k)
+      if (!c || (v.timestamp || 0) > (new Date(c.updated_at).getTime() || 0)) {
+        await upsertUserLike({
+          stemId: v.stemId,
+          takeIndex: v.takeIndex,
+          stemName: v.stemName,
+          stemColor: v.stemColor,
+          bpm: v.bpm,
+          key: v.key,
+          bars: v.bars,
+          rating: v.rating,
+          audioKey: v.audioKey || null
+        })
+      }
+    }
+    const merged = new Map()
+    for (const c of cloud) {
+      merged.set(key(c), {
+        id: `${c.stem_id}-${Date.now()}`,
+        stemId: c.stem_id,
+        takeIndex: c.take_index ?? -1,
+        stemName: c.stem_name || c.stem_id,
+        stemColor: c.stem_color || 'purple',
+        bpm: c.bpm || sessionInfoProvider().bpm,
+        key: c.key_signature || sessionInfoProvider().key,
+        bars: c.bars || null,
+        audioBuffer: null,
+        audioKey: c.audio_key || null,
+        timestamp: new Date(c.updated_at).getTime() || Date.now(),
+        rating: c.rating ?? 3
+      })
+    }
+    for (const v of likedTracks) {
+      const k = key({ stemId: v.stemId, takeIndex: v.takeIndex })
+      if (!merged.has(k)) merged.set(k, v)
+    }
+    likedTracks.splice(0, likedTracks.length, ...Array.from(merged.values()))
+    persistLikesToLocalStorage()
+    renderLikes()
+  } catch {}
+  cloudSyncInProgress = false
 }

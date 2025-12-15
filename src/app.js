@@ -873,7 +873,8 @@ function handleStemLikeToggle(st) {
     key: sessionInfo.key,
     takeIndex,
     audioBuffer: activeTake?.raw,
-    bars: activeTake?.bars
+    bars: activeTake?.bars,
+    audioKey: activeTake?.meta?.unsavedKey || null
   })
   updateStemLikeButtons(st)
   return liked
@@ -900,8 +901,21 @@ async function toggleLikePreview(item, currentId) {
   }
 
   if (!item?.audioBuffer) {
-    window.dispatchEvent(new CustomEvent('likePreviewStopped'))
-    return null
+    try {
+      if (item?.audioKey) {
+        await ensureAudioContext()
+        const dl = await supabase.storage.from('unsaved-audios').download(item.audioKey)
+        if (!dl.error) {
+          const buf = await dl.data.arrayBuffer()
+          const decoded = await audioContext.decodeAudioData(buf)
+          item.audioBuffer = decoded
+        }
+      }
+    } catch {}
+    if (!item?.audioBuffer) {
+      window.dispatchEvent(new CustomEvent('likePreviewStopped'))
+      return null
+    }
   }
 
   // If the same item was playing, treat as a toggle-off
@@ -1334,6 +1348,9 @@ const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
 )
+
+const lastGenTimes = {}
+function rand8() { return Math.random().toString(36).slice(2, 10) }
 
 /* =========================================================
    Visual helpers
@@ -4175,6 +4192,10 @@ function buildSessionGenerationContext(targetStemId) {
   }
 }
 async function generateStem(st) {
+  const tNow = Date.now()
+  const last = lastGenTimes[st] || 0
+  if (tNow - last < 3000) return
+  lastGenTimes[st] = tNow
   await ensureAudioContext()
   const ctrl = getNewStemController(st)
   const { signal } = ctrl
@@ -4272,6 +4293,44 @@ async function generateStem(st) {
       failedValidation = !validated
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
+      try {
+        const metaKey = getSessionSummaryInfo()
+        const wavArray = audioBufferToWav(aligned.normalizedRaw, aligned.normalizedRaw.sampleRate)
+        const wavBlob = new Blob([wavArray], { type: 'audio/wav' })
+        const key = `unsaved/${Date.now()}_${rand8()}.wav`
+        const up = await supabase.storage.from('unsaved-audios').upload(key, wavBlob, { contentType: 'audio/wav', upsert: false })
+        if (!up.error) {
+          const { data: { user } } = await supabase.auth.getUser()
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+          const ins = await supabase
+            .from('unsaved_stems')
+            .insert({
+              user_id: user?.id || null,
+              stem_name: st,
+              audio_key: key,
+              created_at: new Date().toISOString(),
+              expires_at: expiresAt,
+              metadata: {
+                bpm: tempo,
+                bars,
+                key: metaKey.key,
+                length_seconds: aligned.normalizedRaw.duration
+              },
+              is_saved: false
+            })
+            .select('id')
+            .single()
+          if (ins.error) {
+            await supabase.storage.from('unsaved-audios').remove([key])
+          } else {
+            ensureStemHistory(st)
+            const list = stemHistory[st]
+            if (list && list.length > 0) {
+              list[list.length - 1].meta = { ...(list[list.length - 1].meta || {}), unsavedId: ins.data.id, unsavedKey: key }
+            }
+          }
+        } else { console.error('[AutoSave] Upload failed', up.error?.message || up.error, { bucket: 'unsaved-audios', key }) }
+      } catch (err) { console.error('[AutoSave] Supabase auto-save failed', err) }
 
       try {
         clearStemPCM(st)
@@ -4333,6 +4392,44 @@ async function generateStem(st) {
       endpointFactors[st] = 1
       // Invalidate cached WAV since we have new audio
       invalidateStemCache(st)
+      try {
+        const metaKey = getSessionSummaryInfo()
+        const wavArray = audioBufferToWav(aligned.normalizedRaw, aligned.normalizedRaw.sampleRate)
+        const wavBlob = new Blob([wavArray], { type: 'audio/wav' })
+        const key = `unsaved/${Date.now()}_${rand8()}.wav`
+        const up = await supabase.storage.from('unsaved-audios').upload(key, wavBlob, { contentType: 'audio/wav', upsert: false })
+        if (!up.error) {
+          const { data: { user } } = await supabase.auth.getUser()
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+          const ins = await supabase
+            .from('unsaved_stems')
+            .insert({
+              user_id: user?.id || null,
+              stem_name: st,
+              audio_key: key,
+              created_at: new Date().toISOString(),
+              expires_at: expiresAt,
+              metadata: {
+                bpm: tempo,
+                bars,
+                key: metaKey.key,
+                length_seconds: aligned.normalizedRaw.duration
+              },
+              is_saved: false
+            })
+            .select('id')
+            .single()
+          if (ins.error) {
+            await supabase.storage.from('unsaved-audios').remove([key])
+          } else {
+            ensureStemHistory(st)
+            const list = stemHistory[st]
+            if (list && list.length > 0) {
+              list[list.length - 1].meta = { ...(list[list.length - 1].meta || {}), unsavedId: ins.data.id, unsavedKey: key }
+            }
+          }
+        } else { console.error('[AutoSave] Upload failed', up.error?.message || up.error, { bucket: 'unsaved-audios', key }) }
+      } catch (err) { console.error('[AutoSave] Fallback auto-save failed', err) }
 
       // Extract PCM from AudioBuffer for drag-and-drop (fallback path)
       // Use normalizedRaw for auto-download to get full 16-bar audio
