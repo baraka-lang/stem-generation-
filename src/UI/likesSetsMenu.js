@@ -1,4 +1,5 @@
 import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
+import { getStemStates, deleteStemState } from '../Auth/stemApi.js'
 
 const KEY_OPTIONS = [
   'Any Key',
@@ -17,6 +18,7 @@ const DEFAULT_FILTERS = {
 const LS_KEY_LIKES = 'likedTracks'
 const likedTracks = []
 let savedSetsCache = []
+let stemStatesCache = []
 let dropdownEl = null
 let favoritesPageRefs = null
 let currentTab = 'likes'
@@ -32,6 +34,8 @@ let activePreviewId = null
 let previewStopListenerAttached = false
 let cloudSyncInProgress = false
 const externalLikesContainers = []
+
+let favoritesTabListenersAttached = false
 
 export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
   sessionInfoProvider = getSessionInfo || sessionInfoProvider
@@ -100,6 +104,10 @@ export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike,
     setsList: document.getElementById('favoritesSetsList'),
     likesSection: document.getElementById('favoritesLikesSection'),
     setsSection: document.getElementById('favoritesSetsSection'),
+    stemsFilters: document.getElementById('favoritesStemsFilters'),
+    stemsList: document.getElementById('favoritesStemsList'),
+    stemsSection: document.getElementById('favoritesStemsSection'),
+    stats: document.getElementById('favoritesStats'),
     tabButtons: Array.from(document.querySelectorAll('.favorites-tab-btn'))
   }
 
@@ -108,6 +116,7 @@ export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike,
   renderFilters()
   renderLikes()
   renderSets()
+  renderStemStates()
   switchTab(currentTab)
   attachPreviewStopListener()
 }
@@ -116,6 +125,7 @@ export function refreshFavoritesUI() {
   renderFilters()
   renderLikes()
   renderSets()
+  renderStemStates()
 }
 
 export function getLikedTracks() {
@@ -443,6 +453,7 @@ function buildDropdown() {
       <div class="inline-flex bg-white/5 border border-white/10 rounded-lg overflow-hidden text-sm">
         <button data-tab="likes" class="tab-btn px-3 py-1.5 font-medium">Likes</button>
         <button data-tab="sets" class="tab-btn px-3 py-1.5 text-white/70">Sets</button>
+        <button data-tab="stems" class="tab-btn px-3 py-1.5 text-white/70">Stems</button>
       </div>
       <button data-close-menu class="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center" aria-label="Close menu">
         <i data-lucide="x" class="w-4 h-4"></i>
@@ -455,9 +466,13 @@ function buildDropdown() {
         <div id="setsFilters" class="filter-panel"></div>
         <div id="setsList" class="max-h-80 overflow-y-auto space-y-2"></div>
       </div>
+      <div id="stemsPanel" class="hidden space-y-3">
+        <div id="stemsFilters" class="filter-panel"></div>
+        <div id="stemsList" class="max-h-80 overflow-y-auto space-y-2"></div>
+      </div>
       <div class="pt-1 border-t border-white/10 flex items-center justify-between text-xs text-white/70">
-        <span class="hidden sm:inline">Need more space? Open the full favorites page.</span>
-        <button data-open-favorites-page class="px-3 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-white text-xs">Open favorites</button>
+        <span class="hidden sm:inline">Need more space? Open your library.</span>
+        <button data-open-favorites-page class="px-3 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-white text-xs">Open Library</button>
       </div>
     </div>
   `
@@ -602,7 +617,7 @@ function resetPreviewState() {
 }
 
 function switchTab(tab) {
-  currentTab = tab === 'sets' ? 'sets' : 'likes'
+  currentTab = tab
   if (dropdownEl) {
     dropdownEl.querySelectorAll('.tab-btn').forEach((btn) => {
       const isActive = btn.getAttribute('data-tab') === currentTab
@@ -614,15 +629,26 @@ function switchTab(tab) {
     const likesFilters = dropdownEl.querySelector('#likesFilters')
     const likesList = dropdownEl.querySelector('#likesList')
     const setsPanel = dropdownEl.querySelector('#setsPanel')
-    if (likesFilters && likesList && setsPanel) {
+    const stemsPanel = dropdownEl.querySelector('#stemsPanel')
+
+    if (likesFilters && likesList && setsPanel && stemsPanel) {
       if (currentTab === 'likes') {
         likesFilters.classList.remove('hidden')
         likesList.classList.remove('hidden')
         setsPanel.classList.add('hidden')
-      } else {
+        stemsPanel.classList.add('hidden')
+      } else if (currentTab === 'sets') {
         likesFilters.classList.add('hidden')
         likesList.classList.add('hidden')
         setsPanel.classList.remove('hidden')
+        stemsPanel.classList.add('hidden')
+      } else if (currentTab === 'stems') {
+        likesFilters.classList.add('hidden')
+        likesList.classList.add('hidden')
+        setsPanel.classList.add('hidden')
+        stemsPanel.classList.remove('hidden')
+        // Trigger sync when switching to stems
+        syncStemStates()
       }
     }
   }
@@ -637,14 +663,13 @@ function switchTab(tab) {
 
   const favoritesLikes = favoritesPageRefs?.likesSection
   const favoritesSets = favoritesPageRefs?.setsSection
+  const favoritesStems = favoritesPageRefs?.stemsSection
   if (favoritesLikes && favoritesSets) {
-    if (currentTab === 'likes') {
-      favoritesLikes.classList.remove('hidden')
-      favoritesSets.classList.add('hidden')
-    } else {
-      favoritesLikes.classList.add('hidden')
-      favoritesSets.classList.remove('hidden')
-    }
+    favoritesLikes.classList.toggle('hidden', currentTab !== 'likes')
+    favoritesSets.classList.toggle('hidden', currentTab !== 'sets')
+  }
+  if (favoritesStems) {
+    favoritesStems.classList.toggle('hidden', currentTab !== 'stems')
   }
 }
 
@@ -671,14 +696,19 @@ function attachFavoritesScrollLinks() {
 function renderFilters() {
   renderFilterPanel(dropdownEl?.querySelector('#likesFilters'), 'likes')
   renderFilterPanel(dropdownEl?.querySelector('#setsFilters'), 'sets')
+  renderFilterPanel(dropdownEl?.querySelector('#stemsFilters'), 'stems')
   renderFilterPanel(favoritesPageRefs?.likesFilters, 'likes', 'page')
   renderFilterPanel(favoritesPageRefs?.setsFilters, 'sets', 'page')
+  renderFilterPanel(favoritesPageRefs?.stemsFilters, 'stems', 'page')
 }
 
 function renderFilterPanel(container, prefix, context = 'dropdown') {
   if (!container) return
   const columnClass = 'sm:grid-cols-4'
-  const label = prefix === 'sets' ? 'Saved set filters' : 'Likes filters'
+  let label = 'Likes filters'
+  if (prefix === 'sets') label = 'Saved set filters'
+  if (prefix === 'stems') label = 'Stem states filters'
+  
   const baseClass = context === 'page'
     ? `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
     : `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
@@ -746,8 +776,10 @@ function handleFilterChange(e, prefix) {
 
   if (prefix === 'likes') {
     renderLikes()
-  } else {
+  } else if (prefix === 'sets') {
     renderSets()
+  } else if (prefix === 'stems') {
+    renderStemStates()
   }
 }
 
@@ -1004,6 +1036,142 @@ function renderSets() {
   })
 
   renderStats()
+}
+
+let stemStatesSyncInProgress = false
+async function syncStemStates() {
+  if (stemStatesSyncInProgress) return
+  stemStatesSyncInProgress = true
+
+  try {
+    const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+    const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
+    const sessionSettingIdRaw = parsed?.session_setting_id ?? parsed?.id ?? null
+    const sessionSettingId =
+      typeof sessionSettingIdRaw === 'number'
+        ? sessionSettingIdRaw
+        : (typeof sessionSettingIdRaw === 'string' && /^\d+$/.test(sessionSettingIdRaw)
+            ? Number(sessionSettingIdRaw)
+            : null)
+
+    if (!sessionSettingId) {
+      console.warn('No sessionSettingId found, cannot fetch stem states')
+      stemStatesCache = []
+      renderStemStates()
+      stemStatesSyncInProgress = false
+      return
+    }
+
+    const result = await getStemStates(sessionSettingId)
+    if (result.success && Array.isArray(result.states)) {
+      stemStatesCache = result.states
+    } else {
+      console.error('Failed to fetch stem states:', result.error)
+    }
+  } catch (err) {
+    console.error('Exception syncing stem states:', err)
+  } finally {
+    stemStatesSyncInProgress = false
+    renderStemStates()
+  }
+}
+
+function getStemContainers() {
+  const containers = []
+  const dropdownList = dropdownEl?.querySelector('#stemsList')
+  if (dropdownList) containers.push(dropdownList)
+  if (favoritesPageRefs?.stemsList) containers.push(favoritesPageRefs.stemsList)
+  return containers
+}
+
+function renderStemStates() {
+  const containers = getStemContainers()
+  if (!containers.length) return
+
+  const filtered = getFilteredStemStates()
+
+  containers.forEach((container) => {
+    if (!filtered.length) {
+      container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved stem states found.</div>`
+      return
+    }
+
+    container.innerHTML = filtered
+      .map((item) => renderStemStateCard(item))
+      .join('')
+
+    container.querySelectorAll('[data-load-stem-state]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.getAttribute('data-load-stem-state'), 10)
+        const state = stemStatesCache.find(s => s.stem_state_id === id)
+        if (state) {
+          window.dispatchEvent(new CustomEvent('loadStemState', { detail: state }))
+          closeMenu()
+        }
+      })
+    })
+
+    container.querySelectorAll('[data-delete-stem-state]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        if (!confirm('Are you sure you want to delete this stem state?')) return
+        const id = parseInt(btn.getAttribute('data-delete-stem-state'), 10)
+        const res = await deleteStemState(id)
+        if (res.success) {
+          stemStatesCache = stemStatesCache.filter(s => s.stem_state_id !== id)
+          renderStemStates()
+        } else {
+          showToast('Failed to delete stem state', 'error')
+        }
+      })
+    })
+  })
+}
+
+function getFilteredStemStates() {
+  return stemStatesCache.map(item => {
+      const snapshot = item.stems_snapshot || {}
+      const meta = snapshot.metadata || {}
+      const bpm = meta.tempo ?? sessionInfoProvider().bpm
+      const key = meta.key ?? sessionInfoProvider().key
+      const timestamp = new Date(item.created_at).getTime()
+      return { 
+        ...item, 
+        bpm, 
+        key, 
+        timestamp,
+        name: item.state_name || `State ${item.stem_state_id}`
+      }
+    })
+    .filter(item => {
+      const bpmOk = item.bpm >= filters.bpmMin && item.bpm <= filters.bpmMax
+      const keyOk = filters.key === 'Any Key' || item.key === filters.key
+      return bpmOk && keyOk
+    })
+    .sort((a, b) => b.timestamp - a.timestamp)
+}
+
+function renderStemStateCard(item) {
+  const label = item.name
+  const dateStr = new Date(item.created_at).toLocaleDateString()
+  
+  return `
+    <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3">
+      <div class="space-y-1 flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-sm font-medium truncate">${label}</span>
+          <span class="text-[10px] text-white/50">${dateStr}</span>
+        </div>
+        <div class="text-xs text-white/60">${item.bpm} BPM · ${item.key}</div>
+      </div>
+      <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+        <button data-load-stem-state="${item.stem_state_id}" class="text-sm text-purple-300 hover:text-white">Load</button>
+        <button data-delete-stem-state="${item.stem_state_id}" class="text-xs text-red-300 hover:text-red-100 p-1" title="Delete">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    </div>
+  `
 }
 
 function getSetContainers() {

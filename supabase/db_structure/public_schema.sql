@@ -108,3 +108,34 @@ CREATE TABLE public.subscriptions (
   CONSTRAINT subscriptions_pkey PRIMARY KEY (id),
   CONSTRAINT subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
 );
+CREATE TABLE public.unsaved_stems (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid,
+  stem_name character varying NOT NULL,
+  audio_key character varying NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  expires_at timestamp with time zone NOT NULL,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  is_saved boolean NOT NULL DEFAULT false,
+  CONSTRAINT unsaved_stems_pkey PRIMARY KEY (id),
+  CONSTRAINT unsaved_stems_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.user_likes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  stem_id text NOT NULL,
+  take_index integer NOT NULL DEFAULT '-1'::integer,
+  stem_name text,
+  stem_color text,
+  bpm integer,
+  key_signature text,
+  bars integer,
+  rating integer NOT NULL DEFAULT 3 CHECK (rating >= 1 AND rating <= 5),
+  audio_key text,
+  unsaved_stem_id uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT user_likes_pkey PRIMARY KEY (id),
+  CONSTRAINT user_likes_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT user_likes_unsaved_stem_id_fkey FOREIGN KEY (unsaved_stem_id) REFERENCES public.unsaved_stems(id)
+);

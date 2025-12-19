@@ -654,9 +654,17 @@ async function saveNewSet() {
         localStorage.setItem('currentSessionSetting', JSON.stringify(currentSessionSettingObj))
       }
       // Save the set data to the database in relation to the session setting
-      const { saveSetToDb } = await import('./Auth/stemApi.js')
+      const { saveSetToDb, saveStemStateToDb } = await import('./Auth/stemApi.js')
       const saveResult = await saveSetToDb(set_data, existingSessionSettingId)
       console.log("saveResult", saveResult)
+
+      // Also save to stem_states table
+      const stemStateResult = await saveStemStateToDb(existingSessionSettingId, {
+        state_name: set_data.name,
+        stems_snapshot: set_data.stems_states
+      })
+      console.log("stemStateResult", stemStateResult)
+
       if (saveResult.success) {
         set_data.id = saveResult.set_id
 
@@ -712,9 +720,17 @@ async function saveNewSet() {
         localStorage.setItem('currentSessionSetting', JSON.stringify(currentSessionSettingObj))
 
         // Save the set data to the database in relation to the session setting
-        const { saveSetToDb } = await import('./Auth/stemApi.js')
+        const { saveSetToDb, saveStemStateToDb } = await import('./Auth/stemApi.js')
         const saveResult = await saveSetToDb(set_data, result.session_setting_id)
         console.log("saveResult", saveResult)
+
+        // Also save to stem_states table
+        const stemStateResult = await saveStemStateToDb(result.session_setting_id, {
+          state_name: set_data.name,
+          stems_snapshot: set_data.stems_states
+        })
+        console.log("stemStateResult", stemStateResult)
+
         if (saveResult.success) {
           set_data.id = saveResult.set_id
           const stemsToSave = collectStemsToSave();

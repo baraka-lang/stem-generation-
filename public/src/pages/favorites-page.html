@@ -10,10 +10,10 @@
         <div>
           <div class="flex items-center gap-2 text-white/80 text-sm">
             <i data-lucide="heart" class="w-4 h-4"></i>
-            <span class="uppercase tracking-[0.2em] text-[11px] text-white/50">Session Favorites</span>
+            <span class="uppercase tracking-[0.2em] text-[11px] text-white/50">Your library</span>
           </div>
-          <h1 class="text-2xl sm:text-3xl font-bold">Likes &amp; Saved Sets</h1>
-          <p class="text-sm text-white/60">Everything you've hearted or saved in this session, with filters for BPM and key.</p>
+          <h1 class="text-2xl sm:text-3xl font-bold">Likes, Saved Sets  &amp; Stems</h1>
+          <p class="text-sm text-white/60">Everything you've hearted or saved across sessions, organized by session settings with filters for BPM and key.</p>
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -40,7 +40,7 @@
         <div class="px-4 pt-4 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10">
           <div class="flex items-center gap-2 text-sm text-white/70">
             <i data-lucide="info" class="w-4 h-4"></i>
-            <span>Session-only favorites. Clears on refresh.</span>
+            <span>Your personal library of likes, saved sets and stems, linked to your session settings.</span>
           </div>
           <div class="bg-white/5 border border-white/10 rounded-xl overflow-hidden shadow-inner w-full sm:w-auto">
             <div class="grid grid-cols-2 text-sm">
@@ -52,34 +52,110 @@
               <button data-favorites-tab="sets"
                 class="favorites-tab-btn flex items-center justify-center gap-2 px-4 py-3 font-semibold border-b-2 border-transparent text-white/70">
                 <i data-lucide="layers" class="w-4 h-4"></i>
-                <span>Sets</span>
+                <span>Sets &amp; Stems</span>
               </button>
             </div>
           </div>
         </div>
 
         <section id="favoritesLikesSection" class="p-4 space-y-4">
-          <div>
-            <div class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90">
-              <i data-lucide="heart" class="w-4 h-4"></i>
-              <span>Likes</span>
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <div class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90">
+                <i data-lucide="heart" class="w-4 h-4"></i>
+                <span>Likes</span>
+              </div>
+              <p class="text-xs text-white/60">Saved takes you have hearted. Apply them back into the studio player or download individual stems.</p>
             </div>
-            <div id="favoritesLikesFilters"></div>
+            <div class="hidden sm:flex items-center gap-2 text-xs text-white/60">
+              <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10">Current session</span>
+              <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10">All sessions</span>
+            </div>
           </div>
+          <div id="favoritesLikesFilters"></div>
           <div id="favoritesLikesList" class="space-y-3"></div>
         </section>
 
         <section id="favoritesSetsSection" class="hidden p-4 space-y-4">
-          <div>
-            <div class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90">
-              <i data-lucide="layers" class="w-4 h-4"></i>
-              <span>Saved Sets</span>
+          <div class="flex flex-col gap-3">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90">
+                  <i data-lucide="layers" class="w-4 h-4"></i>
+                  <span>Saved Sets &amp; Stems</span>
+                </div>
+                <p class="text-xs text-white/60">Browse complete stem sets and individual stems associated with your session settings. Load them into the studio player or download for use in your DAW.</p>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-white/60">
+                <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10" data-favorites-session-scope="current">Current session</span>
+                <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10" data-favorites-session-scope="all">All sessions</span>
+              </div>
             </div>
+
+            <div class="flex items-center justify-between gap-3">
+              <div class="inline-flex rounded-xl bg-white/5 border border-white/10 overflow-hidden text-xs">
+                <button class="px-3 py-1.5 font-semibold text-white bg-white/10" data-favorites-sets-subtab="sets">Sets</button>
+                <button class="px-3 py-1.5 font-semibold text-white/70 hover:text-white hover:bg-white/10" data-favorites-sets-subtab="stems">Stems</button>
+              </div>
+              <div class="text-xs text-white/60 text-right">
+                <div>Click a set to apply it to the studio player &amp; generator.</div>
+                <div>Use the download buttons on each card to export audio.</div>
+              </div>
+            </div>
+
             <div id="favoritesSetsFilters"></div>
           </div>
           <div id="favoritesSetsList" class="space-y-3"></div>
+          <div id="favoritesStemsList" class="hidden space-y-3"></div>
         </section>
+        <div id="favoritesStats" class="border-t border-white/10 bg-black/10 px-4 py-3 text-xs text-white/70"></div>
       </div>
     </div>
   </main>
 </div>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  var tabs = Array.from(document.querySelectorAll('.favorites-tab-btn'))
+  var likesSection = document.getElementById('favoritesLikesSection')
+  var setsSection = document.getElementById('favoritesSetsSection')
+  function setActiveTab(tab) {
+    tabs.forEach(function(btn) {
+      var isActive = btn.getAttribute('data-favorites-tab') === tab
+      btn.classList.toggle('border-purple-400', isActive)
+      btn.classList.toggle('text-white', isActive)
+      btn.classList.toggle('text-white/70', !isActive)
+      btn.classList.toggle('border-transparent', !isActive)
+    })
+    if (likesSection) likesSection.classList.toggle('hidden', tab !== 'likes')
+    if (setsSection) setsSection.classList.toggle('hidden', tab !== 'sets')
+    try { window.lucide && window.lucide.createIcons() } catch (e) {}
+  }
+  tabs.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var tab = btn.getAttribute('data-favorites-tab')
+      setActiveTab(tab)
+    })
+  })
+  setActiveTab('likes')
+  var subTabs = Array.from(document.querySelectorAll('[data-favorites-sets-subtab]'))
+  var setsList = document.getElementById('favoritesSetsList')
+  var stemsList = document.getElementById('favoritesStemsList')
+  function setSetsSubtab(tab) {
+    subTabs.forEach(function(btn) {
+      var isActive = btn.getAttribute('data-favorites-sets-subtab') === tab
+      btn.classList.toggle('text-white', isActive)
+      btn.classList.toggle('bg-white/10', isActive)
+      btn.classList.toggle('text-white/70', !isActive)
+    })
+    if (setsList) setsList.classList.toggle('hidden', tab !== 'sets')
+    if (stemsList) stemsList.classList.toggle('hidden', tab !== 'stems')
+  }
+  subTabs.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      var tab = btn.getAttribute('data-favorites-sets-subtab')
+      setSetsSubtab(tab)
+    })
+  })
+  setSetsSubtab('sets')
+})
+</script>

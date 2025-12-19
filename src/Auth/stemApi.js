@@ -911,3 +911,59 @@ export async function saveStemStateToDb(sessionSettingId, stemState) {
     return { success: false, error: err.message }
   }
 }
+
+/**
+ * Get stem states for a session setting
+ * @param {number} sessionSettingId - ID of the session setting
+ * @returns {Promise<{success: boolean, states?: Array, error?: string}>}
+ */
+export async function getStemStates(sessionSettingId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { data, error } = await supabase
+      .from('stem_states')
+      .select('*')
+      .eq('session_settings_id', sessionSettingId)
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error('Error fetching stem states:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true, states: data || [] }
+  } catch (err) {
+    console.error('Exception fetching stem states:', err)
+    return { success: false, error: err.message }
+  }
+}
+
+/**
+ * Delete a stem state (soft delete)
+ * @param {number} stemStateId - ID of the stem state
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function deleteStemState(stemStateId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { error } = await supabase
+      .from('stem_states')
+      .update({ is_deleted: true })
+      .eq('stem_state_id', stemStateId)
+
+    if (error) {
+      console.error('Error deleting stem state:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true }
+  } catch (err) {
+    console.error('Exception deleting stem state:', err)
+    return { success: false, error: err.message }
+  }
+}

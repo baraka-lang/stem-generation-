@@ -844,6 +844,17 @@ async function confirmLoadSet(idx) {
   // Note: loadSavedSet() closes the modal
 }
 
+window.addEventListener('loadStemState', async (e) => {
+  const detail = e.detail || {}
+  const snapshot = detail.stems_snapshot || null
+  if (!snapshot) return
+  try {
+    await applyPlayerState(snapshot)
+  } catch (err) {
+    console.error('Failed to apply stem state', err)
+  }
+})
+
 
 function updateStemLikeButtons(st) {
   const activeIdx = stemActiveIndex[st] ?? -1

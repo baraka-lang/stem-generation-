@@ -104,6 +104,13 @@ CREATE TABLE auth.oauth_authorizations (
   CONSTRAINT oauth_authorizations_client_id_fkey FOREIGN KEY (client_id) REFERENCES auth.oauth_clients(id),
   CONSTRAINT oauth_authorizations_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
+CREATE TABLE auth.oauth_client_states (
+  id uuid NOT NULL,
+  provider_type text NOT NULL,
+  code_verifier text,
+  created_at timestamp with time zone NOT NULL,
+  CONSTRAINT oauth_client_states_pkey PRIMARY KEY (id)
+);
 CREATE TABLE auth.oauth_clients (
   id uuid NOT NULL,
   client_secret_hash text,
