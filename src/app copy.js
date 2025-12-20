@@ -130,13 +130,21 @@ function getCurrentPlayerState() {
     const eq = { ...(stemEqValues[st] || {}) }
     const filt = { ...(stemFilterValues[st] || {}) }
     const endpoint = endpointFactors[st] ?? 1
+    
+    // Capture audioKey from the active take in history
+    let audioKey = null
+    if (activeIndex >= 0 && stemHistory[st] && stemHistory[st][activeIndex]) {
+      audioKey = stemHistory[st][activeIndex].audioKey || null
+    }
+
     snapshot.stems[st] = {
       activeIndex,
       mute,
       volume: vol,
       eq,
       filter: filt,
-      endpoint
+      endpoint,
+      audioKey
     }
   })
   return snapshot
@@ -505,13 +513,36 @@ function closeSaveSetModal() {
   setTimeout(() => { modal.classList.add('hidden') }, 200)
 }
 
+function buildSavedSetRecord(labelOverride = null) {
+  const snapshot = getCurrentPlayerState()
+  const master = stemControlValues.master || {}
+  const rootName = typeof getRootText === 'function' ? getRootText() : (master.rootBase || master.root || 'A')
+  const tempo = master.tempo ?? DEFAULT_TEMPO
+  const bars = master.bars ?? DEFAULT_BARS
+  const mode = master.mode ?? 'Minor'
+  const activeStemCount = STEM_ORDER.filter(st => (stemActiveIndex[st] ?? -1) >= 0).length
+  const totalTakes = STEM_ORDER.reduce((sum, st) => sum + (stemHistory[st]?.length || 0), 0)
+
+  snapshot.metadata = {
+    timestamp: Date.now(),
+    tempo,
+    bars,
+    key: `${rootName} ${mode}`.trim(),
+    name: labelOverride || snapshot.metadata?.name,
+    activeStemCount,
+    totalTakes
+  }
+
+  return snapshot
+}
+
 /**
  * Persist the current state to a new saved set.  This function is
  * invoked by the save set confirm button.  It displays a spinner while
  * saving, updates the dropdown, selects the new set and closes the
  * modal when complete.
  */
-function saveNewSet() {
+async function saveNewSet() {
   const spinner = document.getElementById('saveSetSpinner')
   const label = document.getElementById('saveSetConfirmLabel')
   if (spinner && label) {
@@ -519,7 +550,7 @@ function saveNewSet() {
     label.textContent = 'Saving'
   }
   // Save the state
-  const snapshot = getCurrentPlayerState()
+  const snapshot = buildSavedSetRecord(`Set ${savedSets.length + 1}`)
   savedSets.push(snapshot)
   // Determine new index
   const newIndex = savedSets.length - 1
@@ -530,6 +561,40 @@ function saveNewSet() {
     dropdown.value = String(newIndex)
   }
   currentSavedSetIndex = newIndex
+
+  const stemStateForDb = {
+    state_name: snapshot?.metadata?.name || null,
+    stems_snapshot: snapshot,
+  }
+
+  try {
+    const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+    const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
+    const sessionSettingIdRaw = parsed?.session_setting_id ?? parsed?.id ?? null
+    const sessionSettingId =
+      typeof sessionSettingIdRaw === 'number'
+        ? sessionSettingIdRaw
+        : (typeof sessionSettingIdRaw === 'string' && /^\d+$/.test(sessionSettingIdRaw)
+            ? Number(sessionSettingIdRaw)
+            : null)
+
+    if (sessionSettingId) {
+      const { saveSetToDb, saveStemStateToDb } = await import('./Auth/stemApi.js')
+      // Save to stem_sets table (legacy/compatibility)
+      const setData = {
+        name: stemStateForDb.state_name,
+        description: `Saved on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}`,
+        stems_states: snapshot
+      }
+      await saveSetToDb(setData, sessionSettingId)
+
+      // Save to stem_states table
+      await saveStemStateToDb(sessionSettingId, stemStateForDb)
+    }
+  } catch (err) {
+    console.error('Failed to save set to cloud:', err)
+  }
+
   // Hide spinner and close modal
   if (spinner && label) {
     spinner.classList.add('hidden')

@@ -142,13 +142,21 @@ function getCurrentPlayerState() {
     const eq = { ...(stemEqValues[st] || {}) }
     const filt = { ...(stemFilterValues[st] || {}) }
     const endpoint = endpointFactors[st] ?? 1
+
+    // Capture audioKey from the active take in history
+    let audioKey = null
+    if (activeIndex >= 0 && stemHistory[st] && stemHistory[st][activeIndex]) {
+      audioKey = stemHistory[st][activeIndex].audioKey || null
+    }
+
     snapshot.stems[st] = {
       activeIndex,
       mute,
       volume: vol,
       eq,
       filter: filt,
-      endpoint
+      endpoint,
+      audioKey
     }
   })
   return snapshot

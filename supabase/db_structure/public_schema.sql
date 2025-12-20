@@ -94,7 +94,10 @@ CREATE TABLE public.stems (
   duration_seconds numeric,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
+  session_setting_id bigint,
+  is_deleted boolean DEFAULT false,
   CONSTRAINT stems_pkey PRIMARY KEY (id),
+  CONSTRAINT stems_session_setting_id_fkey FOREIGN KEY (session_setting_id) REFERENCES public.session_settings(session_setting_id),
   CONSTRAINT stems_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
 );
 CREATE TABLE public.subscriptions (

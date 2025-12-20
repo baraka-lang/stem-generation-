@@ -12,6 +12,68 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 let supabase = null
 if (supabaseUrl && supabaseKey) {
   supabase = createClient(supabaseUrl, supabaseKey)
+} else {
+  try {
+    const globalClientFactory = typeof window !== 'undefined' ? window.supabase?.createClient : null
+    const cfg = typeof window !== 'undefined' ? window.RESET_PASSWORD_CONFIG || {} : {}
+    const urlFallback = cfg.supabaseUrl
+    const keyFallback = cfg.supabaseKey
+    if (globalClientFactory && urlFallback && keyFallback && urlFallback !== 'https://your-project.supabase.co' && keyFallback !== 'your-anon-key') {
+      supabase = globalClientFactory(urlFallback, keyFallback)
+    }
+  } catch {}
+}
+
+/**
+ * Upload stem audio to Supabase Storage
+ * @param {Blob|File} file - Audio file to upload
+ * @param {string} userId - User ID
+ * @param {string} stemType - Type of stem (for folder organization)
+ * @returns {Promise<{success: boolean, publicUrl?: string, path?: string, error?: string}>}
+ */
+export async function uploadStemAudio(file, userId, stemType) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    if (!userId) {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        userId = user.id
+      } else {
+        return { success: false, error: 'User not authenticated' }
+      }
+    }
+
+    const timestamp = Date.now()
+    const fileName = `${userId}/${stemType}_${timestamp}.wav`
+    const bucketName = import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files'
+
+    const { data, error } = await supabase
+      .storage
+      .from(bucketName)
+      .upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: 'audio/wav'
+      })
+
+    if (error) {
+      console.error('Error uploading audio:', error)
+      return { success: false, error: error.message }
+    }
+
+    const { data: { publicUrl } } = supabase
+      .storage
+      .from(bucketName)
+      .getPublicUrl(fileName)
+
+    return { success: true, publicUrl, path: fileName }
+  } catch (error) {
+    console.error('Exception uploading audio:', error)
+    return { success: false, error: error.message }
+  }
 }
 
 /**
@@ -24,7 +86,7 @@ if (supabaseUrl && supabaseKey) {
  * @param {string} stemData.keySignature - Key signature
  * @param {number} stemData.generationTier - Generation tier (0-2)
  * @param {boolean} stemData.validated - Whether validation passed
- * @param {ArrayBuffer|AudioBuffer} stemData.audioData - Audio data as ArrayBuffer or AudioBuffer
+ * @param {ArrayBuffer|AudioBuffer} stemData.audioData - Audio data as ArrayBuffer or AudioBuffer (optional if audioUrl provided)
  * @param {number} stemData.fileSize - File size in bytes (optional)
  * @param {number} stemData.durationSeconds - Duration in seconds (optional if audioData is AudioBuffer)
  * @param {string} stemData.stemSetId - ID of the stem set (optional)
@@ -38,37 +100,53 @@ export async function saveStem(stemData) {
   }
 
   try {
-    let audioArrayBuffer = stemData.audioData
+    let audioBase64 = null
     let fileSize = stemData.fileSize
     let durationSeconds = stemData.durationSeconds
 
-    // Convert AudioBuffer to ArrayBuffer if needed
-    if (audioArrayBuffer instanceof AudioBuffer) {
-      const { audioBufferToArrayBuffer, getAudioDuration } = await import('./audioBufferHelper.js')
-      audioArrayBuffer = await audioBufferToArrayBuffer(audioArrayBuffer)
-      durationSeconds = durationSeconds || getAudioDuration(stemData.audioData)
-    }
-
-    // Calculate file size if not provided
-    if (!fileSize && audioArrayBuffer.byteLength) {
-      fileSize = audioArrayBuffer.byteLength
-    }
-
-    // Convert ArrayBuffer to base64 for storage
-    const audioBytes = new Uint8Array(audioArrayBuffer)
-    
-    // For large files, chunk the conversion to avoid call stack overflow
-    let audioBase64
-    if (audioBytes.length > 65536) {
-      // For large files, use chunked approach
-      const chunks = []
-      for (let i = 0; i < audioBytes.length; i += 65536) {
-        const chunk = audioBytes.slice(i, i + 65536)
-        chunks.push(String.fromCharCode.apply(null, chunk))
+    // Only process audioData if provided and we don't strictly rely on URL
+    // (though we can store both if available)
+    if (stemData.audioData) {
+      let audioArrayBuffer = stemData.audioData
+      
+      // Convert AudioBuffer to ArrayBuffer if needed
+      if (audioArrayBuffer instanceof AudioBuffer) {
+        const { audioBufferToArrayBuffer, getAudioDuration } = await import('./audioBufferHelper.js')
+        // Only convert if we intend to store it as base64 or need size/duration
+        // If we have audioUrl, maybe we skip base64 storage to save DB space?
+        // For now, let's keep existing behavior but make it optional if audioUrl is present.
+        
+        // If we have URL, we might skip full base64 conversion for DB storage unless requested
+        // But for compatibility, let's calculate duration at least
+        durationSeconds = durationSeconds || getAudioDuration(stemData.audioData)
+        
+        // If we are NOT storing to bucket (no audioUrl), we MUST store in DB
+        // If we ARE storing to bucket (audioUrl present), we can skip DB storage of blob
+        if (!stemData.audioUrl) {
+           audioArrayBuffer = await audioBufferToArrayBuffer(audioArrayBuffer)
+        }
       }
-      audioBase64 = btoa(chunks.join(''))
-    } else {
-      audioBase64 = btoa(String.fromCharCode(...audioBytes))
+
+      // Calculate file size if not provided
+      if (!fileSize && audioArrayBuffer.byteLength) {
+        fileSize = audioArrayBuffer.byteLength
+      }
+
+      // Only convert to base64 if we don't have a URL or if we want to fallback
+      // Ideally, if we have a URL, we don't bloat the DB
+      if (!stemData.audioUrl && audioArrayBuffer instanceof ArrayBuffer) {
+         const audioBytes = new Uint8Array(audioArrayBuffer)
+         if (audioBytes.length > 65536) {
+           const chunks = []
+           for (let i = 0; i < audioBytes.length; i += 65536) {
+             const chunk = audioBytes.slice(i, i + 65536)
+             chunks.push(String.fromCharCode.apply(null, chunk))
+           }
+           audioBase64 = btoa(chunks.join(''))
+         } else {
+           audioBase64 = btoa(String.fromCharCode(...audioBytes))
+         }
+      }
     }
 
     // Get current user
@@ -86,10 +164,11 @@ export async function saveStem(stemData) {
       key_signature: stemData.keySignature,
       generation_tier: stemData.generationTier || 0,
       validated: stemData.validated || false,
-      audio_data: audioBase64,
+      audio_data: audioBase64, // Can be null if using URL
       audio_url: stemData.audioUrl || null,
       file_size: fileSize,
-      duration_seconds: durationSeconds
+      duration_seconds: durationSeconds,
+      session_setting_id: stemData.sessionSettingId || null
     }
 
     // Add stem_set_id if provided
@@ -115,20 +194,39 @@ export async function saveStem(stemData) {
   }
 }
 
+
 /**
  * Get all stems for the current user
  * @returns {Promise<{success: boolean, stems?: Array, error?: string}>}
  */
-export async function getUserStems() {
+export async function getUserStems(sessionSettingId = null) {
+  console.log('getUserStems: Start', { sessionSettingId })
   if (!supabase) {
+    console.error('getUserStems: Supabase not configured')
     return { success: false, error: 'Supabase not configured' }
   }
 
   try {
-    const { data, error } = await supabase
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      console.error('getUserStems: User not authenticated')
+      return { success: false, error: 'User not authenticated' }
+    }
+    console.log('getUserStems: Authenticated user', user.id)
+
+    let query = supabase
       .from('stems')
       .select('*')
+      .eq('user_id', user.id)
+      .eq('is_deleted', false)
       .order('created_at', { ascending: false })
+
+    if (sessionSettingId) {
+      query = query.eq('session_setting_id', sessionSettingId)
+    }
+
+    const { data, error } = await query
+    console.log('getUserStems: Query result', { dataCount: data?.length, error })
 
     if (error) {
       console.error('Error fetching stems:', error)
@@ -138,6 +236,35 @@ export async function getUserStems() {
     return { success: true, stems: data || [] }
   } catch (error) {
     console.error('Exception fetching stems:', error)
+    return { success: false, error: error.message }
+  }
+}
+
+
+/**
+ * Delete a stem (soft delete)
+ * @param {string} stemId - ID of the stem to delete
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function deleteStem(stemId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+
+  try {
+    const { error } = await supabase
+      .from('stems')
+      .update({ is_deleted: true })
+      .eq('id', stemId)
+
+    if (error) {
+      console.error('Error deleting stem:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true }
+  } catch (error) {
+    console.error('Exception deleting stem:', error)
     return { success: false, error: error.message }
   }
 }
@@ -547,33 +674,7 @@ export async function getStemById(stemId) {
   }
 }
 
-/**
- * Delete a stem
- * @param {string} stemId - ID of the stem to delete
- * @returns {Promise<{success: boolean, error?: string}>}
- */
-export async function deleteStem(stemId) {
-  if (!supabase) {
-    return { success: false, error: 'Supabase not configured' }
-  }
 
-  try {
-    const { error } = await supabase
-      .from('stems')
-      .delete()
-      .eq('id', stemId)
-
-    if (error) {
-      console.error('Error deleting stem:', error)
-      return { success: false, error: error.message }
-    }
-
-    return { success: true }
-  } catch (error) {
-    console.error('Exception deleting stem:', error)
-    return { success: false, error: error.message }
-  }
-}
 
 /**
  * Delete a stem set
@@ -842,28 +943,28 @@ export async function saveSessionSettingToDb(sessionData) {
 }
 
 // Fetch stem states and loads them to UI
-export async function getSetsById(sessionSettingId) {
-  if (!supabase) {
-    return { success: false, error: 'Supabase not configured' }
-  }
-  try {
-    const { data, error } = await supabase
-      .from('stem_sets')
-      .select('id, name')
-      .eq('session_setting_id', sessionSettingId)
-      .order('created_at', { ascending: false })
+// export async function getSetsById(sessionSettingId) {
+//   if (!supabase) {
+//     return { success: false, error: 'Supabase not configured' }
+//   }
+//   try {
+//     const { data, error } = await supabase
+//       .from('stem_sets')
+//       .select('id, name')
+//       .eq('session_setting_id', sessionSettingId)
+//       .order('created_at', { ascending: false })
 
-    if (error) {
-      console.error('Error fetching stem sets by session_setting_id:', error)
-      return { success: false, error: error.message }
-    }
+//     if (error) {
+//       console.error('Error fetching stem sets by session_setting_id:', error)
+//       return { success: false, error: error.message }
+//     }
 
-    return { success: true, sets: data || [] }
-  } catch (err) {
-    console.error('Exception fetching stem sets by session_setting_id:', err)
-    return { success: false, error: err.message }
-  }
-}
+//     return { success: true, sets: data || [] }
+//   } catch (err) {
+//     console.error('Exception fetching stem sets by session_setting_id:', err)
+//     return { success: false, error: err.message }
+//   }
+// }
 
 export async function saveSessionSettingsToCloud(sessionValues) {
   if (!supabase) {
@@ -937,6 +1038,41 @@ export async function getStemStates(sessionSettingId) {
     return { success: true, states: data || [] }
   } catch (err) {
     console.error('Exception fetching stem states:', err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function getAllStemStates() {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      return { success: false, error: 'User not authenticated' }
+    }
+    const { data: sessions, error: sErr } = await supabase
+      .from('session_settings')
+      .select('session_setting_id')
+      .eq('user_id', user.id)
+    if (sErr) {
+      return { success: false, error: sErr.message }
+    }
+    const ids = Array.isArray(sessions) ? sessions.map(s => s.session_setting_id).filter(Boolean) : []
+    if (!ids.length) {
+      return { success: true, states: [] }
+    }
+    const { data, error } = await supabase
+      .from('stem_states')
+      .select('*')
+      .in('session_settings_id', ids)
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false })
+    if (error) {
+      return { success: false, error: error.message }
+    }
+    return { success: true, states: data || [] }
+  } catch (err) {
     return { success: false, error: err.message }
   }
 }

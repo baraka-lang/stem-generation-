@@ -26,6 +26,19 @@ export async function persistGeneratedStem(st, generationData) {
     const master = getMasterForPrompt()
     const keySignature = `${master.root} ${master.mode}`
     
+    // Fetch session setting ID from localStorage
+    let sessionSettingId = null
+    try {
+      const stored = localStorage.getItem('currentSessionSetting')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        // Handle both possible field names (session_setting_id is standard, but check fallback)
+        sessionSettingId = parsed.session_setting_id || parsed.id || null
+      }
+    } catch (e) {
+      console.warn('Failed to parse currentSessionSetting for stem persistence', e)
+    }
+
     // Prepare stem data for persistence
     const stemData = {
       stemType: st,
@@ -36,7 +49,8 @@ export async function persistGeneratedStem(st, generationData) {
       generationTier: generationData.tier || 0,
       validated: generationData.validated || false,
       audioData: generationData.audioData,
-      durationSeconds: generationData.durationSeconds
+      durationSeconds: generationData.durationSeconds,
+      sessionSettingId: sessionSettingId
     }
     
     // Persist the stem
@@ -76,8 +90,9 @@ function getMasterForPrompt() {
  * This function should be called after pushStemVersion in the generateStem function
  * @param {string} st - Stem type
  * @param {Object} stemVersionData - Data from pushStemVersion
+ * @param {Function} onSuccess - Callback when persistence is successful (receives audioKey)
  */
-export async function hookIntoStemGeneration(st, stemVersionData) {
+export async function hookIntoStemGeneration(st, stemVersionData, onSuccess) {
   try {
     // Extract data from the stem version entry
     const generationData = {
@@ -91,7 +106,19 @@ export async function hookIntoStemGeneration(st, stemVersionData) {
     }
     
     // Persist the stem asynchronously (don't block the UI)
-    persistGeneratedStem(st, generationData).catch(error => {
+    persistGeneratedStem(st, generationData).then(result => {
+      if (result.success && result.stemId) {
+        // Update the history entry with the database ID (used as audioKey)
+        stemVersionData.audioKey = result.stemId
+        // Also store the ID for future reference
+        stemVersionData.dbId = result.stemId
+        console.log(`[Persistence] Linked stem ${st} to DB ID: ${result.stemId}`)
+        
+        if (typeof onSuccess === 'function') {
+          onSuccess(result.stemId)
+        }
+      }
+    }).catch(error => {
       console.error(`Background stem persistence failed for ${st}:`, error)
     })
     

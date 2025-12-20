@@ -1,5 +1,6 @@
 import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
-import { getStemStates, deleteStemState } from '../Auth/stemApi.js'
+import { getStemStates, getAllStemStates, deleteStemState, getUserStems, deleteStem } from '../Auth/stemApi.js'
+import { createClient } from '@supabase/supabase-js'
 
 const KEY_OPTIONS = [
   'Any Key',
@@ -9,8 +10,8 @@ const KEY_OPTIONS = [
 ]
 
 const DEFAULT_FILTERS = {
-  bpmMin: 110,
-  bpmMax: 140,
+  bpmMin: 0,
+  bpmMax: 999,
   key: 'Any Key',
   stars: null
 }
@@ -18,6 +19,7 @@ const DEFAULT_FILTERS = {
 const LS_KEY_LIKES = 'likedTracks'
 const likedTracks = []
 let savedSetsCache = []
+let savedStemsCache = []
 let stemStatesCache = []
 let dropdownEl = null
 let favoritesPageRefs = null
@@ -36,6 +38,139 @@ let cloudSyncInProgress = false
 const externalLikesContainers = []
 
 let favoritesTabListenersAttached = false
+let likesScope = 'current'
+let setsScope = 'current'
+let stemsScope = 'all'
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+let supabaseClient = null
+if (supabaseUrl && supabaseKey) {
+  supabaseClient = createClient(supabaseUrl, supabaseKey)
+}
+let waveformAudioContext = null
+async function ensureWaveformAudioContext() {
+  if (!waveformAudioContext) {
+    const Ctx = window.AudioContext || window.webkitAudioContext
+    waveformAudioContext = new Ctx()
+  }
+  return waveformAudioContext
+}
+async function loadLikeAudio(item) {
+  // 0. Direct audio data check (from DB bytea/base64)
+  if (item.audio_data) {
+    console.log('loadLikeAudio: Found direct audio_data', { type: typeof item.audio_data, length: item.audio_data.length })
+    try {
+      let arrayBuffer = null
+      
+      if (typeof item.audio_data === 'string') {
+        // Check for Hex (Supabase/Postgres bytea output often starts with \x)
+        if (item.audio_data.startsWith('\\x')) {
+           const hex = item.audio_data.substring(2)
+           const len = hex.length / 2
+           const u8 = new Uint8Array(len)
+           for (let i = 0; i < len; i++) {
+             u8[i] = parseInt(hex.substr(i * 2, 2), 16)
+           }
+           arrayBuffer = u8.buffer
+        } else {
+           // Assume Base64 (fallback or if stored as text)
+           try {
+             const binaryString = atob(item.audio_data)
+             const len = binaryString.length
+             const u8 = new Uint8Array(len)
+             for (let i = 0; i < len; i++) {
+               u8[i] = binaryString.charCodeAt(i)
+             }
+             arrayBuffer = u8.buffer
+           } catch (e) {
+             console.warn('loadLikeAudio: Failed to decode as Base64, trying raw or other format', e)
+           }
+        }
+      } else if (item.audio_data instanceof ArrayBuffer || item.audio_data instanceof Uint8Array) {
+        arrayBuffer = item.audio_data.buffer || item.audio_data
+      }
+
+      if (arrayBuffer) {
+        const ctx = await ensureWaveformAudioContext()
+        // copy buffer because decodeAudioData detaches it
+        const tempBuffer = arrayBuffer.slice(0)
+        const decoded = await ctx.decodeAudioData(tempBuffer)
+        item.audioBuffer = decoded
+        return decoded
+      }
+    } catch (err) {
+      console.error('loadLikeAudio: Failed to decode audio_data', err)
+    }
+  }
+
+  if (!item?.audioKey) return null
+  try {
+    // 1. Direct URL check (e.g. signed URL or public URL)
+    if (/^https?:\/\//i.test(item.audioKey)) {
+      console.log('loadLikeAudio: Fetching from URL', item.audioKey)
+      const res = await fetch(item.audioKey)
+      if (!res.ok) {
+        console.error('loadLikeAudio: URL fetch failed', res.status, res.statusText)
+        return null
+      }
+      const buf = await res.arrayBuffer()
+      const ctx = await ensureWaveformAudioContext()
+      const decoded = await ctx.decodeAudioData(buf)
+      item.audioBuffer = decoded
+      return decoded
+    }
+  } catch (e) {
+    console.error('loadLikeAudio: Exception fetching URL', e)
+  }
+
+  // 2. Supabase Storage download
+  if (!supabaseClient) {
+    try {
+      const factory = window.supabase?.createClient
+      const cfg = window.RESET_PASSWORD_CONFIG || {}
+      if (factory && cfg.supabaseUrl && cfg.supabaseKey && cfg.supabaseUrl !== 'https://your-project.supabase.co' && cfg.supabaseKey !== 'your-anon-key') {
+        supabaseClient = factory(cfg.supabaseUrl, cfg.supabaseKey)
+      }
+    } catch {}
+  }
+  if (!supabaseClient) {
+    console.error('loadLikeAudio: Supabase client not available')
+    return null
+  }
+
+  // Extract path if it's a full URL but we want to use storage API (fallback)
+  // e.g. https://.../storage/v1/object/public/audio-files/folder/file.wav -> folder/file.wav
+  let storagePath = item.audioKey
+  if (storagePath.includes('/audio-files/')) {
+    storagePath = storagePath.split('/audio-files/')[1]
+  } else if (storagePath.includes('/unsaved-audios/')) {
+    storagePath = storagePath.split('/unsaved-audios/')[1]
+  }
+
+  console.log('loadLikeAudio: Attempting download from storage. Path:', storagePath)
+
+  let dl = await supabaseClient.storage.from('unsaved-audios').download(storagePath)
+  if (dl.error) {
+    console.log('loadLikeAudio: Not found in unsaved-audios, trying audio-files...')
+    dl = await supabaseClient.storage.from('audio-files').download(storagePath)
+    if (dl.error) {
+      console.error('loadLikeAudio: Download failed from both buckets', dl.error)
+      return null
+    }
+  }
+
+  const buf = await dl.data.arrayBuffer()
+  const ctx = await ensureWaveformAudioContext()
+  try {
+    const decoded = await ctx.decodeAudioData(buf)
+    item.audioBuffer = decoded
+    return decoded
+  } catch (err) {
+    console.error('loadLikeAudio: Decode failed', err)
+    return null
+  }
+}
 
 export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
   sessionInfoProvider = getSessionInfo || sessionInfoProvider
@@ -113,19 +248,29 @@ export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike,
 
   attachFavoritesTabHandlers()
   attachFavoritesScrollLinks()
+  attachSetsSubTabHandlers()
   renderFilters()
   renderLikes()
   renderSets()
-  renderStemStates()
+  renderSavedStems()
   switchTab(currentTab)
   attachPreviewStopListener()
+  ;(async () => {
+    try { 
+      console.log('initFavoritesPageView: Starting syncStemStates and syncSavedStems')
+      await syncStemStates() 
+      await syncSavedStems()
+    } catch (err) {
+      console.error('initFavoritesPageView: Sync error', err)
+    }
+  })()
 }
 
 export function refreshFavoritesUI() {
   renderFilters()
   renderLikes()
   renderSets()
-  renderStemStates()
+  renderSavedStems()
 }
 
 export function getLikedTracks() {
@@ -181,6 +326,18 @@ export function toggleLikeForStem(stemId, track) {
 
 export function isTrackLiked(stemId, takeIndex) {
   return likedTracks.some((item) => item.stemId === stemId && item.takeIndex === takeIndex)
+}
+
+export function updateLikeAudioKey(stemId, takeIndex, audioKey) {
+  const track = likedTracks.find(t => t.stemId === stemId && t.takeIndex === takeIndex)
+  if (track) {
+    track.audioKey = audioKey
+    persistLikesToLocalStorage()
+    // Don't need to re-render immediately as audioKey is internal, 
+    // but if we were showing it or using it for active state, we might.
+    // However, ensure future syncs pick it up.
+    console.log(`Updated audioKey for liked track ${stemId} take ${takeIndex}`)
+  }
 }
 
 export function syncSavedSetsMenu(list) {
@@ -429,12 +586,28 @@ function showToast(message, type = 'success') {
   }, 2000)
 }
 
-function generateBPMOptions(selected, min = 110, max = 140) {
+function generateBPMOptions(selected, min = 0, max = 300) {
   const options = []
-  for (let bpm = min; bpm <= max; bpm++) {
+  // If the range is huge, maybe we shouldn't generate every single integer option?
+  // Let's generate common ranges or just keep it simple for now but cap the UI options to something reasonable if min/max are wide.
+  // For the dropdown, 0 to 999 is too many options. 
+  // Let's stick to a reasonable UI range for the dropdowns, but allow the internal filter to be wider.
+  // We'll generate 50-200 for the UI dropdowns by default, but if the selected value is outside, we add it.
+  
+  const uiMin = Math.max(0, min === 0 ? 50 : min)
+  const uiMax = Math.min(300, max === 999 ? 200 : max)
+  
+  // Only add if not 0 (handled manually as "Any")
+  if (selected < uiMin && selected !== 0) options.push(`<option value="${selected}" selected>${selected} BPM</option>`)
+  
+  for (let bpm = uiMin; bpm <= uiMax; bpm++) {
     const isSelected = bpm === selected ? 'selected' : ''
     options.push(`<option value="${bpm}" ${isSelected}>${bpm} BPM</option>`)
   }
+  
+  // Only add if not 999 (handled manually as "Any")
+  if (selected > uiMax && selected !== 999) options.push(`<option value="${selected}" selected>${selected} BPM</option>`)
+  
   return options.join('')
 }
 
@@ -693,6 +866,50 @@ function attachFavoritesScrollLinks() {
   })
 }
 
+function attachSetsSubTabHandlers() {
+  const buttons = document.querySelectorAll('[data-favorites-sets-subtab]')
+  buttons.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const subtab = btn.getAttribute('data-favorites-sets-subtab')
+      
+      // Update button styles
+      buttons.forEach(b => {
+        const isTarget = b.getAttribute('data-favorites-sets-subtab') === subtab
+        b.classList.toggle('text-white', isTarget)
+        b.classList.toggle('bg-white/10', isTarget)
+        b.classList.toggle('text-white/70', !isTarget)
+        b.classList.toggle('hover:text-white', !isTarget)
+        b.classList.toggle('hover:bg-white/10', !isTarget)
+      })
+
+      // Toggle lists
+      const setsList = favoritesPageRefs?.setsList
+      const stemsList = favoritesPageRefs?.stemsList
+      const setsFilters = favoritesPageRefs?.setsFilters
+      const stemsFilters = favoritesPageRefs?.stemsFilters
+      
+      if (setsList && stemsList) {
+        if (subtab === 'sets') {
+          setsList.classList.remove('hidden')
+          stemsList.classList.add('hidden')
+          if (setsFilters) setsFilters.classList.remove('hidden')
+          if (stemsFilters) stemsFilters.classList.add('hidden')
+        } else {
+          setsList.classList.add('hidden')
+          stemsList.classList.remove('hidden')
+          if (setsFilters) setsFilters.classList.add('hidden')
+          if (stemsFilters) stemsFilters.classList.remove('hidden')
+          // Trigger sync if needed
+          if (stemStatesCache.length === 0 && !stemStatesSyncInProgress) {
+            syncStemStates()
+          }
+        }
+      }
+    })
+  })
+}
+
 function renderFilters() {
   renderFilterPanel(dropdownEl?.querySelector('#likesFilters'), 'likes')
   renderFilterPanel(dropdownEl?.querySelector('#setsFilters'), 'sets')
@@ -706,8 +923,16 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
   if (!container) return
   const columnClass = 'sm:grid-cols-4'
   let label = 'Likes filters'
-  if (prefix === 'sets') label = 'Saved set filters'
-  if (prefix === 'stems') label = 'Stem states filters'
+  let currentScope = likesScope
+  
+  if (prefix === 'sets') {
+      label = 'Saved set filters'
+      currentScope = setsScope
+  }
+  if (prefix === 'stems') {
+      label = 'Stem states filters'
+      currentScope = stemsScope
+  }
   
   const baseClass = context === 'page'
     ? `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
@@ -715,23 +940,36 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
   container.className = baseClass
 
   const currentStars = filters.stars || 0
+  
+  // Scope Toggle HTML
+  const scopeHtml = `
+    <div class="flex bg-white/10 rounded-lg p-0.5 ml-auto mr-2">
+        <button data-scope="${prefix}" data-value="current" class="px-2 py-0.5 rounded-md text-[10px] transition-colors ${currentScope === 'current' ? 'bg-purple-500 text-white' : 'text-white/60 hover:text-white'}">Session</button>
+        <button data-scope="${prefix}" data-value="all" class="px-2 py-0.5 rounded-md text-[10px] transition-colors ${currentScope === 'all' ? 'bg-purple-500 text-white' : 'text-white/60 hover:text-white'}">All</button>
+    </div>
+  `
 
   container.innerHTML = `
     <div class="flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.2em] text-white/50">
-      <span>${label}</span>
+      <div class="flex items-center flex-1">
+          <span>${label}</span>
+          ${scopeHtml}
+      </div>
       <button data-filter="clear" class="text-[11px] text-purple-300 hover:text-white">Reset</button>
     </div>
     <div class="grid grid-cols-1 ${columnClass} gap-2 items-end">
       <div>
         <label class="block text-[11px] text-white/60 mb-1">BPM Min</label>
         <select data-filter="bpmMin" class="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm">
-          ${generateBPMOptions(filters.bpmMin, 110, filters.bpmMax)}
+          <option value="0" ${filters.bpmMin === 0 ? 'selected' : ''}>0 (Any)</option>
+          ${generateBPMOptions(filters.bpmMin, 50, filters.bpmMax === 999 ? 200 : filters.bpmMax)}
         </select>
       </div>
       <div>
         <label class="block text-[11px] text-white/60 mb-1">BPM Max</label>
         <select data-filter="bpmMax" class="w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-sm">
-          ${generateBPMOptions(filters.bpmMax, filters.bpmMin, 140)}
+          ${generateBPMOptions(filters.bpmMax, filters.bpmMin === 0 ? 50 : filters.bpmMin, 200)}
+          <option value="999" ${filters.bpmMax === 999 ? 'selected' : ''}>999+ (Any)</option>
         </select>
       </div>
       <div>
@@ -756,6 +994,21 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
       el.addEventListener('click', (e) => handleFilterChange(e, prefix))
     }
   })
+  
+  // Scope handlers
+  container.querySelectorAll('[data-scope]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+          e.stopPropagation()
+          const p = btn.getAttribute('data-scope')
+          const v = btn.getAttribute('data-value')
+          if (p === 'likes') setLikesScope(v)
+          else if (p === 'sets') setSessionScope(v)
+          else if (p === 'stems') setStemsScope(v)
+          
+          // Re-render all panels since scope might affect others (like sets)
+          renderFilters()
+      })
+  })
 
   // Attach star filter handlers
   attachStarHandlers(container, 'filter')
@@ -779,7 +1032,7 @@ function handleFilterChange(e, prefix) {
   } else if (prefix === 'sets') {
     renderSets()
   } else if (prefix === 'stems') {
-    renderStemStates()
+    renderSavedStems()
   }
 }
 
@@ -823,7 +1076,8 @@ function getFilteredLikes() {
     const bpmOk = item.bpm >= filters.bpmMin && item.bpm <= filters.bpmMax
     const keyOk = filters.key === 'Any Key' || item.key === filters.key
     const starsOk = filters.stars === null || (item.rating ?? 3) === filters.stars
-    return bpmOk && keyOk && starsOk
+    const scopeOk = likesScope === 'all' || (item.bpm === sessionInfoProvider().bpm && item.key === sessionInfoProvider().key)
+    return bpmOk && keyOk && starsOk && scopeOk
   })
 }
 
@@ -945,6 +1199,15 @@ function renderLikeWaveforms(container, itemMap) {
           ctx.fillStyle = 'rgba(255,255,255,0.08)'
           ctx.fillRect(0, 0, width, height)
         }
+        if (item?.audioKey) {
+          ;(async () => {
+            const decoded = await loadLikeAudio(item)
+            if (decoded) {
+              const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
+              drawTinyWaveform(canvas, decoded, color, 'rgba(255,255,255,0.05)')
+            }
+          })()
+        }
       }
     })
   })
@@ -1010,7 +1273,7 @@ function renderSets() {
 
   containers.forEach(({ el, variant }) => {
     if (!filtered.length) {
-      el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved sets yet. Save your current session from the player bar.</div>`
+      el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved sets found. Save your current session from the player bar.</div>`
       return
     }
 
@@ -1024,6 +1287,33 @@ function renderSets() {
         if (Number.isInteger(index) && loadSetHandler) {
           loadSetHandler(index)
           closeMenu()
+        }
+      })
+    })
+
+    el.querySelectorAll('[data-load-cloud-set]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = parseInt(btn.getAttribute('data-load-cloud-set'), 10)
+        const state = stemStatesCache.find(s => s.stem_state_id === id)
+        if (state) {
+          window.dispatchEvent(new CustomEvent('loadStemState', { detail: state }))
+          closeMenu()
+        }
+      })
+    })
+
+    el.querySelectorAll('[data-delete-cloud-set]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        if (!confirm('Are you sure you want to delete this saved set?')) return
+        const id = parseInt(btn.getAttribute('data-delete-cloud-set'), 10)
+        const res = await deleteStemState(id)
+        if (res.success) {
+          stemStatesCache = stemStatesCache.filter(s => s.stem_state_id !== id)
+          renderSets()
+        } else {
+          // showToast('Failed to delete set', 'error')
+          console.error('Failed to delete set')
         }
       })
     })
@@ -1044,36 +1334,112 @@ async function syncStemStates() {
   stemStatesSyncInProgress = true
 
   try {
-    const currentSessionSetting = localStorage.getItem('currentSessionSetting')
-    const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
-    const sessionSettingIdRaw = parsed?.session_setting_id ?? parsed?.id ?? null
-    const sessionSettingId =
-      typeof sessionSettingIdRaw === 'number'
-        ? sessionSettingIdRaw
-        : (typeof sessionSettingIdRaw === 'string' && /^\d+$/.test(sessionSettingIdRaw)
-            ? Number(sessionSettingIdRaw)
-            : null)
-
-    if (!sessionSettingId) {
-      console.warn('No sessionSettingId found, cannot fetch stem states')
-      stemStatesCache = []
-      renderStemStates()
-      stemStatesSyncInProgress = false
-      return
-    }
-
-    const result = await getStemStates(sessionSettingId)
-    if (result.success && Array.isArray(result.states)) {
-      stemStatesCache = result.states
+    if (stemsScope === 'all') {
+      const resAll = await getAllStemStates()
+      if (resAll.success && Array.isArray(resAll.states)) {
+        stemStatesCache = resAll.states
+      } else {
+        stemStatesCache = []
+      }
     } else {
-      console.error('Failed to fetch stem states:', result.error)
+      const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+      const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
+      const sessionSettingIdRaw = parsed?.session_setting_id ?? parsed?.id ?? null
+      const sessionSettingId =
+        typeof sessionSettingIdRaw === 'number'
+          ? sessionSettingIdRaw
+          : (typeof sessionSettingIdRaw === 'string' && /^\d+$/.test(sessionSettingIdRaw)
+              ? Number(sessionSettingIdRaw)
+              : null)
+
+      if (!sessionSettingId) {
+        stemStatesCache = []
+        renderSets()
+        stemStatesSyncInProgress = false
+        return
+      }
+
+      const result = await getStemStates(sessionSettingId)
+      if (result.success && Array.isArray(result.states)) {
+        stemStatesCache = result.states
+      } else {
+        stemStatesCache = []
+      }
     }
   } catch (err) {
     console.error('Exception syncing stem states:', err)
   } finally {
     stemStatesSyncInProgress = false
-    renderStemStates()
+    // renderStemStates() // No longer rendering snapshots in Stems tab
+    renderSets()
   }
+}
+
+let savedStemsSyncInProgress = false
+async function syncSavedStems() {
+  if (savedStemsSyncInProgress) return
+  savedStemsSyncInProgress = true
+
+  try {
+    let sessionSettingId = null
+    
+    // Determine session ID if needed
+    if (stemsScope === 'current') {
+      const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+      const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
+      const raw = parsed?.session_setting_id ?? parsed?.id ?? null
+      sessionSettingId = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : null)
+      
+      // If filtering by current but no session ID, clear list
+      if (!sessionSettingId) {
+        savedStemsCache = []
+        renderSavedStems()
+        savedStemsSyncInProgress = false
+        return
+      }
+    }
+
+    // If scope is 'all', sessionSettingId remains null, which getUserStems interprets as "fetch all"
+    // If scope is 'current', we pass the ID.
+    const res = await getUserStems(stemsScope === 'all' ? null : sessionSettingId)
+
+    if (res.success && Array.isArray(res.stems)) {
+      savedStemsCache = res.stems
+    } else {
+      savedStemsCache = []
+    }
+  } catch (err) {
+    console.error('Exception syncing saved stems:', err)
+  } finally {
+    savedStemsSyncInProgress = false
+    renderSavedStems()
+  }
+}
+
+export function setLikesScope(scope) {
+  likesScope = scope === 'all' ? 'all' : 'current'
+  renderLikes()
+  renderStats()
+}
+
+export function setSessionScope(scope) {
+  const s = scope === 'all' ? 'all' : 'current'
+  likesScope = s
+  setsScope = s
+  stemsScope = s
+  renderLikes()
+  ;(async () => {
+    await syncStemStates()
+    await syncSavedStems()
+  })()
+  renderStats()
+}
+
+export function setStemsScope(scope) {
+  stemsScope = scope === 'all' ? 'all' : 'current'
+  ;(async () => {
+    await syncSavedStems()
+  })()
 }
 
 function getStemContainers() {
@@ -1084,63 +1450,121 @@ function getStemContainers() {
   return containers
 }
 
-function renderStemStates() {
+function renderSavedStems() {
   const containers = getStemContainers()
   if (!containers.length) return
 
-  const filtered = getFilteredStemStates()
+  const filtered = getFilteredSavedStems()
 
   containers.forEach((container) => {
     if (!filtered.length) {
-      container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved stem states found.</div>`
+      if (savedStemsCache.length > 0) {
+        container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved stems match the current filters.</div>`
+      } else {
+        container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved stems found.</div>`
+      }
       return
     }
 
     container.innerHTML = filtered
-      .map((item) => renderStemStateCard(item))
+      .map((item) => renderSavedStemCard(item))
       .join('')
 
-    container.querySelectorAll('[data-load-stem-state]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const id = parseInt(btn.getAttribute('data-load-stem-state'), 10)
-        const state = stemStatesCache.find(s => s.stem_state_id === id)
-        if (state) {
-          window.dispatchEvent(new CustomEvent('loadStemState', { detail: state }))
-          closeMenu()
+    // Attach Play Handlers
+    container.querySelectorAll('[data-play-saved-stem]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        const id = btn.getAttribute('data-play-saved-stem')
+        const item = filtered.find(s => s.id === id)
+        
+        if (activePreviewId === id) {
+          // Stop
+          stopPreviewForItem(item)
+          return
+        }
+
+        if (item) {
+          // Play
+          if (stopPreviewHandler) stopPreviewHandler(item)
+          activePreviewId = id
+          updateSavedStemPlayButtons(container) // update UI
+          
+          try {
+            // Ensure audio is loaded
+            if (!item.audioBuffer) {
+               // Map audio_url to audioKey for loadLikeAudio
+               if (item.audio_url) item.audioKey = item.audio_url
+               await loadLikeAudio(item)
+            }
+            
+            if (item.audioBuffer && playLikeHandler) {
+              playLikeHandler(item, true) // true = isPreview/isLoop
+              // Listen for end to reset UI
+              // Note: playLikeHandler logic in app.js might need to trigger an event or callback when done.
+              // For now we rely on manual stop or loop.
+            } else {
+              console.error('Playback failed: Missing buffer or handler')
+            }
+          } catch (err) {
+            console.error('Failed to play saved stem', err)
+            activePreviewId = null
+            updateSavedStemPlayButtons(container)
+          }
         }
       })
     })
 
-    container.querySelectorAll('[data-delete-stem-state]').forEach((btn) => {
+    // Attach Delete Handlers
+    container.querySelectorAll('[data-delete-saved-stem]').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation()
-        if (!confirm('Are you sure you want to delete this stem state?')) return
-        const id = parseInt(btn.getAttribute('data-delete-stem-state'), 10)
-        const res = await deleteStemState(id)
+        if (!confirm('Are you sure you want to delete this stem?')) return
+        const id = btn.getAttribute('data-delete-saved-stem') // UUID string
+        
+        // Import deleteStem if not already imported or available
+        // We imported it at the top.
+        const res = await deleteStem(id)
+        
         if (res.success) {
-          stemStatesCache = stemStatesCache.filter(s => s.stem_state_id !== id)
-          renderStemStates()
+          savedStemsCache = savedStemsCache.filter(s => s.id !== id)
+          renderSavedStems()
         } else {
-          showToast('Failed to delete stem state', 'error')
+          // showToast('Failed to delete stem', 'error')
+          console.error('Failed to delete stem', res.error)
         }
       })
     })
   })
 }
 
-function getFilteredStemStates() {
-  return stemStatesCache.map(item => {
-      const snapshot = item.stems_snapshot || {}
-      const meta = snapshot.metadata || {}
-      const bpm = meta.tempo ?? sessionInfoProvider().bpm
-      const key = meta.key ?? sessionInfoProvider().key
+function updateSavedStemPlayButtons(container) {
+   container.querySelectorAll('[data-play-saved-stem]').forEach(btn => {
+      const id = btn.getAttribute('data-play-saved-stem')
+      const isPlaying = id === activePreviewId
+      const icon = btn.querySelector('[data-lucide]')
+      if (icon) {
+        icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play')
+      }
+      btn.classList.toggle('text-purple-300', isPlaying)
+      btn.classList.toggle('text-white', !isPlaying)
+   })
+   window.lucide?.createIcons()
+}
+
+function getFilteredSavedStems() {
+  return savedStemsCache.map(item => {
+      // Map DB columns to our internal structure
+      const bpm = item.tempo || 0
+      const key = item.key_signature || ''
       const timestamp = new Date(item.created_at).getTime()
+      
       return { 
-        ...item, 
+        ...item,
         bpm, 
         key, 
         timestamp,
-        name: item.state_name || `State ${item.stem_state_id}`
+        stemName: item.stem_type || 'Stem',
+        audioKey: item.audio_url || null // For playback
       }
     })
     .filter(item => {
@@ -1151,23 +1575,40 @@ function getFilteredStemStates() {
     .sort((a, b) => b.timestamp - a.timestamp)
 }
 
-function renderStemStateCard(item) {
-  const label = item.name
+function renderSavedStemCard(item) {
   const dateStr = new Date(item.created_at).toLocaleDateString()
+  const duration = item.duration_seconds ? `${Math.round(item.duration_seconds)}s` : ''
+  const size = item.file_size ? `${(item.file_size / 1024 / 1024).toFixed(1)}MB` : ''
   
   return `
-    <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3">
+    <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 group hover:bg-white/10 transition-colors">
       <div class="space-y-1 flex-1 min-w-0">
         <div class="flex items-center justify-between gap-2">
-          <span class="text-sm font-medium truncate">${label}</span>
+          <div class="flex items-center gap-2">
+             <span class="w-2 h-2 rounded-full" style="background-color: ${getColorRGB(item.stem_type) || '#999'}"></span>
+             <span class="text-sm font-medium truncate capitalize">${item.stem_type}</span>
+          </div>
           <span class="text-[10px] text-white/50">${dateStr}</span>
         </div>
-        <div class="text-xs text-white/60">${item.bpm} BPM · ${item.key}</div>
+        <div class="text-xs text-white/60 flex items-center gap-2">
+           <span>${item.bpm} BPM</span>
+           <span>•</span>
+           <span>${item.key}</span>
+           ${duration ? `<span>• ${duration}</span>` : ''}
+        </div>
       </div>
+      
       <div class="flex items-center gap-2 ml-3 flex-shrink-0">
-        <button data-load-stem-state="${item.stem_state_id}" class="text-sm text-purple-300 hover:text-white">Load</button>
-        <button data-delete-stem-state="${item.stem_state_id}" class="text-xs text-red-300 hover:text-red-100 p-1" title="Delete">
-          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+        <button data-play-saved-stem="${item.id}" class="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white">
+          <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-4 h-4"></i>
+        </button>
+        
+        <button data-download-saved-stem="${item.id}" class="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white" title="Download">
+          <i data-lucide="download" class="w-4 h-4"></i>
+        </button>
+        
+        <button data-delete-saved-stem="${item.id}" class="p-2 rounded-full bg-white/10 hover:bg-red-500/20 hover:text-red-400 transition-colors text-white/60" title="Delete">
+          <i data-lucide="trash-2" class="w-4 h-4"></i>
         </button>
       </div>
     </div>
@@ -1183,7 +1624,7 @@ function getSetContainers() {
 }
 
 function getFilteredSets() {
-  const decorated = savedSetsCache.map((item, idx) => {
+  const localSets = savedSetsCache.map((item, idx) => {
     const meta = item.metadata || {}
     const bpm = meta.tempo ?? sessionInfoProvider().bpm
     const key = meta.key ?? sessionInfoProvider().key
@@ -1191,10 +1632,55 @@ function getFilteredSets() {
     const totalTakes = meta.totalTakes ?? Object.values(item.stems || {}).reduce((sum, stem) => sum + (stem?.takes?.length || 0), 0)
     const timestamp = meta.timestamp || item.timestamp || 0
     const rating = meta.rating ?? 3
-    return { item, idx, bpm, key, bars: meta.bars ?? meta.barCount ?? 4, activeStemCount, totalTakes, name: meta.name || `Set ${idx + 1}`, timestamp, rating }
+    return { 
+      type: 'local',
+      item, 
+      id: idx, 
+      bpm, 
+      key, 
+      bars: meta.bars ?? meta.barCount ?? 4, 
+      activeStemCount, 
+      totalTakes, 
+      name: meta.name || `Set ${idx + 1}`, 
+      timestamp, 
+      rating 
+    }
   })
 
-  return decorated
+  const cloudSets = stemStatesCache.map((item) => {
+    const snapshot = item.stems_snapshot || {}
+    const meta = snapshot.metadata || {}
+    const bpm = meta.tempo ?? sessionInfoProvider().bpm
+    const key = meta.key ?? sessionInfoProvider().key
+    const activeStemCount = meta.activeStemCount ?? Object.values(snapshot.stems || {}).filter((stem) => stem && (stem.takes?.length || stem.takeIndex >= 0)).length
+    const totalTakes = meta.totalTakes ?? Object.values(snapshot.stems || {}).reduce((sum, stem) => sum + (stem?.takes?.length || 0), 0)
+    const timestamp = new Date(item.created_at).getTime()
+    const rating = meta.rating ?? 3 // Cloud sets might not have rating in top level, check where it's stored
+    return {
+      type: 'cloud',
+      item,
+      id: item.stem_state_id,
+      bpm,
+      key,
+      bars: meta.bars ?? meta.barCount ?? 4,
+      activeStemCount,
+      totalTakes,
+      name: item.state_name || `Cloud Set ${item.stem_state_id}`,
+      timestamp,
+      rating
+    }
+  })
+
+  // Filter by setsScope if needed. 
+  // setsScope 'current' means only current session. 
+  // Local sets are usually current session (or manually loaded). 
+  // But savedSetsCache is just "saved sets", it doesn't strictly track session ID unless we add it.
+  // For now, let's assume local sets are always shown or filtered by metadata if available.
+  // Cloud sets are already filtered by session in syncStemStates if setsScope is 'current'.
+
+  const all = [...localSets, ...cloudSets]
+
+  return all
     .filter(({ bpm, key, rating }) => {
       const bpmOk = bpm >= filters.bpmMin && bpm <= filters.bpmMax
       const keyOk = filters.key === 'Any Key' || key === filters.key
@@ -1205,38 +1691,50 @@ function getFilteredSets() {
 }
 
 function renderSetCard(entry, variant = 'dropdown') {
-  const { idx, bpm, key, bars, name, activeStemCount, totalTakes, rating } = entry
-  const label = name || `Set ${idx + 1}`
+  const { type, id, bpm, key, bars, name, activeStemCount, totalTakes, rating } = entry
+  const label = name
   const displayRating = rating ?? 3
+  
+  const isLocal = type === 'local'
 
   if (variant === 'page') {
     return `
-      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white/5 border border-white/10 rounded-xl p-4" data-set-card="${idx}">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white/5 border border-white/10 rounded-xl p-4" data-set-card="${isLocal ? id : 'cloud-' + id}">
         <div class="space-y-2 flex-1">
           <div class="flex items-center gap-3">
-            <span class="text-base font-semibold set-name-display" data-set-name-display="${idx}">${label}</span>
+            <span class="text-base font-semibold set-name-display" ${isLocal ? `data-set-name-display="${id}"` : ''}>${label}</span>
             <div class="star-rating-container" data-current-rating="${displayRating}">
-              ${renderStarRating(displayRating, idx.toString(), 'sm-plus', true)}
+              ${renderStarRating(displayRating, isLocal ? id.toString() : '', 'sm-plus', isLocal)}
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2 text-[12px] text-white/70">
+            ${!isLocal ? '<span class="px-2 py-1 rounded-lg bg-blue-500/20 border border-blue-400/30 text-blue-200">Cloud</span>' : ''}
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${bpm} BPM</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${bars} bars</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${key}</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${activeStemCount} stems</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${totalTakes} takes</span>
           </div>
-          <div class="set-rename-editor hidden" data-rename-editor="${idx}">
+          ${isLocal ? `
+          <div class="set-rename-editor hidden" data-rename-editor="${id}">
             <div class="flex items-center gap-2">
-              <input type="text" class="flex-1 px-3 py-1.5 rounded-lg bg-white/10 border border-white/20 text-sm focus:outline-none focus:border-purple-400/60 focus:ring-1 focus:ring-purple-400/30" data-rename-input="${idx}" value="${label}" maxlength="50" placeholder="Enter set name">
-              <button data-rename-save="${idx}" class="px-3 py-1.5 rounded-lg border border-green-400/60 bg-green-500/20 hover:bg-green-500/30 text-sm flex-shrink-0">Save</button>
-              <button data-rename-cancel="${idx}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm flex-shrink-0">Cancel</button>
+              <input type="text" class="flex-1 px-3 py-1.5 rounded-lg bg-white/10 border border-white/20 text-sm focus:outline-none focus:border-purple-400/60 focus:ring-1 focus:ring-purple-400/30" data-rename-input="${id}" value="${label}" maxlength="50" placeholder="Enter set name">
+              <button data-rename-save="${id}" class="px-3 py-1.5 rounded-lg border border-green-400/60 bg-green-500/20 hover:bg-green-500/30 text-sm flex-shrink-0">Save</button>
+              <button data-rename-cancel="${id}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm flex-shrink-0">Cancel</button>
             </div>
-          </div>
+          </div>` : ''}
         </div>
         <div class="flex flex-col gap-2 flex-shrink-0">
-          <button data-rename-set="${idx}" class="text-sm px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 w-full sm:w-auto">Rename</button>
-          <button data-load-set="${idx}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>
+          ${isLocal ? `<button data-rename-set="${id}" class="text-sm px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 w-full sm:w-auto">Rename</button>` : ''}
+          ${isLocal 
+            ? `<button data-load-set="${id}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>`
+            : `<div class="flex gap-2">
+                 <button data-delete-cloud-set="${id}" class="text-sm px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 hover:bg-red-500/20 text-red-200 w-full sm:w-auto" title="Delete from cloud">
+                   <i data-lucide="trash-2" class="w-4 h-4"></i>
+                 </button>
+                 <button data-load-cloud-set="${id}" class="flex-1 text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>
+               </div>`
+          }
         </div>
       </div>
     `
@@ -1249,9 +1747,12 @@ function renderSetCard(entry, variant = 'dropdown') {
           <span class="text-sm font-medium truncate">${label}</span>
           ${renderStarRating(displayRating, '', 'sm', false)}
         </div>
-        <div class="text-xs text-white/60">${bpm} BPM · ${bars} bars · ${key}</div>
+        <div class="text-xs text-white/60">${!isLocal ? 'Cloud · ' : ''}${bpm} BPM · ${bars} bars · ${key}</div>
       </div>
-      <button data-load-set="${idx}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>
+      ${isLocal 
+        ? `<button data-load-set="${id}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>`
+        : `<button data-load-cloud-set="${id}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>`
+      }
     </div>
   `
 }
@@ -1262,10 +1763,11 @@ function renderStats() {
 
   const likesFiltered = getFilteredLikes()
   const setsFiltered = getFilteredSets()
+  const stemsFiltered = getFilteredSavedStems()
   const filterSummary = `${filters.bpmMin}-${filters.bpmMax} BPM • ${filters.key}`
 
   statsEl.innerHTML = `
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
       <div class="p-4 rounded-xl bg-white/5 border border-white/10">
         <div class="text-xs uppercase tracking-wide text-white/50">Liked tracks</div>
         <div class="text-2xl font-bold">${likedTracks.length}</div>
@@ -1275,6 +1777,11 @@ function renderStats() {
         <div class="text-xs uppercase tracking-wide text-white/50">Saved sets</div>
         <div class="text-2xl font-bold">${savedSetsCache.length}</div>
         <div class="text-[12px] text-white/60">${setsFiltered.length} match current filters</div>
+      </div>
+      <div class="p-4 rounded-xl bg-white/5 border border-white/10">
+        <div class="text-xs uppercase tracking-wide text-white/50">Saved stems</div>
+        <div class="text-2xl font-bold">${savedStemsCache.length}</div>
+        <div class="text-[12px] text-white/60">${stemsFiltered.length} match current filters</div>
       </div>
       <div class="p-4 rounded-xl bg-white/5 border border-white/10">
         <div class="text-xs uppercase tracking-wide text-white/50">Filters</div>

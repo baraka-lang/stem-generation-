@@ -411,28 +411,43 @@
       </div>
 
       <!-- Save button and dropdown group -->
-      <div id="saveGroup" class="items-center gap-5 ps-2 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2 py-2">
+      <div
+        id="saveGroup"
+        class="items-center gap-5 ps-2 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2 py-2"
+      >
         <select
           id="savedSetsDropdown"
           class="bg-transparent text-white/80 text-xs sm:text-sm px-2"
         >
           <option value="">------</option>
         </select>
-      
+        <button
+          id="saveStateBtn"
+          aria-label="Save current state"
+          class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
+          title="Save current set"
+        >
+          <i data-lucide="save" class="w-5 h-5"></i>
+        </button>
       </div>
 
       <!-- Session info card (desktop only) -->
-     <div class=" flex items-center gap-2 border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2 pe-0 bg-white/5 backdrop-blur-lg">
-       <div
-        id="sessionInfoCard"
-        class="hidden sm:flex items-center gap-2 px-2 py-1 "
+      <div
+        class="flex items-center gap-2 border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2 pe-0 bg-white/5 backdrop-blur-lg"
       >
-        <span id="sessionInfoText" class="whitespace-nowrap">--</span>
+        <div
+          id="sessionInfoCard"
+          class="hidden sm:flex items-center gap-2 px-2 py-1"
+        >
+          <span id="sessionInfoText" class="whitespace-nowrap">--</span>
+        </div>
+        <button
+          id="changeSessionSettings"
+          class="flex items-center justify-center sm:h-10 player-surface hover:bg-white/10 transition p-3 rounded-lg"
+        >
+          <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
+        </button>
       </div>
-      <button id="changeSessionSettings" class="flex items-center justify-center  sm:h-10 player-surface hover:bg-white/10 transition p-3 rounded-lg">
-        <i data-lucide="sliders-horizontal" class="w-5 h-5"></i>
-      </button>
-     </div>
 
       <!-- Download All button: icon only, consistent across mobile and desktop -->
       <button
@@ -450,7 +465,14 @@
       >
         <i data-lucide="save" class="w-5 h-5"></i>
       </button>
-
+      <button
+        id="saveSTemsBtn"
+        aria-label="Save current stems"
+        class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
+        title="Save current stems"
+      >
+        <i data-lucide="save" class="w-5 h-5"></i>
+      </button>
       <!-- Mixer toggle button: icon only -->
       <button
         id="mixerToggleBtn"

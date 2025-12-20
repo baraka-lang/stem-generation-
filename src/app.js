@@ -12,6 +12,7 @@ import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper
 import { loopFixConfig } from './Config/environment.js'
 import { initFavoritesPageView, initLikesSetsMenu, isTrackLiked, refreshFavoritesUI, syncSavedSetsMenu, toggleLikeForStem } from './UI/likesSetsMenu.js'
 import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl } from './TechnoGenerators/sessionSetup.js'
+import { hookIntoStemGeneration } from './Auth/stemGenerationIntegration.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -227,6 +228,13 @@ function getCurrentPlayerState() {
     const filt = { ...(stemFilterValues[st] || {}) }
     const endpoint = endpointFactors[st] ?? 1
     const offset = startOffsetFactors[st] ?? 0
+    
+    // Capture audioKey from the active take in history
+    let audioKey = null
+    if (activeIndex >= 0 && stemHistory[st] && stemHistory[st][activeIndex]) {
+      audioKey = stemHistory[st][activeIndex].audioKey || null
+    }
+
     snapshot.stems[st] = {
       activeIndex,
       mute,
@@ -234,7 +242,8 @@ function getCurrentPlayerState() {
       eq,
       filter: filt,
       endpoint,
-      offset
+      offset,
+      audioKey
     }
   })
   return snapshot
@@ -428,6 +437,8 @@ function updateSavedSetsDropdown() {
     dd.appendChild(opt)
   })
 }
+
+
 
 /**
  * Persist the current player state into the savedSets array.  After saving,
@@ -885,7 +896,7 @@ function handleStemLikeToggle(st) {
     takeIndex,
     audioBuffer: activeTake?.raw,
     bars: activeTake?.bars,
-    audioKey: activeTake?.meta?.unsavedKey || null
+    audioKey: activeTake?.audioKey || activeTake?.meta?.unsavedKey || null
   })
   updateStemLikeButtons(st)
   return liked
@@ -4455,8 +4466,7 @@ async function generateStem(st) {
       }
     }
 
-    // Push the new version into history
-    pushStemVersion(st, {
+    const newVersion = {
       id: `${st}_${Date.now()}`,
       createdAt: new Date().toISOString(),
       prompt: usedPrompt,
@@ -4468,7 +4478,22 @@ async function generateStem(st) {
       loopIntent,
       isHeadNormalized: true,
       meta: { tier, validated: !failedValidation }
+    }
+
+    // Push the new version into history
+    pushStemVersion(st, newVersion)
+
+    // NEW: Add stem persistence for cloud history/sync
+    hookIntoStemGeneration(st, newVersion, (audioKey) => {
+      import('./UI/likesSetsMenu.js').then(({ updateLikeAudioKey }) => {
+        ensureStemHistory(st)
+        const idx = stemHistory[st].indexOf(newVersion)
+        if (idx >= 0) {
+          updateLikeAudioKey(st, idx, audioKey)
+        }
+      })
     })
+
     // Store the current endpoint factor on the newly created history entry so it can be restored when selecting the take.
     {
       ensureStemHistory(st)
@@ -5977,7 +6002,124 @@ function updateMutedBorder(st) {
   }
 }
 
+async function handleSaveCurrentStems() {
+  const btn = document.getElementById('saveSTemsBtn')
+  if (!btn) return
+
+  // 1. Import Toasts (dynamically to ensure availability)
+  const { showInfoToast, showSuccessToast, showErrorToast } = await import('./UI/toast.js')
+
+  // 2. Identify stems to save
+  const stemsToSave = visibleInstruments.filter(st => {
+      const active = getActiveVersion(st)
+      return active && (active.raw || active.loop)
+  })
+
+  if (stemsToSave.length === 0) {
+      showInfoToast('No generated stems to save.')
+      return
+  }
+
+  // 3. Background Processing Trigger
+  // Show immediate feedback without blocking
+  showInfoToast(`Saving ${stemsToSave.length} stems in the background...`)
+
+  // Run async process without awaiting it here to unblock UI
+  processStemsInBackground(stemsToSave, { showSuccessToast, showErrorToast })
+}
+
+/**
+ * Helper to process stem saving in background
+ */
+async function processStemsInBackground(stemsToSave, toasts) {
+    const { showSuccessToast, showErrorToast } = toasts
+    
+    try {
+        const { uploadStemAudio, saveStem } = await import('./Auth/stemApi.js')
+        
+        let savedCount = 0
+        let errorCount = 0
+
+        for (const st of stemsToSave) {
+            // Yield to main thread to keep UI responsive during heavy loop
+            await new Promise(resolve => setTimeout(resolve, 50))
+
+            try {
+                const activeTake = getActiveVersion(st)
+                if (!activeTake) continue
+
+                const audioBuffer = activeTake.raw || activeTake.loop
+                if (!audioBuffer) continue
+
+                // Encoding might be CPU heavy, but we yielded before this
+                let blob
+                try {
+                    blob = encodeWAV(audioBuffer)
+                } catch (e) {
+                    console.error(`Failed to encode ${st}:`, e)
+                    errorCount++
+                    continue
+                }
+                
+                // Upload
+                const uploadRes = await uploadStemAudio(blob, null, st)
+                if (!uploadRes.success) {
+                    console.error(`Failed to upload ${st}:`, uploadRes.error)
+                    errorCount++
+                    continue
+                }
+
+                // Save metadata
+                const meta = {
+                    stemType: st,
+                    prompt: activeTake.prompt || stemConfigs[st]?.prompt || '',
+                    tempo: activeTake.tempo || stemControlValues.master.tempo,
+                    bars: activeTake.bars || stemControlValues.master.bars,
+                    keySignature: stemControlValues.master.key || 'C Minor',
+                    audioUrl: uploadRes.publicUrl,
+                    fileSize: blob.size,
+                    durationSeconds: audioBuffer.duration,
+                    generationTier: 1,
+                    validated: true,
+                    audioData: null
+                }
+
+                const saveRes = await saveStem(meta)
+                if (saveRes.success) {
+                    savedCount++
+                } else {
+                    console.error(`Failed to save DB record for ${st}:`, saveRes.error)
+                    errorCount++
+                }
+            } catch (innerErr) {
+                console.error(`Error processing stem ${st}:`, innerErr)
+                errorCount++
+            }
+        }
+
+        // Final Notification
+        if (savedCount > 0) {
+            let msg = `Successfully saved ${savedCount} stems to your library!`
+            if (errorCount > 0) msg += ` (${errorCount} failed)`
+            showSuccessToast(msg)
+        } else if (errorCount > 0) {
+            showErrorToast('Failed to save stems. Check console for details.')
+        }
+
+    } catch (err) {
+        console.error('Fatal error in background save:', err)
+        showErrorToast('An unexpected error occurred while saving stems.')
+    }
+}
+
+
 function setupEventListeners() {
+  // Save Stems Button
+  const saveStemsBtn = document.getElementById('saveSTemsBtn')
+  if (saveStemsBtn) {
+    saveStemsBtn.addEventListener('click', handleSaveCurrentStems)
+  }
+
   // Clean up blob URLs when page unloads to prevent memory leaks
   window.addEventListener('beforeunload', () => {
     Object.keys(stemBlobUrls).forEach(st => {
@@ -7725,6 +7867,38 @@ export async function initApp() {
       updateStemLikeButtons(stemId)
     }
   })
+  window.addEventListener('loadStemState', async (event) => {
+    const state = event.detail
+    if (state && state.stems_snapshot) {
+      console.log('Loading cloud stem state:', state.state_name)
+      // Show spinner
+      const spinner = document.getElementById('loadSetSpinner')
+      const label = document.getElementById('loadSetConfirmLabel')
+      if (spinner && label) {
+        label.textContent = 'Loading Cloud Set...'
+        spinner.classList.remove('hidden')
+        // Ensure modal is visible if not already (optional, but good for feedback)
+        // openLoadSetModal() // accessing internal modal might be tricky if no index. 
+        // Better to just rely on the spinner if it's visible, or maybe show a toast.
+        // Actually, the spinner is inside the load modal. If the modal isn't open, user won't see it.
+        // But the user clicked from the Favorites page, so the load modal isn't open.
+        // We should probably just show a global spinner or toast.
+        // For now, let's just log and apply.
+      }
+      
+      try {
+        await applyPlayerState(state.stems_snapshot)
+        console.log('Cloud stem state loaded successfully')
+      } catch (err) {
+        console.error('Failed to load cloud stem state:', err)
+      }
+      
+      if (spinner && label) {
+        spinner.classList.add('hidden')
+        label.textContent = 'Load'
+      }
+    }
+  })
   window.addEventListener('setRenamed', (event) => {
     const { setIndex, newName } = event.detail || {}
     if (setIndex >= 0 && setIndex < savedSets.length) {
@@ -7873,6 +8047,8 @@ function customHeaderActionButtonsMobileHTML(st) {
         </div>
       `
 }
+
+
 
 /* =========================================================
    Global styles

@@ -1,31 +1,51 @@
-<div id="favorites-page" class="hidden min-h-screen flex flex-col bg-gradient-to-b from-zinc-950 via-zinc-900 to-zinc-950">
-  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
-    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3">
+<div
+  id="favorites-page"
+  class="hidden min-h-screen flex flex-col bg-gradient-to-b from-zinc-950 via-zinc-900 to-zinc-950"
+>
+  <header
+    class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10"
+  >
+    <div
+      class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between gap-3"
+    >
       <div class="flex items-center gap-3">
-        <button id="favoritesBackButton"
+        <button
+          id="favoritesBackButton"
           class="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10 transition"
-          aria-label="Back to previous page">
+          aria-label="Back to previous page"
+        >
           <i data-lucide="arrow-left" class="w-5 h-5"></i>
         </button>
         <div>
           <div class="flex items-center gap-2 text-white/80 text-sm">
             <i data-lucide="heart" class="w-4 h-4"></i>
-            <span class="uppercase tracking-[0.2em] text-[11px] text-white/50">Your library</span>
+            <span class="uppercase tracking-[0.2em] text-[11px] text-white/50"
+              >Your library</span
+            >
           </div>
-          <h1 class="text-2xl sm:text-3xl font-bold">Likes, Saved Sets  &amp; Stems</h1>
-          <p class="text-sm text-white/60">Everything you've hearted or saved across sessions, organized by session settings with filters for BPM and key.</p>
+          <h1 class="text-2xl sm:text-3xl font-bold">
+            Likes, Saved Sets &amp; Stems
+          </h1>
+          <p class="text-sm text-white/60">
+            Everything you've hearted or saved across sessions, organized by
+            session settings with filters for BPM and key.
+          </p>
         </div>
       </div>
       <div class="flex items-center gap-2">
-        <button id="favoritesOpenStudio"
+        <button
+          id="favoritesOpenStudio"
           class="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-sm hover:bg-white/10 transition"
-          aria-label="Return to studio">
+          aria-label="Return to studio"
+        >
           <i data-lucide="music-2" class="w-4 h-4"></i>
           <span>Back to Studio</span>
         </button>
-        <button id="favoritesOpenSelection"
+        <button
+          id="favoritesOpenSelection"
           class="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-white/20 text-sm hover:bg-white/10 transition"
-          aria-label="Return to genre selection">
+          aria-label="Return to genre selection"
+        >
           <i data-lucide="grid" class="w-4 h-4"></i>
           <span class="hidden sm:inline">Genre Selection</span>
           <span class="sm:hidden">Browse</span>
@@ -36,21 +56,34 @@
 
   <main class="flex-1">
     <div class="max-w-6xl mx-auto px-4 py-6 sm:py-10 space-y-6 sm:space-y-8">
-      <div class="player-surface card-border border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
-        <div class="px-4 pt-4 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10">
+      <div
+        class="player-surface card-border border border-white/10 rounded-2xl shadow-2xl overflow-hidden"
+      >
+        <div
+          class="px-4 pt-4 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-white/10"
+        >
           <div class="flex items-center gap-2 text-sm text-white/70">
             <i data-lucide="info" class="w-4 h-4"></i>
-            <span>Your personal library of likes, saved sets and stems, linked to your session settings.</span>
+            <span
+              >Your personal library of likes, saved sets and stems, linked to
+              your session settings.</span
+            >
           </div>
-          <div class="bg-white/5 border border-white/10 rounded-xl overflow-hidden shadow-inner w-full sm:w-auto">
+          <div
+            class="bg-white/5 border border-white/10 rounded-xl overflow-hidden shadow-inner w-full sm:w-auto"
+          >
             <div class="grid grid-cols-2 text-sm">
-              <button data-favorites-tab="likes"
-                class="favorites-tab-btn flex items-center justify-center gap-2 px-4 py-3 font-semibold border-b-2 border-purple-400 text-white">
+              <button
+                data-favorites-tab="likes"
+                class="favorites-tab-btn flex items-center justify-center gap-2 px-4 py-3 font-semibold border-b-2 border-purple-400 text-white"
+              >
                 <i data-lucide="heart" class="w-4 h-4"></i>
                 <span>Likes</span>
               </button>
-              <button data-favorites-tab="sets"
-                class="favorites-tab-btn flex items-center justify-center gap-2 px-4 py-3 font-semibold border-b-2 border-transparent text-white/70">
+              <button
+                data-favorites-tab="sets"
+                class="favorites-tab-btn flex items-center justify-center gap-2 px-4 py-3 font-semibold border-b-2 border-transparent text-white/70"
+              >
                 <i data-lucide="layers" class="w-4 h-4"></i>
                 <span>Sets &amp; Stems</span>
               </button>
@@ -61,15 +94,30 @@
         <section id="favoritesLikesSection" class="p-4 space-y-4">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <div class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90">
+              <div
+                class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90"
+              >
                 <i data-lucide="heart" class="w-4 h-4"></i>
                 <span>Likes</span>
               </div>
-              <p class="text-xs text-white/60">Saved takes you have hearted. Apply them back into the studio player or download individual stems.</p>
+              <p class="text-xs text-white/60">
+                Saved takes you have hearted. Apply them back into the studio
+                player or download individual stems.
+              </p>
             </div>
-            <div class="hidden sm:flex items-center gap-2 text-xs text-white/60">
-              <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10">Current session</span>
-              <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10">All sessions</span>
+            <div
+              class="hidden sm:flex items-center gap-2 text-xs text-white/60"
+            >
+              <span
+                class="px-2 py-1 rounded-full bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition-colors"
+                data-favorites-likes-scope="current"
+                >Current session</span
+              >
+              <span
+                class="px-2 py-1 rounded-full bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition-colors"
+                data-favorites-likes-scope="all"
+                >All sessions</span
+              >
             </div>
           </div>
           <div id="favoritesLikesFilters"></div>
@@ -80,82 +128,190 @@
           <div class="flex flex-col gap-3">
             <div class="flex items-center justify-between gap-3">
               <div>
-                <div class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90">
+                <div
+                  class="flex items-center gap-2 mb-2 text-sm font-semibold text-white/90"
+                >
                   <i data-lucide="layers" class="w-4 h-4"></i>
                   <span>Saved Sets &amp; Stems</span>
                 </div>
-                <p class="text-xs text-white/60">Browse complete stem sets and individual stems associated with your session settings. Load them into the studio player or download for use in your DAW.</p>
+                <p class="text-xs text-white/60">
+                  Browse complete stem sets and individual stems associated with
+                  your session settings. Load them into the studio player or
+                  download for use in your DAW.
+                </p>
               </div>
               <div class="flex items-center gap-2 text-xs text-white/60">
-                <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10" data-favorites-session-scope="current">Current session</span>
-                <span class="px-2 py-1 rounded-full bg-white/5 border border-white/10" data-favorites-session-scope="all">All sessions</span>
+                <span
+                  class="px-2 py-1 rounded-full bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition-colors"
+                  data-favorites-session-scope="current"
+                  >Current session</span
+                >
+                <span
+                  class="px-2 py-1 rounded-full bg-white/5 border border-white/10 cursor-pointer hover:bg-white/10 transition-colors"
+                  data-favorites-session-scope="all"
+                  >All sessions</span
+                >
               </div>
             </div>
 
             <div class="flex items-center justify-between gap-3">
-              <div class="inline-flex rounded-xl bg-white/5 border border-white/10 overflow-hidden text-xs">
-                <button class="px-3 py-1.5 font-semibold text-white bg-white/10" data-favorites-sets-subtab="sets">Sets</button>
-                <button class="px-3 py-1.5 font-semibold text-white/70 hover:text-white hover:bg-white/10" data-favorites-sets-subtab="stems">Stems</button>
+              <div
+                class="inline-flex rounded-xl bg-white/5 border border-white/10 overflow-hidden text-xs"
+              >
+                <button
+                  class="px-3 py-1.5 font-semibold text-white bg-white/10"
+                  data-favorites-sets-subtab="sets"
+                >
+                  Sets
+                </button>
+                <button
+                  class="px-3 py-1.5 font-semibold text-white/70 hover:text-white hover:bg-white/10"
+                  data-favorites-sets-subtab="stems"
+                >
+                  Stems
+                </button>
               </div>
               <div class="text-xs text-white/60 text-right">
-                <div>Click a set to apply it to the studio player &amp; generator.</div>
-                <div>Use the download buttons on each card to export audio.</div>
+                <div>
+                  Click a set to apply it to the studio player &amp; generator.
+                </div>
+                <div>
+                  Use the download buttons on each card to export audio.
+                </div>
               </div>
             </div>
 
             <div id="favoritesSetsFilters"></div>
+            <div id="favoritesStemsFilters" class="hidden"></div>
           </div>
           <div id="favoritesSetsList" class="space-y-3"></div>
           <div id="favoritesStemsList" class="hidden space-y-3"></div>
         </section>
-        <div id="favoritesStats" class="border-t border-white/10 bg-black/10 px-4 py-3 text-xs text-white/70"></div>
+        <div
+          id="favoritesStats"
+          class="border-t border-white/10 bg-black/10 px-4 py-3 text-xs text-white/70"
+        ></div>
       </div>
     </div>
   </main>
 </div>
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-  var tabs = Array.from(document.querySelectorAll('.favorites-tab-btn'))
-  var likesSection = document.getElementById('favoritesLikesSection')
-  var setsSection = document.getElementById('favoritesSetsSection')
-  function setActiveTab(tab) {
-    tabs.forEach(function(btn) {
-      var isActive = btn.getAttribute('data-favorites-tab') === tab
-      btn.classList.toggle('border-purple-400', isActive)
-      btn.classList.toggle('text-white', isActive)
-      btn.classList.toggle('text-white/70', !isActive)
-      btn.classList.toggle('border-transparent', !isActive)
-    })
-    if (likesSection) likesSection.classList.toggle('hidden', tab !== 'likes')
-    if (setsSection) setsSection.classList.toggle('hidden', tab !== 'sets')
-    try { window.lucide && window.lucide.createIcons() } catch (e) {}
+<script type="module">
+  import {
+    initFavoritesPageView,
+    setLikesScope,
+    setStemsScope,
+  } from "../../../src/UI/likesSetsMenu.js";
+  const getStoredSessionInfo = () => {
+    try {
+      const raw = localStorage.getItem('currentSessionSetting');
+      if (raw) {
+        const data = JSON.parse(raw);
+        return {
+          bpm: data.bpm || data.tempo || 130,
+          key: data.key || data.key_signature || 'A Minor'
+        };
+      }
+    } catch {}
+    return { bpm: 130, key: 'A Minor' };
+  };
+  const startFavoritesUI = () => {
+    try {
+      initFavoritesPageView({ getSessionInfo: getStoredSessionInfo });
+    } catch (e) {}
+    var tabs = Array.from(document.querySelectorAll(".favorites-tab-btn"));
+    var likesSection = document.getElementById("favoritesLikesSection");
+    var setsSection = document.getElementById("favoritesSetsSection");
+    function setActiveTab(tab) {
+      tabs.forEach(function (btn) {
+        var isActive = btn.getAttribute("data-favorites-tab") === tab;
+        btn.classList.toggle("border-purple-400", isActive);
+        btn.classList.toggle("text-white", isActive);
+        btn.classList.toggle("text-white/70", !isActive);
+        btn.classList.toggle("border-transparent", !isActive);
+      });
+      if (likesSection)
+        likesSection.classList.toggle("hidden", tab !== "likes");
+      if (setsSection) setsSection.classList.toggle("hidden", tab !== "sets");
+      try {
+        window.lucide && window.lucide.createIcons();
+      } catch (e) {}
+    }
+    tabs.forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var tab = btn.getAttribute("data-favorites-tab");
+        setActiveTab(tab);
+      });
+    });
+    setActiveTab("likes");
+    var subTabs = Array.from(
+      document.querySelectorAll("[data-favorites-sets-subtab]")
+    );
+    var setsList = document.getElementById("favoritesSetsList");
+    var stemsList = document.getElementById("favoritesStemsList");
+    var setsFilters = document.getElementById("favoritesSetsFilters");
+    var stemsFilters = document.getElementById("favoritesStemsFilters");
+    function setSetsSubtab(tab) {
+      subTabs.forEach(function (btn) {
+        var isActive = btn.getAttribute("data-favorites-sets-subtab") === tab;
+        btn.classList.toggle("text-white", isActive);
+        btn.classList.toggle("bg-white/10", isActive);
+        btn.classList.toggle("text-white/70", !isActive);
+      });
+      if (setsList) setsList.classList.toggle("hidden", tab !== "sets");
+      if (stemsList) stemsList.classList.toggle("hidden", tab !== "stems");
+      if (setsFilters) setsFilters.classList.toggle("hidden", tab !== "sets");
+      if (stemsFilters) stemsFilters.classList.toggle("hidden", tab !== "stems");
+    }
+    subTabs.forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var tab = btn.getAttribute("data-favorites-sets-subtab");
+        setSetsSubtab(tab);
+      });
+    });
+    setSetsSubtab("sets");
+    var likesScopeBtns = Array.from(
+      document.querySelectorAll("[data-favorites-likes-scope]")
+    );
+    var setsScopeBtns = Array.from(
+      document.querySelectorAll("[data-favorites-session-scope]")
+    );
+    function updateScopeButtons(btns, activeVal) {
+      btns.forEach(function (btn) {
+        var isActive =
+          btn.getAttribute(
+            btn.hasAttribute("data-favorites-likes-scope")
+              ? "data-favorites-likes-scope"
+              : "data-favorites-session-scope"
+          ) === activeVal;
+        btn.classList.toggle("text-white", isActive);
+        btn.classList.toggle("bg-white/10", isActive);
+        btn.classList.toggle("text-white/60", !isActive);
+      });
+    }
+    likesScopeBtns.forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var val = btn.getAttribute("data-favorites-likes-scope") || "current";
+        setLikesScope(val);
+        updateScopeButtons(likesScopeBtns, val);
+      });
+    });
+    setsScopeBtns.forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var val = btn.getAttribute("data-favorites-session-scope") || "current";
+        setStemsScope(val);
+        updateScopeButtons(setsScopeBtns, val);
+      });
+    });
+    updateScopeButtons(likesScopeBtns, "current");
+    updateScopeButtons(setsScopeBtns, "current");
+  };
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startFavoritesUI);
+  } else {
+    startFavoritesUI();
   }
-  tabs.forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      var tab = btn.getAttribute('data-favorites-tab')
-      setActiveTab(tab)
-    })
-  })
-  setActiveTab('likes')
-  var subTabs = Array.from(document.querySelectorAll('[data-favorites-sets-subtab]'))
-  var setsList = document.getElementById('favoritesSetsList')
-  var stemsList = document.getElementById('favoritesStemsList')
-  function setSetsSubtab(tab) {
-    subTabs.forEach(function(btn) {
-      var isActive = btn.getAttribute('data-favorites-sets-subtab') === tab
-      btn.classList.toggle('text-white', isActive)
-      btn.classList.toggle('bg-white/10', isActive)
-      btn.classList.toggle('text-white/70', !isActive)
-    })
-    if (setsList) setsList.classList.toggle('hidden', tab !== 'sets')
-    if (stemsList) stemsList.classList.toggle('hidden', tab !== 'stems')
-  }
-  subTabs.forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      var tab = btn.getAttribute('data-favorites-sets-subtab')
-      setSetsSubtab(tab)
-    })
-  })
-  setSetsSubtab('sets')
-})
 </script>
