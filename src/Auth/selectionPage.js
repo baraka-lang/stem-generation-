@@ -86,7 +86,7 @@ function renderAuthenticatedUI(user) {
             <span>Credits</span>
             <span id="headerCreditsValue" class="font-medium">100</span>
           </div>
-          <button id="userMenuLibrary" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Library</button>
+          
           <button id="userMenuAccountSel" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Account</button>
           <button id="userMenuLogoutSel" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Log out</button>
         </div>
