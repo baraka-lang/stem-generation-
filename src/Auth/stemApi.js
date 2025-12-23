@@ -11,7 +11,13 @@ const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
 let supabase = null
 if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey)
+  supabase = createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: false,
+      detectSessionInUrl: false,
+      autoRefreshToken: false
+    }
+  })
 } else {
   try {
     const globalClientFactory = typeof window !== 'undefined' ? window.supabase?.createClient : null
@@ -942,7 +948,7 @@ export async function saveSessionSettingToDb(sessionData) {
   }
 }
 
-// Fetch stem states and loads them to UI
+// Fetch stem sets and loads them to UI
 export async function getSetsById(sessionSettingId) {
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }

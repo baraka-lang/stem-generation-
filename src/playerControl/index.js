@@ -5,7 +5,7 @@
 
 import { STEM_ORDER } from '../Config/stems.js'
 import { DEFAULT_TEMPO, DEFAULT_BARS } from '../Config/constants.js'
-import {getSetsById } from '../Auth/stemApi.js'
+import { getSetsById } from '../Auth/stemApi.js'
 import { getPlaybackBars } from '../Utilities/barUtils.js'
 
 /**

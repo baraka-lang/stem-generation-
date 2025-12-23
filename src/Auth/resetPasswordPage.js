@@ -3,26 +3,30 @@
  * Handles password reset form interactions and authentication
  */
 
-import { supabase } from './index.js'
 import { resetPasswordConfig } from '../Config/resetPasswordConfig.js'
 import { createClient } from '@supabase/supabase-js'
 import { urlGenerators } from '../Config/environment.js'
 
-// Create a fallback Supabase client if the main one is not available
-let fallbackSupabase = null
-if (!supabase && resetPasswordConfig.supabaseUrl && resetPasswordConfig.supabaseKey) {
-  console.log('[spa-reset] Creating fallback Supabase client')
-  fallbackSupabase = createClient(resetPasswordConfig.supabaseUrl, resetPasswordConfig.supabaseKey, {
+// Initialize a dedicated Supabase client for password reset
+// This ensures we don't interfere with the global session state and prevents auto-authentication
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+let localSupabase = null
+
+if (supabaseUrl && supabaseAnonKey) {
+  console.log('[spa-reset] Initializing dedicated Supabase client')
+  localSupabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       autoRefreshToken: false,
-      persistSession: false,
-      detectSessionInUrl: false
+      persistSession: false, // Critical: Don't persist session to avoid auto-login
+      detectSessionInUrl: false // We handle token parsing manually
     }
   })
 }
 
-// Use the main supabase client or fallback
-const activeSupabase = supabase || fallbackSupabase
+// Use the local client exclusively
+const activeSupabase = localSupabase
 
 // Debug: module load
 if (typeof window !== 'undefined') {

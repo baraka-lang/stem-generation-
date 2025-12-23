@@ -8,7 +8,13 @@ import { createClient } from '@supabase/supabase-js'
 // Initialize Supabase client for Edge Function calls
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-const supabase = createClient(supabaseUrl, supabaseKey)
+const supabase = createClient(supabaseUrl, supabaseKey, {
+  auth: {
+    persistSession: false,
+    detectSessionInUrl: false,
+    autoRefreshToken: false
+  }
+})
 
 // Email service configuration
 const EMAIL_SERVICE_CONFIG = {
