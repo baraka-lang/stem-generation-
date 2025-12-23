@@ -787,6 +787,7 @@ function attachPreviewStopListener() {
 function resetPreviewState() {
   activePreviewId = null
   updateLikePlayButtons()
+  updateSavedStemPlayButtons()
 }
 
 function switchTab(tab) {
@@ -1457,6 +1458,56 @@ function renderSavedStems() {
   const filtered = getFilteredSavedStems()
 
   containers.forEach((container) => {
+    if (savedStemsSyncInProgress) {
+      container.innerHTML = `
+        <div class="space-y-2">
+          <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 animate-pulse">
+            <div class="space-y-2 flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-2 h-2 rounded-full bg-white/20"></div>
+                  <div class="h-3 w-24 bg-white/10 rounded"></div>
+                </div>
+                <div class="h-3 w-12 bg-white/10 rounded"></div>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="h-3 w-16 bg-white/10 rounded"></div>
+                <div class="h-3 w-3 bg-white/10 rounded"></div>
+                <div class="h-3 w-20 bg-white/10 rounded"></div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 animate-pulse">
+            <div class="space-y-2 flex-1 min-w-0">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                  <div class="w-2 h-2 rounded-full bg-white/20"></div>
+                  <div class="h-3 w-32 bg-white/10 rounded"></div>
+                </div>
+                <div class="h-3 w-10 bg-white/10 rounded"></div>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="h-3 w-14 bg-white/10 rounded"></div>
+                <div class="h-3 w-3 bg-white/10 rounded"></div>
+                <div class="h-3 w-16 bg-white/10 rounded"></div>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+            </div>
+          </div>
+        </div>
+      `
+      window.lucide?.createIcons()
+      return
+    }
     if (!filtered.length) {
       if (savedStemsCache.length > 0) {
         container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved stems match the current filters.</div>`
@@ -1469,6 +1520,8 @@ function renderSavedStems() {
     container.innerHTML = filtered
       .map((item) => renderSavedStemCard(item))
       .join('')
+
+    window.lucide?.createIcons()
 
     // Attach Play Handlers
     container.querySelectorAll('[data-play-saved-stem]').forEach((btn) => {
@@ -1514,6 +1567,42 @@ function renderSavedStems() {
       })
     })
 
+    // Attach Download Handlers
+    container.querySelectorAll('[data-download-saved-stem]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        const id = btn.getAttribute('data-download-saved-stem')
+        const item = filtered.find(s => s.id === id)
+        
+        if (item) {
+             const originalIcon = btn.innerHTML
+             btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>`
+             window.lucide?.createIcons()
+             
+             try {
+                // Ensure audio is loaded
+                if (!item.audioBuffer) {
+                   if (item.audio_url) item.audioKey = item.audio_url
+                   await loadLikeAudio(item)
+                }
+
+                if (item.audioBuffer) {
+                   const filename = `${item.stem_type || 'stem'}_${item.bpm}bpm.wav`
+                   bufferToWavAndDownload(item.audioBuffer, filename)
+                } else {
+                   console.error('Download failed: No audio buffer available')
+                   // showToast('Could not load audio', 'error')
+                }
+             } catch (err) {
+                console.error('Download error', err)
+             } finally {
+                btn.innerHTML = originalIcon
+                window.lucide?.createIcons()
+             }
+        }
+      })
+    })
+
     // Attach Delete Handlers
     container.querySelectorAll('[data-delete-saved-stem]').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
@@ -1538,15 +1627,19 @@ function renderSavedStems() {
 }
 
 function updateSavedStemPlayButtons(container) {
-   container.querySelectorAll('[data-play-saved-stem]').forEach(btn => {
-      const id = btn.getAttribute('data-play-saved-stem')
-      const isPlaying = id === activePreviewId
-      const icon = btn.querySelector('[data-lucide]')
-      if (icon) {
-        icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play')
-      }
-      btn.classList.toggle('text-purple-300', isPlaying)
-      btn.classList.toggle('text-white', !isPlaying)
+   const targets = container ? [container] : getStemContainers()
+   targets.forEach((c) => {
+     if (!c) return
+     c.querySelectorAll('[data-play-saved-stem]').forEach(btn => {
+        const id = btn.getAttribute('data-play-saved-stem')
+        const isPlaying = id === activePreviewId
+        const icon = btn.querySelector('[data-lucide]')
+        if (icon) {
+          icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play')
+        }
+        btn.classList.toggle('text-purple-300', isPlaying)
+        btn.classList.toggle('text-white', !isPlaying)
+     })
    })
    window.lucide?.createIcons()
 }

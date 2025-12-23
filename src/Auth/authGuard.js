@@ -56,15 +56,34 @@ class AuthGuard {
    * Handle authentication state changes
    */
   handleAuthStateChange(event, session) {
+    // Handle password recovery event
+    if (event === 'PASSWORD_RECOVERY') {
+      this.isPasswordRecovery = true
+    }
 
     const wasAuthenticated = this.isAuthenticated
     const newUser = session?.user || null
     const newIsAuthenticated = newUser !== null
 
+    // Check if we should suppress notifications (e.g. on reset password page)
+    // This prevents the app from redirecting away from the reset page when the session is established
+    // We check for 'reset-password' in the URL or if the hash/query contains recovery tokens
+    const hasResetTokens = typeof window !== 'undefined' && 
+      (/access_token|type=recovery|token=/.test(window.location.hash) || 
+       /access_token|type=recovery|token=/.test(window.location.search))
+      
+    const isResetPage = typeof window !== 'undefined' && 
+      (window.location.hash.includes('reset-password') || 
+       window.location.href.includes('reset-password') || 
+       hasResetTokens)
+    
+    const shouldSuppressNotification = (this.isPasswordRecovery || isResetPage) && event === 'SIGNED_IN'
+
     // Only process significant auth state changes to prevent unnecessary reloads
     const isSignificantChange = 
       event === 'SIGNED_IN' || 
       event === 'SIGNED_OUT' || 
+      event === 'PASSWORD_RECOVERY' ||
       (wasAuthenticated !== newIsAuthenticated) ||
       (this.currentUser?.id !== newUser?.id)
 
@@ -74,6 +93,12 @@ class AuthGuard {
 
     this.currentUser = newUser
     this.isAuthenticated = newIsAuthenticated
+
+    if (shouldSuppressNotification) {
+      console.log('🛡️ AuthGuard: Suppressing auth notification on reset password page')
+      // We still update state, but don't notify listeners to prevent redirects
+      return
+    }
 
     // Notify listeners only for significant changes
     this.authListeners.forEach(callback => {

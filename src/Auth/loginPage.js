@@ -206,7 +206,7 @@ export function setupLoginPage() {
   const forgotPasswordModal = document.getElementById('forgotPasswordModal')
   const resetPasswordForm = document.getElementById('forgotPasswordForm')
   const resetCancelBtn = document.getElementById('resetCancelBtn')
-  const resetSubmitBtn = document.getElementById('forgotPasswordSubmitBtn')
+   const resetSubmitBtn = document.getElementById('forgotPasswordSubmitBtn')
   const resetBtnText = document.getElementById('resetBtnText')
   const resetBtnSpinner = document.getElementById('resetBtnSpinner')
 
