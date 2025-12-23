@@ -943,28 +943,28 @@ export async function saveSessionSettingToDb(sessionData) {
 }
 
 // Fetch stem states and loads them to UI
-// export async function getSetsById(sessionSettingId) {
-//   if (!supabase) {
-//     return { success: false, error: 'Supabase not configured' }
-//   }
-//   try {
-//     const { data, error } = await supabase
-//       .from('stem_sets')
-//       .select('id, name')
-//       .eq('session_setting_id', sessionSettingId)
-//       .order('created_at', { ascending: false })
+export async function getSetsById(sessionSettingId) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { data, error } = await supabase
+      .from('stem_sets')
+      .select('id, name')
+      .eq('session_setting_id', sessionSettingId)
+      .order('created_at', { ascending: false })
 
-//     if (error) {
-//       console.error('Error fetching stem sets by session_setting_id:', error)
-//       return { success: false, error: error.message }
-//     }
+    if (error) {
+      console.error('Error fetching stem sets by session_setting_id:', error)
+      return { success: false, error: error.message }
+    }
 
-//     return { success: true, sets: data || [] }
-//   } catch (err) {
-//     console.error('Exception fetching stem sets by session_setting_id:', err)
-//     return { success: false, error: err.message }
-//   }
-// }
+    return { success: true, sets: data || [] }
+  } catch (err) {
+    console.error('Exception fetching stem sets by session_setting_id:', err)
+    return { success: false, error: err.message }
+  }
+}
 
 export async function saveSessionSettingsToCloud(sessionValues) {
   if (!supabase) {
