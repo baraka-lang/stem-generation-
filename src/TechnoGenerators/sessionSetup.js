@@ -8,6 +8,7 @@ import { DEFAULT_TEMPO, DEFAULT_BARS } from '../Config/constants.js'
 import { STEM_ORDER } from '../Config/stems.js'
 import { getPlaybackBars } from '../Utilities/barUtils.js'
 import { saveSessionSettingsToCloud } from '../Auth/stemApi.js'
+import { getAuthGuard } from '../Auth/authGuard.js'
 
 /**
  * Load session settings from localStorage if available
@@ -179,6 +180,10 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
 
     // Save to localStorage
     saveSessionSettingsToStorage(sessionValues)
+    const guardUser = getAuthGuard()?.getCurrentUser()
+    if (guardUser?.id) {
+      sessionValues.user_id = guardUser.id
+    }
     const cloudResult = await saveSessionSettingsToCloud(sessionValues)
     if (!cloudResult.success) {
       console.error('Error saving session settings to cloud:', cloudResult.error)

@@ -374,9 +374,21 @@ export async function saveSessionSetting(sessionData) {
   }
 
   try {
-    // Get current user
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    let userId = sessionData?.user_id || null
+    if (!userId) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        userId = user?.id || null
+      } catch {}
+    }
+    if (!userId) {
+      try {
+        const { getAuthGuard } = await import('./authGuard.js')
+        const guardUser = getAuthGuard()?.getCurrentUser()
+        userId = guardUser?.id || null
+      } catch {}
+    }
+    if (!userId) {
       return { success: false, error: 'User not authenticated' }
     }
 
@@ -384,7 +396,7 @@ export async function saveSessionSetting(sessionData) {
     const { data: existing, error: checkError } = await supabase
       .from('session_settings')
       .select('session_setting_id')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('tempo', Number(sessionData.tempo ?? sessionData.temp))
       .eq('bars', Number(sessionData.bars))
       .eq('root_base', sessionData.root_base ?? sessionData.rootBase)
@@ -896,9 +908,20 @@ export async function saveSessionSettingToDb(sessionData) {
   }
 
   try {
-    // Get current user
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    let userId = sessionData?.user_id || null
+    if (!userId) {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        userId = user?.id || null
+      } catch {}
+    }
+    if (!userId) {
+      try {
+        const { getAuthGuard } = await import('./authGuard.js')
+        userId = getAuthGuard()?.getCurrentUser()?.id || null
+      } catch {}
+    }
+    if (!userId) {
       return { success: false, error: 'User not authenticated' }
     }
 
@@ -906,7 +929,7 @@ export async function saveSessionSettingToDb(sessionData) {
     const { data: existing, error: checkError } = await supabase
       .from('session_settings')
       .select('session_setting_id')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .eq('tempo', Number(sessionData.tempo ?? sessionData.temp))
       .eq('bars', Number(sessionData.bars))
       .eq('root_base', sessionData.root_base ?? sessionData.rootBase ?? '')
@@ -925,7 +948,7 @@ export async function saveSessionSettingToDb(sessionData) {
     const { data, error } = await supabase
       .from('session_settings')
       .insert({
-        user_id: user.id,
+        user_id: userId,
         session_name: sessionData.session_name ?? sessionData.sessionName ?? `Session ${new Date().toLocaleDateString()}`,
         tempo: Number(sessionData.tempo ?? sessionData.temp),
         bars: Number(sessionData.bars),
