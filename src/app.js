@@ -1053,8 +1053,25 @@ function closeDownloadConfirmModal() {
 /**
  * Open the single stem download modal.
  */
-function openDownloadStemModal(st) {
+async function openDownloadStemModal(st) {
   console.log('[Download] Opening download modal for stem:', st)
+  
+  // Check authentication
+  try {
+    const { getAuthGuard } = await import('./Auth/authGuard.js')
+    const { showErrorToast } = await import('./UI/toast.js')
+    const guard = getAuthGuard()
+    if (!guard.getIsAuthenticated()) {
+      showErrorToast('You must be logged in to download stems')
+      return
+    }
+  } catch (err) {
+    console.error('Auth check failed:', err)
+    // If auth check fails technically, we might want to fail safe or block.
+    // Let's block to be safe.
+    return
+  }
+
   const modal = document.getElementById('downloadStemModal')
   if (!modal) {
     console.error('[Download] Modal element #downloadStemModal not found!')
@@ -6153,7 +6170,20 @@ function setupEventListeners() {
   // Download all button: prompt the user to confirm downloading all files
   const downloadAllBtn = document.getElementById('downloadAllBtn')
   if (downloadAllBtn) {
-    downloadAllBtn.addEventListener('click', () => {
+    downloadAllBtn.addEventListener('click', async () => {
+      // Auth Check
+      try {
+        const { getAuthGuard } = await import('./Auth/authGuard.js')
+        const { showErrorToast } = await import('./UI/toast.js')
+        const guard = getAuthGuard()
+        if (!guard.getIsAuthenticated()) {
+          showErrorToast('You must be logged in to download stems')
+          return
+        }
+      } catch (e) {
+        console.error('Auth check failed', e)
+        return
+      }
       openDownloadConfirmModal()
     })
   }
@@ -7770,6 +7800,34 @@ function showBrowserDragWarning() {
   }
 }
 
+/**
+ * Setup listeners for the single stem download modal.
+ */
+function setupDownloadStemModalListeners() {
+  const confirmBtn = document.getElementById('downloadStemConfirmBtn')
+  const cancelBtn = document.getElementById('downloadStemCancelBtn')
+  const overlay = document.getElementById('downloadStemOverlay')
+
+  if (confirmBtn) {
+    // Remove existing listeners to avoid duplicates if setup is called multiple times
+    const newBtn = confirmBtn.cloneNode(true)
+    confirmBtn.parentNode.replaceChild(newBtn, confirmBtn)
+    newBtn.addEventListener('click', confirmDownloadStem)
+  }
+
+  if (cancelBtn) {
+    const newBtn = cancelBtn.cloneNode(true)
+    cancelBtn.parentNode.replaceChild(newBtn, cancelBtn)
+    newBtn.addEventListener('click', closeDownloadStemModal)
+  }
+  
+  if (overlay) {
+    const newOverlay = overlay.cloneNode(true)
+    overlay.parentNode.replaceChild(newOverlay, overlay)
+    newOverlay.addEventListener('click', closeDownloadStemModal)
+  }
+}
+
 export async function initApp() {
   console.log('🎬 Initializing App Navigation System…')
 
@@ -7786,6 +7844,7 @@ export async function initApp() {
   }
 
   setupNavigationListeners()
+  setupDownloadStemModalListeners()
   // Start directly in the studio
   showPage('techno-generator-page')
   initTechnoGenerator()
