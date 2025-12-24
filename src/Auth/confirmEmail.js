@@ -103,7 +103,7 @@ async function handleConfirmEmail() {
     
     // Redirect to login after 2 seconds
     setTimeout(() => {
-      window.location.href = '#login'
+      window.location.href = ''
     }, 2000)
 
   } catch (error) {
