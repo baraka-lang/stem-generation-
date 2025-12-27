@@ -1,6 +1,6 @@
 import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
 import { getStemStates, getAllStemStates, deleteStemState, getUserStems, deleteStem } from '../Auth/stemApi.js'
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '../Auth/index.js'
 
 const KEY_OPTIONS = [
   'Any Key',
@@ -41,19 +41,11 @@ let favoritesTabListenersAttached = false
 let likesScope = 'current'
 let setsScope = 'current'
 let stemsScope = 'all'
+let dropdownContentRendered = false
+let favoritesPageRendered = false
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-let supabaseClient = null
-if (supabaseUrl && supabaseKey) {
-  supabaseClient = createClient(supabaseUrl, supabaseKey, {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false,
-      autoRefreshToken: false
-    }
-  })
-}
+
+// Shared supabase instance is imported from ../Auth/index.js
 let waveformAudioContext = null
 async function ensureWaveformAudioContext() {
   if (!waveformAudioContext) {
@@ -68,30 +60,30 @@ async function loadLikeAudio(item) {
     console.log('loadLikeAudio: Found direct audio_data', { type: typeof item.audio_data, length: item.audio_data.length })
     try {
       let arrayBuffer = null
-      
+
       if (typeof item.audio_data === 'string') {
         // Check for Hex (Supabase/Postgres bytea output often starts with \x)
         if (item.audio_data.startsWith('\\x')) {
-           const hex = item.audio_data.substring(2)
-           const len = hex.length / 2
-           const u8 = new Uint8Array(len)
-           for (let i = 0; i < len; i++) {
-             u8[i] = parseInt(hex.substr(i * 2, 2), 16)
-           }
-           arrayBuffer = u8.buffer
+          const hex = item.audio_data.substring(2)
+          const len = hex.length / 2
+          const u8 = new Uint8Array(len)
+          for (let i = 0; i < len; i++) {
+            u8[i] = parseInt(hex.substr(i * 2, 2), 16)
+          }
+          arrayBuffer = u8.buffer
         } else {
-           // Assume Base64 (fallback or if stored as text)
-           try {
-             const binaryString = atob(item.audio_data)
-             const len = binaryString.length
-             const u8 = new Uint8Array(len)
-             for (let i = 0; i < len; i++) {
-               u8[i] = binaryString.charCodeAt(i)
-             }
-             arrayBuffer = u8.buffer
-           } catch (e) {
-             console.warn('loadLikeAudio: Failed to decode as Base64, trying raw or other format', e)
-           }
+          // Assume Base64 (fallback or if stored as text)
+          try {
+            const binaryString = atob(item.audio_data)
+            const len = binaryString.length
+            const u8 = new Uint8Array(len)
+            for (let i = 0; i < len; i++) {
+              u8[i] = binaryString.charCodeAt(i)
+            }
+            arrayBuffer = u8.buffer
+          } catch (e) {
+            console.warn('loadLikeAudio: Failed to decode as Base64, trying raw or other format', e)
+          }
         }
       } else if (item.audio_data instanceof ArrayBuffer || item.audio_data instanceof Uint8Array) {
         arrayBuffer = item.audio_data.buffer || item.audio_data
@@ -131,16 +123,7 @@ async function loadLikeAudio(item) {
   }
 
   // 2. Supabase Storage download
-  if (!supabaseClient) {
-    try {
-      const factory = window.supabase?.createClient
-      const cfg = window.RESET_PASSWORD_CONFIG || {}
-      if (factory && cfg.supabaseUrl && cfg.supabaseKey && cfg.supabaseUrl !== 'https://your-project.supabase.co' && cfg.supabaseKey !== 'your-anon-key') {
-        supabaseClient = factory(cfg.supabaseUrl, cfg.supabaseKey)
-      }
-    } catch {}
-  }
-  if (!supabaseClient) {
+  if (!supabase) {
     console.error('loadLikeAudio: Supabase client not available')
     return null
   }
@@ -156,10 +139,10 @@ async function loadLikeAudio(item) {
 
   console.log('loadLikeAudio: Attempting download from storage. Path:', storagePath)
 
-  let dl = await supabaseClient.storage.from('unsaved-audios').download(storagePath)
+  let dl = await supabase.storage.from('unsaved-audios').download(storagePath)
   if (dl.error) {
     console.log('loadLikeAudio: Not found in unsaved-audios, trying audio-files...')
-    dl = await supabaseClient.storage.from('audio-files').download(storagePath)
+    dl = await supabase.storage.from('audio-files').download(storagePath)
     if (dl.error) {
       console.error('loadLikeAudio: Download failed from both buckets', dl.error)
       return null
@@ -178,6 +161,22 @@ async function loadLikeAudio(item) {
   }
 }
 
+function ensureDropdownContentRendered() {
+  if (dropdownContentRendered) return
+  dropdownContentRendered = true
+
+  // Trigger initial cloud syncs
+  syncLikesWithCloud()
+  syncStemStates()
+  syncSavedStems()
+
+  renderFilters()
+  renderLikes()
+  renderSets()
+}
+
+
+
 export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
   sessionInfoProvider = getSessionInfo || sessionInfoProvider
   loadSetHandler = onLoadSet || null
@@ -188,39 +187,30 @@ export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onP
   anchorButtons = Array.from(document.querySelectorAll('[data-likes-menu-toggle]'))
   if (!anchorButtons.length) return
 
+  // No longer loading from localStorage as primary source.
+  // We will fetch from Cloud instead to ensure data integrity.
+  /*
   try {
     const raw = localStorage.getItem(LS_KEY_LIKES)
     if (raw) {
-      const arr = JSON.parse(raw)
-      if (Array.isArray(arr)) {
-        arr.forEach((item) => {
-          likedTracks.push({
-            id: item.id,
-            stemId: item.stemId,
-            takeIndex: item.takeIndex,
-            stemName: item.stemName,
-            stemColor: item.stemColor,
-            bpm: item.bpm,
-            key: item.key,
-            bars: item.bars,
-            audioKey: item.audioKey || null,
-            timestamp: item.timestamp || Date.now(),
-            rating: item.rating ?? 3
-          })
-        })
-      }
+      ...
     }
-  } catch {}
+  } catch { }
+  */
 
+
+  // buildDropdown() // Still build the element structure
+  // but don't populate content until opened
   buildDropdown()
   attachAnchorHandlers()
-  renderFilters()
-  renderLikes()
-  renderSets()
+  // renderFilters()
+  // renderLikes()
+  // renderSets()
 
   document.addEventListener('click', handleOutsideClick)
   document.addEventListener('keydown', handleEscape)
   attachPreviewStopListener()
+
   try {
     window.addEventListener('authStateChanged', async (e) => {
       const ev = e.detail?.event
@@ -228,7 +218,7 @@ export function initLikesSetsMenu({ getSessionInfo, onLoadSet, onInsertLike, onP
         await syncLikesWithCloud()
       }
     })
-  } catch {}
+  } catch { }
 }
 
 export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike, onPlayLike, onStopPreview } = {}) {
@@ -255,29 +245,29 @@ export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike,
   attachFavoritesTabHandlers()
   attachFavoritesScrollLinks()
   attachSetsSubTabHandlers()
-  renderFilters()
-  renderLikes()
-  renderSets()
-  renderSavedStems()
-  switchTab(currentTab)
+  // renderFilters()
+  // renderLikes()
+  // renderSets()
+  // renderSavedStems()
+  // switchTab(currentTab)
   attachPreviewStopListener()
-  ;(async () => {
-    try { 
-      console.log('initFavoritesPageView: Starting syncStemStates and syncSavedStems')
-      await syncStemStates() 
-      await syncSavedStems()
-    } catch (err) {
-      console.error('initFavoritesPageView: Sync error', err)
-    }
-  })()
+  // Initial syncs moved to lazy loading when favorites page is shown
 }
 
+
 export function refreshFavoritesUI() {
+  if (!favoritesPageRendered) {
+    favoritesPageRendered = true
+    syncStemStates()
+    syncSavedStems()
+    switchTab(currentTab)
+  }
   renderFilters()
   renderLikes()
   renderSets()
   renderSavedStems()
 }
+
 
 export function getLikedTracks() {
   return likedTracks.map((t) => ({ ...t }))
@@ -311,7 +301,7 @@ export function toggleLikeForStem(stemId, track) {
   }
 
   likedTracks.unshift({
-    id: `${stemId}-${Date.now()}`,
+    id: `${stemId}-${takeIndex}`,
     stemId,
     takeIndex,
     stemName: track.stemName || stemId,
@@ -578,11 +568,10 @@ function attachRenameHandlers(container) {
 function showToast(message, type = 'success') {
   // Simple toast implementation - can be improved later
   const toastEl = document.createElement('div')
-  toastEl.className = `fixed bottom-4 right-4 px-4 py-2 rounded-lg text-sm z-50 transition-opacity ${
-    type === 'error'
-      ? 'bg-red-500/90 border border-red-400/60'
-      : 'bg-green-500/90 border border-green-400/60'
-  }`
+  toastEl.className = `fixed bottom-4 right-4 px-4 py-2 rounded-lg text-sm z-50 transition-opacity ${type === 'error'
+    ? 'bg-red-500/90 border border-red-400/60'
+    : 'bg-green-500/90 border border-green-400/60'
+    }`
   toastEl.textContent = message
   document.body.appendChild(toastEl)
 
@@ -599,21 +588,21 @@ function generateBPMOptions(selected, min = 0, max = 300) {
   // For the dropdown, 0 to 999 is too many options. 
   // Let's stick to a reasonable UI range for the dropdowns, but allow the internal filter to be wider.
   // We'll generate 50-200 for the UI dropdowns by default, but if the selected value is outside, we add it.
-  
+
   const uiMin = Math.max(0, min === 0 ? 50 : min)
   const uiMax = Math.min(300, max === 999 ? 200 : max)
-  
+
   // Only add if not 0 (handled manually as "Any")
   if (selected < uiMin && selected !== 0) options.push(`<option value="${selected}" selected>${selected} BPM</option>`)
-  
+
   for (let bpm = uiMin; bpm <= uiMax; bpm++) {
     const isSelected = bpm === selected ? 'selected' : ''
     options.push(`<option value="${bpm}" ${isSelected}>${bpm} BPM</option>`)
   }
-  
+
   // Only add if not 999 (handled manually as "Any")
   if (selected > uiMax && selected !== 999) options.push(`<option value="${selected}" selected>${selected} BPM</option>`)
-  
+
   return options.join('')
 }
 
@@ -708,7 +697,10 @@ function shouldUsePageView() {
 }
 
 function openMenu(anchor) {
-  if (!dropdownEl) return
+  if (!dropdownEl) buildDropdown()
+
+  ensureDropdownContentRendered()
+
   dropdownEl.dataset.anchor = anchor.dataset.anchorId || ''
   dropdownEl.classList.remove('hidden')
   requestAnimationFrame(() => {
@@ -724,7 +716,11 @@ function openLikesModal(anchor) {
   if (!dropdownEl) buildDropdown()
   ensureOverlay()
   if (!dropdownEl || !overlayEl) return
+
+  ensureDropdownContentRendered()
+
   dropdownEl.dataset.anchor = anchor.dataset.anchorId || ''
+
   overlayEl.classList.remove('hidden')
   // Force reflow then fade in overlay
   void overlayEl.offsetHeight
@@ -879,7 +875,7 @@ function attachSetsSubTabHandlers() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation()
       const subtab = btn.getAttribute('data-favorites-sets-subtab')
-      
+
       // Update button styles
       buttons.forEach(b => {
         const isTarget = b.getAttribute('data-favorites-sets-subtab') === subtab
@@ -895,7 +891,7 @@ function attachSetsSubTabHandlers() {
       const stemsList = favoritesPageRefs?.stemsList
       const setsFilters = favoritesPageRefs?.setsFilters
       const stemsFilters = favoritesPageRefs?.stemsFilters
-      
+
       if (setsList && stemsList) {
         if (subtab === 'sets') {
           setsList.classList.remove('hidden')
@@ -931,23 +927,23 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
   const columnClass = 'sm:grid-cols-4'
   let label = 'Likes filters'
   let currentScope = likesScope
-  
+
   if (prefix === 'sets') {
-      label = 'Saved set filters'
-      currentScope = setsScope
+    label = 'Saved set filters'
+    currentScope = setsScope
   }
   if (prefix === 'stems') {
-      label = 'Stem states filters'
-      currentScope = stemsScope
+    label = 'Stem states filters'
+    currentScope = stemsScope
   }
-  
+
   const baseClass = context === 'page'
     ? `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
     : `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
   container.className = baseClass
 
   const currentStars = filters.stars || 0
-  
+
   // Scope Toggle HTML
   const scopeHtml = `
     <div class="flex bg-white/10 rounded-lg p-0.5 ml-auto mr-2">
@@ -1001,20 +997,20 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
       el.addEventListener('click', (e) => handleFilterChange(e, prefix))
     }
   })
-  
+
   // Scope handlers
   container.querySelectorAll('[data-scope]').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-          e.stopPropagation()
-          const p = btn.getAttribute('data-scope')
-          const v = btn.getAttribute('data-value')
-          if (p === 'likes') setLikesScope(v)
-          else if (p === 'sets') setSessionScope(v)
-          else if (p === 'stems') setStemsScope(v)
-          
-          // Re-render all panels since scope might affect others (like sets)
-          renderFilters()
-      })
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const p = btn.getAttribute('data-scope')
+      const v = btn.getAttribute('data-value')
+      if (p === 'likes') setLikesScope(v)
+      else if (p === 'sets') setSessionScope(v)
+      else if (p === 'stems') setStemsScope(v)
+
+      // Re-render all panels since scope might affect others (like sets)
+      renderFilters()
+    })
   })
 
   // Attach star filter handlers
@@ -1071,12 +1067,15 @@ function renderLikes() {
 
 function getLikesContainers() {
   const containers = []
-  const dropdownList = dropdownEl?.querySelector('#likesList')
-  if (dropdownList) containers.push({ el: dropdownList, variant: 'dropdown' })
+  if (dropdownContentRendered) {
+    const dropdownList = dropdownEl?.querySelector('#likesList')
+    if (dropdownList) containers.push({ el: dropdownList, variant: 'dropdown' })
+  }
   if (favoritesPageRefs?.likesList) containers.push({ el: favoritesPageRefs.likesList, variant: 'page' })
   externalLikesContainers.forEach((c) => containers.push(c))
   return containers
 }
+
 
 function getFilteredLikes() {
   return likedTracks.filter((item) => {
@@ -1189,15 +1188,25 @@ function renderLikeWaveforms(container, itemMap) {
   const canvases = Array.from(container.querySelectorAll('[data-like-waveform]'))
   if (!canvases.length) return
 
+  // Small delay to ensure DOM dimensions are calculated if we're in a transition
   requestAnimationFrame(() => {
     canvases.forEach((canvas) => {
-      const item = itemMap.get(canvas.getAttribute('data-like-waveform'))
+      const id = canvas.getAttribute('data-like-waveform')
+      const item = itemMap.get(id)
+
+      if (!item) {
+        console.warn('renderLikeWaveforms: Item not found for ID', id)
+        return
+      }
+
       const width = canvas.clientWidth || Number(canvas.getAttribute('width')) || 320
       const height = canvas.clientHeight || Number(canvas.getAttribute('height')) || 64
-      canvas.width = width
-      canvas.height = height
 
-      if (item?.audioBuffer) {
+      // Update canvas internal resolution
+      if (canvas.width !== width) canvas.width = width
+      if (canvas.height !== height) canvas.height = height
+
+      if (item.audioBuffer) {
         const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
         drawTinyWaveform(canvas, item.audioBuffer, color, 'rgba(255,255,255,0.05)')
       } else {
@@ -1206,12 +1215,17 @@ function renderLikeWaveforms(container, itemMap) {
           ctx.fillStyle = 'rgba(255,255,255,0.08)'
           ctx.fillRect(0, 0, width, height)
         }
-        if (item?.audioKey) {
-          ;(async () => {
-            const decoded = await loadLikeAudio(item)
-            if (decoded) {
-              const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
-              drawTinyWaveform(canvas, decoded, color, 'rgba(255,255,255,0.05)')
+
+        if (item.audioKey || item.audio_data) {
+          (async () => {
+            try {
+              const decoded = await loadLikeAudio(item)
+              if (decoded) {
+                const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
+                drawTinyWaveform(canvas, decoded, color, 'rgba(255,255,255,0.05)')
+              }
+            } catch (err) {
+              console.error('renderLikeWaveforms: Error loading/drawing waveform', err)
             }
           })()
         }
@@ -1233,7 +1247,7 @@ function handlePlayRequest(item) {
     result.then((id) => {
       activePreviewId = id || null
       updateLikePlayButtons()
-    }).catch(() => {})
+    }).catch(() => { })
     return
   }
   activePreviewId = result || null
@@ -1356,8 +1370,8 @@ async function syncStemStates() {
         typeof sessionSettingIdRaw === 'number'
           ? sessionSettingIdRaw
           : (typeof sessionSettingIdRaw === 'string' && /^\d+$/.test(sessionSettingIdRaw)
-              ? Number(sessionSettingIdRaw)
-              : null)
+            ? Number(sessionSettingIdRaw)
+            : null)
 
       if (!sessionSettingId) {
         stemStatesCache = []
@@ -1389,14 +1403,14 @@ async function syncSavedStems() {
 
   try {
     let sessionSettingId = null
-    
+
     // Determine session ID if needed
     if (stemsScope === 'current') {
       const currentSessionSetting = localStorage.getItem('currentSessionSetting')
       const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
       const raw = parsed?.session_setting_id ?? parsed?.id ?? null
       sessionSettingId = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : null)
-      
+
       // If filtering by current but no session ID, clear list
       if (!sessionSettingId) {
         savedStemsCache = []
@@ -1435,27 +1449,30 @@ export function setSessionScope(scope) {
   setsScope = s
   stemsScope = s
   renderLikes()
-  ;(async () => {
-    await syncStemStates()
-    await syncSavedStems()
-  })()
+    ; (async () => {
+      await syncStemStates()
+      await syncSavedStems()
+    })()
   renderStats()
 }
 
 export function setStemsScope(scope) {
   stemsScope = scope === 'all' ? 'all' : 'current'
-  ;(async () => {
-    await syncSavedStems()
-  })()
+    ; (async () => {
+      await syncSavedStems()
+    })()
 }
 
 function getStemContainers() {
   const containers = []
-  const dropdownList = dropdownEl?.querySelector('#stemsList')
-  if (dropdownList) containers.push(dropdownList)
+  if (dropdownContentRendered) {
+    const dropdownList = dropdownEl?.querySelector('#stemsList')
+    if (dropdownList) containers.push(dropdownList)
+  }
   if (favoritesPageRefs?.stemsList) containers.push(favoritesPageRefs.stemsList)
   return containers
 }
+
 
 function renderSavedStems() {
   const containers = getStemContainers()
@@ -1535,7 +1552,7 @@ function renderSavedStems() {
         e.stopPropagation()
         const id = btn.getAttribute('data-play-saved-stem')
         const item = filtered.find(s => s.id === id)
-        
+
         if (activePreviewId === id) {
           // Stop
           stopPreviewForItem(item)
@@ -1547,15 +1564,15 @@ function renderSavedStems() {
           if (stopPreviewHandler) stopPreviewHandler(item)
           activePreviewId = id
           updateSavedStemPlayButtons(container) // update UI
-          
+
           try {
             // Ensure audio is loaded
             if (!item.audioBuffer) {
-               // Map audio_url to audioKey for loadLikeAudio
-               if (item.audio_url) item.audioKey = item.audio_url
-               await loadLikeAudio(item)
+              // Map audio_url to audioKey for loadLikeAudio
+              if (item.audio_url) item.audioKey = item.audio_url
+              await loadLikeAudio(item)
             }
-            
+
             if (item.audioBuffer && playLikeHandler) {
               playLikeHandler(item, true) // true = isPreview/isLoop
               // Listen for end to reset UI
@@ -1579,32 +1596,32 @@ function renderSavedStems() {
         e.stopPropagation()
         const id = btn.getAttribute('data-download-saved-stem')
         const item = filtered.find(s => s.id === id)
-        
-        if (item) {
-             const originalIcon = btn.innerHTML
-             btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>`
-             window.lucide?.createIcons()
-             
-             try {
-                // Ensure audio is loaded
-                if (!item.audioBuffer) {
-                   if (item.audio_url) item.audioKey = item.audio_url
-                   await loadLikeAudio(item)
-                }
 
-                if (item.audioBuffer) {
-                   const filename = `${item.stem_type || 'stem'}_${item.bpm}bpm.wav`
-                   bufferToWavAndDownload(item.audioBuffer, filename)
-                } else {
-                   console.error('Download failed: No audio buffer available')
-                   // showToast('Could not load audio', 'error')
-                }
-             } catch (err) {
-                console.error('Download error', err)
-             } finally {
-                btn.innerHTML = originalIcon
-                window.lucide?.createIcons()
-             }
+        if (item) {
+          const originalIcon = btn.innerHTML
+          btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>`
+          window.lucide?.createIcons()
+
+          try {
+            // Ensure audio is loaded
+            if (!item.audioBuffer) {
+              if (item.audio_url) item.audioKey = item.audio_url
+              await loadLikeAudio(item)
+            }
+
+            if (item.audioBuffer) {
+              const filename = `${item.stem_type || 'stem'}_${item.bpm}bpm.wav`
+              bufferToWavAndDownload(item.audioBuffer, filename)
+            } else {
+              console.error('Download failed: No audio buffer available')
+              // showToast('Could not load audio', 'error')
+            }
+          } catch (err) {
+            console.error('Download error', err)
+          } finally {
+            btn.innerHTML = originalIcon
+            window.lucide?.createIcons()
+          }
         }
       })
     })
@@ -1615,11 +1632,11 @@ function renderSavedStems() {
         e.stopPropagation()
         if (!confirm('Are you sure you want to delete this stem?')) return
         const id = btn.getAttribute('data-delete-saved-stem') // UUID string
-        
+
         // Import deleteStem if not already imported or available
         // We imported it at the top.
         const res = await deleteStem(id)
-        
+
         if (res.success) {
           savedStemsCache = savedStemsCache.filter(s => s.id !== id)
           renderSavedStems()
@@ -1633,39 +1650,39 @@ function renderSavedStems() {
 }
 
 function updateSavedStemPlayButtons(container) {
-   const targets = container ? [container] : getStemContainers()
-   targets.forEach((c) => {
-     if (!c) return
-     c.querySelectorAll('[data-play-saved-stem]').forEach(btn => {
-        const id = btn.getAttribute('data-play-saved-stem')
-        const isPlaying = id === activePreviewId
-        const icon = btn.querySelector('[data-lucide]')
-        if (icon) {
-          icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play')
-        }
-        btn.classList.toggle('text-purple-300', isPlaying)
-        btn.classList.toggle('text-white', !isPlaying)
-     })
-   })
-   window.lucide?.createIcons()
+  const targets = container ? [container] : getStemContainers()
+  targets.forEach((c) => {
+    if (!c) return
+    c.querySelectorAll('[data-play-saved-stem]').forEach(btn => {
+      const id = btn.getAttribute('data-play-saved-stem')
+      const isPlaying = id === activePreviewId
+      const icon = btn.querySelector('[data-lucide]')
+      if (icon) {
+        icon.setAttribute('data-lucide', isPlaying ? 'pause' : 'play')
+      }
+      btn.classList.toggle('text-purple-300', isPlaying)
+      btn.classList.toggle('text-white', !isPlaying)
+    })
+  })
+  window.lucide?.createIcons()
 }
 
 function getFilteredSavedStems() {
   return savedStemsCache.map(item => {
-      // Map DB columns to our internal structure
-      const bpm = item.tempo || 0
-      const key = item.key_signature || ''
-      const timestamp = new Date(item.created_at).getTime()
-      
-      return { 
-        ...item,
-        bpm, 
-        key, 
-        timestamp,
-        stemName: item.stem_type || 'Stem',
-        audioKey: item.audio_url || null // For playback
-      }
-    })
+    // Map DB columns to our internal structure
+    const bpm = item.tempo || 0
+    const key = item.key_signature || ''
+    const timestamp = new Date(item.created_at).getTime()
+
+    return {
+      ...item,
+      bpm,
+      key,
+      timestamp,
+      stemName: item.stem_type || 'Stem',
+      audioKey: item.audio_url || null // For playback
+    }
+  })
     .filter(item => {
       const bpmOk = item.bpm >= filters.bpmMin && item.bpm <= filters.bpmMax
       const keyOk = filters.key === 'Any Key' || item.key === filters.key
@@ -1678,7 +1695,7 @@ function renderSavedStemCard(item) {
   const dateStr = new Date(item.created_at).toLocaleDateString()
   const duration = item.duration_seconds ? `${Math.round(item.duration_seconds)}s` : ''
   const size = item.file_size ? `${(item.file_size / 1024 / 1024).toFixed(1)}MB` : ''
-  
+
   return `
     <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 group hover:bg-white/10 transition-colors">
       <div class="space-y-1 flex-1 min-w-0">
@@ -1716,45 +1733,28 @@ function renderSavedStemCard(item) {
 
 function getSetContainers() {
   const containers = []
-  const dropdownList = dropdownEl?.querySelector('#setsList')
-  if (dropdownList) containers.push({ el: dropdownList, variant: 'dropdown' })
+  if (dropdownContentRendered) {
+    const dropdownList = dropdownEl?.querySelector('#setsList')
+    if (dropdownList) containers.push({ el: dropdownList, variant: 'dropdown' })
+  }
   if (favoritesPageRefs?.setsList) containers.push({ el: favoritesPageRefs.setsList, variant: 'page' })
   return containers
 }
 
+
 function getFilteredSets() {
-  const localSets = savedSetsCache.map((item, idx) => {
-    const meta = item.metadata || {}
-    const bpm = meta.tempo ?? sessionInfoProvider().bpm
-    const key = meta.key ?? sessionInfoProvider().key
-    const activeStemCount = meta.activeStemCount ?? Object.values(item.stems || {}).filter((stem) => stem && (stem.takes?.length || stem.takeIndex >= 0)).length
-    const totalTakes = meta.totalTakes ?? Object.values(item.stems || {}).reduce((sum, stem) => sum + (stem?.takes?.length || 0), 0)
-    const timestamp = meta.timestamp || item.timestamp || 0
-    const rating = meta.rating ?? 3
-    return { 
-      type: 'local',
-      item, 
-      id: idx, 
-      bpm, 
-      key, 
-      bars: meta.bars ?? meta.barCount ?? 4, 
-      activeStemCount, 
-      totalTakes, 
-      name: meta.name || `Set ${idx + 1}`, 
-      timestamp, 
-      rating 
-    }
-  })
+  // localSets are explicitly ignored per user request to avoid sync confusion
+  // and because the stem_sets table has been deleted in favor of stem_states.
 
   const cloudSets = stemStatesCache.map((item) => {
     const snapshot = item.stems_snapshot || {}
     const meta = snapshot.metadata || {}
-    const bpm = meta.tempo ?? sessionInfoProvider().bpm
-    const key = meta.key ?? sessionInfoProvider().key
+    const bpm = meta.tempo ?? (sessionInfoProvider ? sessionInfoProvider().bpm : 130)
+    const key = meta.key ?? (sessionInfoProvider ? sessionInfoProvider().key : 'A Minor')
     const activeStemCount = meta.activeStemCount ?? Object.values(snapshot.stems || {}).filter((stem) => stem && (stem.takes?.length || stem.takeIndex >= 0)).length
     const totalTakes = meta.totalTakes ?? Object.values(snapshot.stems || {}).reduce((sum, stem) => sum + (stem?.takes?.length || 0), 0)
     const timestamp = new Date(item.created_at).getTime()
-    const rating = meta.rating ?? 3 // Cloud sets might not have rating in top level, check where it's stored
+    const rating = meta.rating ?? 3
     return {
       type: 'cloud',
       item,
@@ -1770,16 +1770,7 @@ function getFilteredSets() {
     }
   })
 
-  // Filter by setsScope if needed. 
-  // setsScope 'current' means only current session. 
-  // Local sets are usually current session (or manually loaded). 
-  // But savedSetsCache is just "saved sets", it doesn't strictly track session ID unless we add it.
-  // For now, let's assume local sets are always shown or filtered by metadata if available.
-  // Cloud sets are already filtered by session in syncStemStates if setsScope is 'current'.
-
-  const all = [...localSets, ...cloudSets]
-
-  return all
+  return cloudSets
     .filter(({ bpm, key, rating }) => {
       const bpmOk = bpm >= filters.bpmMin && bpm <= filters.bpmMax
       const keyOk = filters.key === 'Any Key' || key === filters.key
@@ -1789,11 +1780,12 @@ function getFilteredSets() {
     .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
 }
 
+
 function renderSetCard(entry, variant = 'dropdown') {
   const { type, id, bpm, key, bars, name, activeStemCount, totalTakes, rating } = entry
   const label = name
   const displayRating = rating ?? 3
-  
+
   const isLocal = type === 'local'
 
   if (variant === 'page') {
@@ -1825,15 +1817,15 @@ function renderSetCard(entry, variant = 'dropdown') {
         </div>
         <div class="flex flex-col gap-2 flex-shrink-0">
           ${isLocal ? `<button data-rename-set="${id}" class="text-sm px-4 py-2 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 w-full sm:w-auto">Rename</button>` : ''}
-          ${isLocal 
-            ? `<button data-load-set="${id}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>`
-            : `<div class="flex gap-2">
+          ${isLocal
+        ? `<button data-load-set="${id}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>`
+        : `<div class="flex gap-2">
                  <button data-delete-cloud-set="${id}" class="text-sm px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 hover:bg-red-500/20 text-red-200 w-full sm:w-auto" title="Delete from cloud">
                    <i data-lucide="trash-2" class="w-4 h-4"></i>
                  </button>
                  <button data-load-cloud-set="${id}" class="flex-1 text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>
                </div>`
-          }
+      }
         </div>
       </div>
     `
@@ -1848,10 +1840,10 @@ function renderSetCard(entry, variant = 'dropdown') {
         </div>
         <div class="text-xs text-white/60">${!isLocal ? 'Cloud · ' : ''}${bpm} BPM · ${bars} bars · ${key}</div>
       </div>
-      ${isLocal 
-        ? `<button data-load-set="${id}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>`
-        : `<button data-load-cloud-set="${id}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>`
-      }
+      ${isLocal
+      ? `<button data-load-set="${id}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>`
+      : `<button data-load-cloud-set="${id}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>`
+    }
     </div>
   `
 }
@@ -1915,60 +1907,47 @@ function persistLikesToLocalStorage() {
       rating: t.rating ?? 3
     }))
     localStorage.setItem(LS_KEY_LIKES, JSON.stringify(slim))
-  } catch {}
+  } catch { }
 }
 
 async function syncLikesWithCloud() {
   if (cloudSyncInProgress) return
   cloudSyncInProgress = true
   try {
-    const { getUserLikes, upsertUserLike, removeUserLike } = await import('../Auth/stemApi.js')
+    const { getUserLikes } = await import('../Auth/stemApi.js')
     const res = await getUserLikes()
     if (!res.success) { cloudSyncInProgress = false; return }
+
     const cloud = Array.isArray(res.likes) ? res.likes : []
-    const key = (x) => `${x.stem_id || x.stemId}|${x.take_index ?? x.takeIndex ?? -1}`
-    const localMap = new Map(likedTracks.map((t) => [key({ stemId: t.stemId, takeIndex: t.takeIndex }), t]))
-    const cloudMap = new Map(cloud.map((c) => [key(c), c]))
-    for (const [k, v] of localMap) {
-      const c = cloudMap.get(k)
-      if (!c || (v.timestamp || 0) > (new Date(c.updated_at).getTime() || 0)) {
-        await upsertUserLike({
-          stemId: v.stemId,
-          takeIndex: v.takeIndex,
-          stemName: v.stemName,
-          stemColor: v.stemColor,
-          bpm: v.bpm,
-          key: v.key,
-          bars: v.bars,
-          rating: v.rating,
-          audioKey: v.audioKey || null
-        })
-      }
-    }
-    const merged = new Map()
-    for (const c of cloud) {
-      merged.set(key(c), {
-        id: `${c.stem_id}-${Date.now()}`,
+
+    // Map cloud likes to local format while preserving existing audio buffers
+    const merged = cloud.map((c) => {
+      const id = `${c.stem_id}-${c.take_index}`
+      const existing = likedTracks.find(t => t.id === id)
+
+      return {
+        id: id,
         stemId: c.stem_id,
         takeIndex: c.take_index ?? -1,
         stemName: c.stem_name || c.stem_id,
         stemColor: c.stem_color || 'purple',
-        bpm: c.bpm || sessionInfoProvider().bpm,
-        key: c.key_signature || sessionInfoProvider().key,
+        bpm: c.bpm || (sessionInfoProvider ? sessionInfoProvider().bpm : 130),
+        key: c.key_signature || (sessionInfoProvider ? sessionInfoProvider().key : 'A Minor'),
         bars: c.bars || null,
-        audioBuffer: null,
+        audioBuffer: existing?.audioBuffer || null, // Keep already loaded sound!
         audioKey: c.audio_key || null,
+        audio_data: c.audio_data || null,
         timestamp: new Date(c.updated_at).getTime() || Date.now(),
         rating: c.rating ?? 3
-      })
-    }
-    for (const v of likedTracks) {
-      const k = key({ stemId: v.stemId, takeIndex: v.takeIndex })
-      if (!merged.has(k)) merged.set(k, v)
-    }
-    likedTracks.splice(0, likedTracks.length, ...Array.from(merged.values()))
+      }
+    })
+
+    likedTracks.splice(0, likedTracks.length, ...merged)
     persistLikesToLocalStorage()
     renderLikes()
-  } catch {}
+  } catch (err) {
+    console.error('syncLikesWithCloud: Error', err)
+  }
   cloudSyncInProgress = false
 }
+

@@ -3,32 +3,29 @@
  * Functions for interacting with the stems, stem_sets, and downloads tables
  */
 
-import { createClient } from '@supabase/supabase-js'
+import { supabase as sharedClient, getCurrentUser } from './index.js'
 
-// Check if Supabase is configured
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-let supabase = null
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: {
-      persistSession: false,
-      detectSessionInUrl: false,
-      autoRefreshToken: false
-    }
-  })
-} else {
-  try {
-    const globalClientFactory = typeof window !== 'undefined' ? window.supabase?.createClient : null
-    const cfg = typeof window !== 'undefined' ? window.RESET_PASSWORD_CONFIG || {} : {}
-    const urlFallback = cfg.supabaseUrl
-    const keyFallback = cfg.supabaseKey
-    if (globalClientFactory && urlFallback && keyFallback && urlFallback !== 'https://your-project.supabase.co' && keyFallback !== 'your-anon-key') {
-      supabase = globalClientFactory(urlFallback, keyFallback)
-    }
-  } catch {}
+// Use the shared Supabase client to ensure auth session consistency
+let supabase = sharedClient
+
+// Fallback if shared client is not available or initialized
+if (!supabase) {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+  const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+  if (supabaseUrl && supabaseKey) {
+    const { createClient } = await import('@supabase/supabase-js')
+    supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: true,
+        detectSessionInUrl: true,
+        autoRefreshToken: true
+      }
+    })
+  }
 }
+
 
 /**
  * Upload stem audio to Supabase Storage
@@ -44,13 +41,14 @@ export async function uploadStemAudio(file, userId, stemType) {
 
   try {
     if (!userId) {
-      const { data: { user } } = await supabase.auth.getUser()
+      const user = await getCurrentUser()
       if (user) {
         userId = user.id
       } else {
         return { success: false, error: 'User not authenticated' }
       }
     }
+
 
     const timestamp = Date.now()
     const fileName = `${userId}/${stemType}_${timestamp}.wav`
@@ -114,22 +112,22 @@ export async function saveStem(stemData) {
     // (though we can store both if available)
     if (stemData.audioData) {
       let audioArrayBuffer = stemData.audioData
-      
+
       // Convert AudioBuffer to ArrayBuffer if needed
       if (audioArrayBuffer instanceof AudioBuffer) {
         const { audioBufferToArrayBuffer, getAudioDuration } = await import('./audioBufferHelper.js')
         // Only convert if we intend to store it as base64 or need size/duration
         // If we have audioUrl, maybe we skip base64 storage to save DB space?
         // For now, let's keep existing behavior but make it optional if audioUrl is present.
-        
+
         // If we have URL, we might skip full base64 conversion for DB storage unless requested
         // But for compatibility, let's calculate duration at least
         durationSeconds = durationSeconds || getAudioDuration(stemData.audioData)
-        
+
         // If we are NOT storing to bucket (no audioUrl), we MUST store in DB
         // If we ARE storing to bucket (audioUrl present), we can skip DB storage of blob
         if (!stemData.audioUrl) {
-           audioArrayBuffer = await audioBufferToArrayBuffer(audioArrayBuffer)
+          audioArrayBuffer = await audioBufferToArrayBuffer(audioArrayBuffer)
         }
       }
 
@@ -141,25 +139,26 @@ export async function saveStem(stemData) {
       // Only convert to base64 if we don't have a URL or if we want to fallback
       // Ideally, if we have a URL, we don't bloat the DB
       if (!stemData.audioUrl && audioArrayBuffer instanceof ArrayBuffer) {
-         const audioBytes = new Uint8Array(audioArrayBuffer)
-         if (audioBytes.length > 65536) {
-           const chunks = []
-           for (let i = 0; i < audioBytes.length; i += 65536) {
-             const chunk = audioBytes.slice(i, i + 65536)
-             chunks.push(String.fromCharCode.apply(null, chunk))
-           }
-           audioBase64 = btoa(chunks.join(''))
-         } else {
-           audioBase64 = btoa(String.fromCharCode(...audioBytes))
-         }
+        const audioBytes = new Uint8Array(audioArrayBuffer)
+        if (audioBytes.length > 65536) {
+          const chunks = []
+          for (let i = 0; i < audioBytes.length; i += 65536) {
+            const chunk = audioBytes.slice(i, i + 65536)
+            chunks.push(String.fromCharCode.apply(null, chunk))
+          }
+          audioBase64 = btoa(chunks.join(''))
+        } else {
+          audioBase64 = btoa(String.fromCharCode(...audioBytes))
+        }
       }
     }
 
     // Get current user
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCurrentUser()
     if (!user) {
       return { success: false, error: 'User not authenticated' }
     }
+
 
     const insertData = {
       user_id: user.id,
@@ -213,11 +212,12 @@ export async function getUserStems(sessionSettingId = null) {
   }
 
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCurrentUser()
     if (!user) {
       console.error('getUserStems: User not authenticated')
       return { success: false, error: 'User not authenticated' }
     }
+
     console.log('getUserStems: Authenticated user', user.id)
 
     let query = supabase
@@ -280,10 +280,11 @@ export async function upsertUserLike(like) {
     return { success: false, error: 'Supabase not configured' }
   }
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCurrentUser()
     if (!user) {
       return { success: false, error: 'User not authenticated' }
     }
+
     const payload = {
       user_id: user.id,
       stem_id: like.stemId,
@@ -316,10 +317,11 @@ export async function getUserLikes() {
     return { success: false, error: 'Supabase not configured' }
   }
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCurrentUser()
     if (!user) {
       return { success: false, error: 'User not authenticated' }
     }
+
     const { data, error } = await supabase
       .from('user_likes')
       .select('*')
@@ -339,10 +341,11 @@ export async function removeUserLike(stemId, takeIndex) {
     return { success: false, error: 'Supabase not configured' }
   }
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCurrentUser()
     if (!user) {
       return { success: false, error: 'User not authenticated' }
     }
+
     const { error } = await supabase
       .from('user_likes')
       .delete()
@@ -377,45 +380,27 @@ export async function saveSessionSetting(sessionData) {
     let userId = sessionData?.user_id || null
     if (!userId) {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
+        const user = await getCurrentUser()
         userId = user?.id || null
-      } catch {}
+      } catch { }
+
     }
     if (!userId) {
       try {
         const { getAuthGuard } = await import('./authGuard.js')
         const guardUser = getAuthGuard()?.getCurrentUser()
         userId = guardUser?.id || null
-      } catch {}
+      } catch { }
     }
     if (!userId) {
       return { success: false, error: 'User not authenticated' }
-    }
-
-    // Check if session setting already exists for this user with same settings
-    const { data: existing, error: checkError } = await supabase
-      .from('session_settings')
-      .select('session_setting_id')
-      .eq('user_id', userId)
-      .eq('tempo', Number(sessionData.tempo ?? sessionData.temp))
-      .eq('bars', Number(sessionData.bars))
-      .eq('root_base', sessionData.root_base ?? sessionData.rootBase)
-      .eq('selected_accidental', sessionData.selected_accidental ?? sessionData.selectedAccidental)
-      .eq('mode', sessionData.mode)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (existing && !checkError) {
-      // Return existing session setting
-      return { success: true, sessionSettingId: existing.session_setting_id }
     }
 
     // Create new session setting
     const { data, error } = await supabase
       .from('session_settings')
       .insert({
-        user_id: user.id,
+        user_id: userId,
         session_name: sessionData.session_name ?? sessionData.sessionName ?? `Session ${new Date().toLocaleDateString()}`,
         tempo: Number(sessionData.tempo ?? sessionData.temp),
         bars: Number(sessionData.bars),
@@ -732,7 +717,7 @@ export async function getSessionSettingById(sessionSettingId) {
     return { success: false, error: 'Supabase not configured' }
   }
 
-  try { 
+  try {
     const { data, error } = await supabase
       .from('session_settings')
       .select('*')
@@ -911,40 +896,22 @@ export async function saveSessionSettingToDb(sessionData) {
     let userId = sessionData?.user_id || null
     if (!userId) {
       try {
-        const { data: { user } } = await supabase.auth.getUser()
+        const user = await getCurrentUser()
         userId = user?.id || null
-      } catch {}
+      } catch { }
+
     }
     if (!userId) {
       try {
         const { getAuthGuard } = await import('./authGuard.js')
         userId = getAuthGuard()?.getCurrentUser()?.id || null
-      } catch {}
+      } catch { }
     }
     if (!userId) {
       return { success: false, error: 'User not authenticated' }
     }
 
-    // Check if session setting already exists for this user with same settings
-    const { data: existing, error: checkError } = await supabase
-      .from('session_settings')
-      .select('session_setting_id')
-      .eq('user_id', userId)
-      .eq('tempo', Number(sessionData.tempo ?? sessionData.temp))
-      .eq('bars', Number(sessionData.bars))
-      .eq('root_base', sessionData.root_base ?? sessionData.rootBase ?? '')
-      .eq('selected_accidental', sessionData.selected_accidental ?? sessionData.selectedAccidental ?? 'natural')
-      .eq('mode', sessionData.mode ?? 'Major')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (existing && !checkError) {
-      // Return existing session setting ID
-      return { success: true, session_setting_id: Number(existing.session_setting_id) }
-    }
-
-    // Create new session setting only if it doesn't exist
+    // Create new session setting
     const { data, error } = await supabase
       .from('session_settings')
       .insert({
@@ -971,29 +938,42 @@ export async function saveSessionSettingToDb(sessionData) {
   }
 }
 
-// Fetch stem sets and loads them to UI
+// Fetch stem sets (states) and loads them to UI
 export async function getSetsById(sessionSettingId) {
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }
   }
   try {
     const { data, error } = await supabase
-      .from('stem_sets')
-      .select('id, name')
-      .eq('session_setting_id', sessionSettingId)
+      .from('stem_states')
+      .select('stem_state_id, state_name, stems_snapshot')
+      .eq('session_settings_id', sessionSettingId)
+      .eq('is_deleted', false)
       .order('created_at', { ascending: false })
 
     if (error) {
-      console.error('Error fetching stem sets by session_setting_id:', error)
+      console.error('Error fetching stem states by session_settings_id:', error)
       return { success: false, error: error.message }
     }
 
-    return { success: true, sets: data || [] }
+    // Map to the format expected by the UI ({id, name, ...stems_snapshot})
+    const mappedSets = (data || []).map(item => {
+      const snapshot = item.stems_snapshot || {}
+      return {
+        ...snapshot,
+        id: item.stem_state_id,
+        name: item.state_name || `Set ${item.stem_state_id}`
+      }
+    })
+
+    return { success: true, sets: mappedSets }
   } catch (err) {
-    console.error('Exception fetching stem sets by session_setting_id:', err)
+    console.error('Exception fetching stem states by session_settings_id:', err)
     return { success: false, error: err.message }
   }
 }
+
+
 
 export async function saveSessionSettingsToCloud(sessionValues) {
   if (!supabase) {
@@ -1014,7 +994,7 @@ export async function saveSessionSettingsToCloud(sessionValues) {
 }
 
 export async function saveStemStateToDb(sessionSettingId, stemState) {
-  
+
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }
   }
@@ -1076,10 +1056,11 @@ export async function getAllStemStates() {
     return { success: false, error: 'Supabase not configured' }
   }
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getCurrentUser()
     if (!user) {
       return { success: false, error: 'User not authenticated' }
     }
+
     const { data: sessions, error: sErr } = await supabase
       .from('session_settings')
       .select('session_setting_id')

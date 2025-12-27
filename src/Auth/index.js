@@ -18,12 +18,13 @@ if (supabaseUrl && supabaseAnonKey) {
   console.log('🔗 Supabase environment variables loaded, initializing client...')
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
-      // Disable automatic token refresh to prevent frequent auth state changes
-      autoRefreshToken: false,
-      // Disable automatic session persistence to reduce auth checks
+      // Enable automatic token refresh to keep the session active
+      autoRefreshToken: true,
+      // Enable automatic session persistence to maintain login state
       persistSession: true,
       // Reduce the frequency of auth state checks
       detectSessionInUrl: false
+
     }
   })
 } else {
@@ -65,7 +66,7 @@ export async function signUp(email, password, fullName) {
       }
     })
     console.timeEnd('[auth] supabase.auth.signUp')
-    
+
     if (error) {
       const details = {
         name: error?.name,
@@ -74,7 +75,7 @@ export async function signUp(email, password, fullName) {
         code: error?.code
       }
       console.error('Sign up error details:', details)
-      try { console.error('Sign up error raw:', JSON.stringify(error)) } catch {}
+      try { console.error('Sign up error raw:', JSON.stringify(error)) } catch { }
       if (String(error?.message || '').toLowerCase().includes('error sending confirmation')) {
         const wrappedError = {
           name: error?.name || 'AuthApiError',
@@ -89,36 +90,36 @@ export async function signUp(email, password, fullName) {
       console.groupEnd()
       return { user: null, error }
     }
-    
+
     // Check if this is a new user by examining the response
     // Supabase returns different behavior for existing vs new users
     let isNewUser = false
-    
+
     // If we get a user object, check if it was actually created
     if (data.user) {
       // Check if the user was just created by looking at the session
       // New users typically don't have a session immediately
       isNewUser = !data.session || data.session === null
-      
+
       // Also check if email_confirmed_at is null (indicating new user)
       if (data.user.email_confirmed_at === null) {
         isNewUser = true
       }
     }
-    
-    console.log('Sign up result:', { 
-      email: data.user?.email, 
+
+    console.log('Sign up result:', {
+      email: data.user?.email,
       isNewUser,
       hasSession: !!data.session,
       emailConfirmedAt: data.user?.email_confirmed_at
     })
     console.groupEnd()
-    
+
     // Store email in localStorage for confirm-email page only for new users
     if (data.user?.email && isNewUser) {
       localStorage.setItem('pendingEmail', data.user.email)
     }
-    
+
     return { user: data.user, error: null, isNewUser }
   } catch (error) {
     const details = {
@@ -128,7 +129,7 @@ export async function signUp(email, password, fullName) {
       code: error?.code
     }
     console.error('Sign up exception details:', details)
-    try { console.error('Sign up exception raw:', JSON.stringify(error)) } catch {}
+    try { console.error('Sign up exception raw:', JSON.stringify(error)) } catch { }
     return { user: null, error: { message: 'An unexpected error occurred' } }
   }
 }
@@ -151,7 +152,7 @@ export async function signIn(email, password) {
       email,
       password
     })
-    
+
     if (error) {
       console.error('Sign in error:', error.message)
       // Log specific error for unconfirmed emails
@@ -160,19 +161,19 @@ export async function signIn(email, password) {
       }
       return { user: null, error }
     }
-    
+
     // MANUAL EMAIL VERIFICATION CHECK
     // Since we disabled Supabase's auto-verification, we check manually
     if (data.user && !data.user.email_confirmed_at) {
       console.log('Login blocked: Email not verified for', email)
-      return { 
-        user: null, 
-        error: { 
-          message: 'Email not confirmed. Please check your email and click the confirmation link.' 
-        } 
+      return {
+        user: null,
+        error: {
+          message: 'Email not confirmed. Please check your email and click the confirmation link.'
+        }
       }
     }
-    
+
     console.log('Sign in successful:', data.user?.email)
     return { user: data.user, error: null }
   } catch (error) {
@@ -187,7 +188,7 @@ export async function signIn(email, password) {
  */
 export async function signOut() {
   console.log('🚪 signOut() called')
-  
+
   if (!supabase) {
     const error = { message: 'Supabase not configured. Please check your .env file.' }
     console.error('Sign out error:', error.message)
@@ -197,12 +198,12 @@ export async function signOut() {
   try {
     console.log('🚪 Calling supabase.auth.signOut()...')
     const { error } = await supabase.auth.signOut()
-    
+
     if (error) {
       console.error('Sign out error:', error.message)
       return { error }
     }
-    
+
     console.log('✅ Sign out successful')
     return { error: null }
   } catch (error) {
@@ -222,32 +223,29 @@ export async function getCurrentUser() {
   }
 
   try {
-    const { data: { user }, error } = await supabase.auth.getUser()
-    
-    if (error) {
-      // Don't log common "no session" errors as errors - they're normal when no user is logged in
-      const noSessionErrors = [
-        'Auth session missing!',
-        'Invalid JWT',
-        'JWT expired',
-        'No session found'
-      ]
-      
-      if (noSessionErrors.some(errMsg => error.message.includes(errMsg))) {
-        console.log('No active session found (user not logged in)')
-        return null
-      }
-      
-      console.error('Get current user error:', error.message)
-      return null
+    // Try to get the user from the current session (more secure, checks with server)
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (user) {
+      return user
     }
-    
-    return user
+
+    // If getUser fails, fallback to getSession info (less secure but more reliable if network is flaky)
+    // The database RLS will ultimately provide the security layer
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.user || null
   } catch (error) {
     console.error('Get current user exception:', error)
-    return null
+    // Final fallback attempt
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      return session?.user || null
+    } catch {
+      return null
+    }
   }
 }
+
 
 /**
  * Listen for authentication state changes
@@ -258,7 +256,7 @@ export function onAuthStateChange(callback) {
   if (!supabase) {
     console.warn('Supabase not configured - auth state change listener not available')
     // Return a no-op unsubscribe function
-    return () => {}
+    return () => { }
   }
 
   const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -267,7 +265,7 @@ export function onAuthStateChange(callback) {
       callback(event, session)
     }
   )
-  
+
   return subscription.unsubscribe
 }
 
@@ -292,7 +290,7 @@ export async function getCurrentSession() {
 
   try {
     const { data: { session }, error } = await supabase.auth.getSession()
-    
+
     if (error) {
       // Don't log common "no session" errors as errors - they're normal when no user is logged in
       const noSessionErrors = [
@@ -301,16 +299,16 @@ export async function getCurrentSession() {
         'JWT expired',
         'No session found'
       ]
-      
+
       if (noSessionErrors.some(errMsg => error.message.includes(errMsg))) {
         console.log('No active session found (user not logged in)')
         return null
       }
-      
+
       console.error('Get session error:', error.message)
       return null
     }
-    
+
     return session
   } catch (error) {
     console.error('Get session exception:', error)
@@ -333,14 +331,14 @@ export async function resetPassword(email) {
   try {
     // Call the Edge Function - it will generate proper recovery URL internally
     const emailResult = await sendPasswordResetEmail(email)
-    
+
     if (!emailResult.success) {
       console.error('Custom email sending failed:', emailResult.error)
       return { error: { message: 'Failed to send password reset email' } }
     } else {
       console.log('Password reset email sent to:', email)
     }
-    
+
     return { error: null }
   } catch (error) {
     console.error('Reset password exception:', error)

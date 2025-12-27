@@ -9,6 +9,7 @@ import { STEM_ORDER } from '../Config/stems.js'
 import { getPlaybackBars } from '../Utilities/barUtils.js'
 import { saveSessionSettingsToCloud } from '../Auth/stemApi.js'
 import { getAuthGuard } from '../Auth/authGuard.js'
+import { showSuccessToast } from '../UI/toast.js'
 
 /**
  * Load session settings from localStorage if available
@@ -80,6 +81,7 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
     stemControlValues.master.rootBase = savedSettings.rootBase
     stemControlValues.master.accidental = savedSettings.selectedAccidental
     stemControlValues.master.mode = savedSettings.mode
+    stemControlValues.master.session_setting_id = savedSettings.session_setting_id
 
     // Apply settings to UI
     setSessionSetupDone(true)
@@ -135,25 +137,97 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
     const val = Math.round(Number(e.target.value) || DEFAULT_TEMPO)
     tempoValue.textContent = String(val)
   }
-  // If a cancel button exists (legacy HTML), wire it to simply hide the modal.
+  // If a cancel button exists, handle the cancel logic.
   if (cancelBtn) {
     cancelBtn.onclick = () => {
-      modal.style.opacity = '0'
-      setTimeout(() => { modal.classList.add('hidden') }, 300)
-      document.body.style.overflow = ''
+      const storedSettings = loadSessionSettingsFromStorage()
+
+      if (storedSettings) {
+        // If settings already exist, just close the modal
+        modal.style.opacity = '0'
+        setTimeout(() => { modal.classList.add('hidden') }, 300)
+        document.body.style.overflow = ''
+      } else {
+        // No settings found, ask for confirmation
+        if (window.confirm("No session settings found. Close and use default settings in the background?")) {
+          // Collect current (default or changed) values from the modal
+          const sessionName = sessionNameInput ? sessionNameInput.value.trim() || generateDefaultSessionName() : generateDefaultSessionName()
+          const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
+          const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
+          const rootText = String(rootSelector.value || 'A')
+          let rootBase = rootText.replace(/[#♯b♭]/g, '').toUpperCase()
+          const selectedAccidental = accidentalSelector.value
+          const modeVal = String(modeSelector.value || 'Minor')
+
+          // Prepare session values object
+          const sessionValues = {
+            session_setting_id: null,
+            session_name: sessionName,
+            tempo: tempoVal,
+            bars: barsVal,
+            root_base: rootBase,
+            selected_accidental: selectedAccidental,
+            mode: modeVal
+          }
+
+          // Apply to internal values
+          stemControlValues.master.sessionName = sessionName
+          stemControlValues.master.tempo = tempoVal
+          stemControlValues.master.bars = barsVal
+          stemControlValues.master.rootBase = rootBase
+          stemControlValues.master.accidental = selectedAccidental
+          stemControlValues.master.mode = modeVal
+
+          // 1. Replace the session setting in local storage immediately
+          saveSessionSettingsToStorage(sessionValues)
+
+          // Proceed with UI transition
+          setSessionSetupDone(true)
+          applySessionSettingsToUI(stemControlValues, updateTempoIndicator)
+
+          // Hide modal
+          modal.style.opacity = '0'
+          setTimeout(() => { modal.classList.add('hidden') }, 300)
+          document.body.style.overflow = ''
+
+          // Perform cloud save in background if possible
+          const guardUser = getAuthGuard()?.getCurrentUser()
+          if (guardUser?.id) {
+            sessionValues.user_id = guardUser.id
+            showSuccessToast("Session setup complete. Saving settings in background...")
+
+            // 2. Save values to the cloud
+            saveSessionSettingsToCloud(sessionValues).then(cloudResult => {
+              if (cloudResult.success && cloudResult.session_setting_id) {
+                // 3. Update the session_setting_id with the ID of the current saved to cloud
+                const finalId = cloudResult.session_setting_id
+                sessionValues.session_setting_id = finalId
+                stemControlValues.master.session_setting_id = finalId
+                saveSessionSettingsToStorage(sessionValues)
+                showSuccessToast("Session settings synchronized successfully.")
+              } else {
+                console.warn('Background cloud save failed results:', cloudResult.error)
+              }
+            }).catch(err => {
+              console.error('Background cloud save exception:', err)
+            })
+          }
+        }
+      }
     }
   }
   // Save button applies settings and locks them (single handler to avoid duplicates)
   saveBtn.onclick = async (e) => {
     console.log('saveBtn clicked');
-    try { e.preventDefault() } catch {}
-    try { e.stopPropagation() } catch {}
+    try { e.preventDefault() } catch { }
+    try { e.stopPropagation() } catch { }
     const sessionName = sessionNameInput ? sessionNameInput.value.trim() || generateDefaultSessionName() : generateDefaultSessionName()
     const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
     const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
     const rootText = String(rootSelector.value || 'A')
     // Determine base letter and accidental from the root selection
-    let rootBase = rootText.replace(/[♯♭]/g, '').toUpperCase()
+    // Remove both Unicode and standard sharp/flat symbols to get the base note
+    let rootBase = rootText.replace(/[#♯b♭]/g, '').toUpperCase()
     const selectedAccidental = accidentalSelector.value
     const modeVal = String(modeSelector.value || 'Minor')
     // Set master values
@@ -175,22 +249,33 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
       mode: modeVal
     }
 
-
-    // console.log(['Session setup values:', sessionValues])
-
-    // Save to localStorage
+    // 1. Replace the session setting in local storage immediately
     saveSessionSettingsToStorage(sessionValues)
+
+    // Check if user is logged in
     const guardUser = getAuthGuard()?.getCurrentUser()
     if (guardUser?.id) {
       sessionValues.user_id = guardUser.id
+
+      // 2. Save values to the cloud
+      try {
+        const cloudResult = await saveSessionSettingsToCloud(sessionValues)
+        if (cloudResult.success && cloudResult.session_setting_id) {
+          // 3. Update the session_setting_id with the ID of the current saved to cloud
+          const finalId = cloudResult.session_setting_id
+          sessionValues.session_setting_id = finalId
+          stemControlValues.master.session_setting_id = finalId
+          saveSessionSettingsToStorage(sessionValues)
+          console.log('Session synced with cloud, ID:', finalId)
+        } else {
+          console.warn('Could not save session to cloud, continuing with local only:', cloudResult.error)
+        }
+      } catch (err) {
+        console.error('Error during cloud session save:', err)
+      }
     }
-    const cloudResult = await saveSessionSettingsToCloud(sessionValues)
-    if (!cloudResult.success) {
-      console.error('Error saving session settings to cloud:', cloudResult.error)
-      return
-    }
-    sessionValues.session_setting_id = cloudResult.session_setting_id
-    saveSessionSettingsToStorage(sessionValues)
+
+    showSuccessToast("Session setup complete!")
 
     setSessionSetupDone(true)
     applySessionSettingsToUI(stemControlValues, updateTempoIndicator)
