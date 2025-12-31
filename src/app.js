@@ -13,6 +13,7 @@ import { loopFixConfig } from './Config/environment.js'
 import { initFavoritesPageView, initLikesSetsMenu, isTrackLiked, refreshFavoritesUI, syncSavedSetsMenu, toggleLikeForStem } from './UI/likesSetsMenu.js'
 import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl } from './TechnoGenerators/sessionSetup.js'
 import { hookIntoStemGeneration } from './Auth/stemGenerationIntegration.js'
+import { uploadStemAudio } from './Auth/stemApi.js'
 
 /* =========================================================
    Feature flags / Env toggles
@@ -484,6 +485,119 @@ function updateSavedSetsDropdown() {
  * the dropdown is refreshed to include the new entry.  No user
  * confirmation is required when saving; the action always succeeds.
  */
+/**
+ * Ensure all active stems in a snapshot have their audio persisted to cloud storage.
+ * If a stem has a buffer but no cloud key, it encodes and uploads it now.
+ */
+async function ensureAudioPersistence(snapshot) {
+  if (!snapshot || !snapshot.stems) return snapshot
+
+  for (const st of STEM_ORDER) {
+    const saved = snapshot.stems[st]
+    if (!saved) continue
+
+    const idx = saved.activeIndex
+    if (typeof idx === 'number' && idx >= 0 && stemHistory[st] && stemHistory[st][idx]) {
+      const take = stemHistory[st][idx]
+
+      // A valid storage path should contain a slash and end with .wav
+      const isCloudPath = !!(take.audioKey && take.audioKey.includes('/') && take.audioKey.toLowerCase().endsWith('.wav'))
+      const isTemporary = !!(take.audioKey && (take.audioKey.includes('unsaved') || take.audioKey.includes('blob:')))
+      const needsUpload = !isCloudPath || isTemporary
+
+      console.log(`[Persistence] Check ${st}:`, { audioKey: take.audioKey, isCloudPath, isTemporary, needsUpload })
+
+      if (needsUpload && take.raw) {
+        console.log(`[Persistence] Persisting audio for ${st} (reason: ${!isCloudPath ? 'Invalid path' : 'Temporary path'})...`)
+        try {
+          const blob = encodeWAVSync(take.raw)
+          const uploadRes = await uploadStemAudio(blob, null, st)
+
+          if (uploadRes.success) {
+            console.log(`[Persistence] Successfully persisted ${st} to: ${uploadRes.path}`)
+            take.audioKey = uploadRes.path
+            saved.audioKey = uploadRes.path
+          } else {
+            console.error(`[Persistence] Upload failed for ${st}:`, uploadRes.error)
+          }
+        } catch (err) {
+          console.error(`[Persistence] Failed to persist ${st}:`, err)
+        }
+      } else if (take.audioKey) {
+        saved.audioKey = take.audioKey
+      }
+    }
+  }
+  return snapshot
+}
+
+/**
+ * Before applying a saved state from the cloud, we must ensure all referenced audio
+ * is downloaded and added to our in-memory stemHistory.
+ */
+async function restoreStemsForLoad(snapshot) {
+  if (!snapshot || !snapshot.stems) return
+
+  for (const st of STEM_ORDER) {
+    const saved = snapshot.stems[st]
+    if (!saved || !saved.audioKey) continue
+
+    // Check if we already have this audio in history
+    const history = stemHistory[st] || []
+    const existingIdx = history.findIndex(t => t.audioKey === saved.audioKey)
+    if (existingIdx !== -1) {
+      console.log(`[Restoration] Audio for ${st} already in RAM at index ${existingIdx}`)
+      saved.activeIndex = existingIdx
+      continue
+    }
+
+    // Otherwise, download and decode
+    console.log(`[Restoration] Attempting download for ${st}: ${saved.audioKey}`)
+    try {
+      // Determine bucket (default to audio-files)
+      // Some keys might be from liked-audios
+      const bucket = saved.audioKey.includes('liked_') ?
+        (import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios') :
+        (import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files')
+
+      const cleanBucket = bucket.trim()
+      console.log(`[Restoration] Downloading from bucket: ${cleanBucket}, file: ${saved.audioKey}`)
+
+      const { data, error } = await supabase.storage
+        .from(cleanBucket)
+        .download(saved.audioKey)
+
+      if (error) {
+        console.error(`[Restoration] Supabase download error for ${st}:`, error)
+        throw error
+      }
+
+      const arrayBuffer = await data.arrayBuffer()
+
+      // Ensure audio context is initialized before decoding
+      await ensureAudioContext()
+      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+
+      ensureStemHistory(st)
+
+      const newEntry = {
+        id: `restored_${st}_${Date.now()}`,
+        raw: audioBuffer,
+        loop: audioBuffer,
+        audioKey: saved.audioKey,
+        tempo: snapshot.metadata?.tempo || DEFAULT_TEMPO,
+        bars: snapshot.metadata?.bars || DEFAULT_BARS
+      }
+
+      stemHistory[st].push(newEntry)
+      saved.activeIndex = stemHistory[st].length - 1
+      console.log(`[Restoration] Successfully restored ${st} to index ${saved.activeIndex}`)
+    } catch (err) {
+      console.error(`[Restoration] FAILED for ${st}:`, err)
+    }
+  }
+}
+
 function saveCurrentPlayerState() {
   const snapshot = buildSavedSetRecord()
   savedSets.push(snapshot)
@@ -567,6 +681,8 @@ async function loadSavedSet(index) {
   }
   const snapshot = savedSets[index]
   try {
+    // Restore missing audio from cloud before applying state
+    await restoreStemsForLoad(snapshot)
     await applyPlayerState(snapshot)
   } catch (err) {
     console.error('Failed to apply saved set', err)
@@ -812,9 +928,16 @@ async function saveNewSet() {
     label.textContent = 'Saving'
   }
   // Save the state
-  const snapshot = buildSavedSetRecord(`Set ${savedSets.length + 1}`)
-  console.log('snapshot', snapshot)
+  let snapshot = buildSavedSetRecord(`Set ${savedSets.length + 1}`)
 
+  // Ensure audio is persisted to cloud before saving DB record
+  try {
+    snapshot = await ensureAudioPersistence(snapshot)
+  } catch (err) {
+    console.error('[SaveSet] Audio persistence failed:', err)
+  }
+
+  console.log('snapshot', snapshot)
 
   const stemStateForDb = {
     state_name: snapshot?.metadata?.name || null,
