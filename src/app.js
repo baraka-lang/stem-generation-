@@ -532,6 +532,70 @@ async function ensureAudioPersistence(snapshot) {
 }
 
 /**
+ * Generic helper to ensure a cloud-stored audio file is downloaded, decoded,
+ * and added to the stemHistory for a specific stem type.
+ * Returns the index of the stem in history.
+ */
+async function restoreAudioBuffer(st, audioKey, metadata = {}) {
+  if (!st || !audioKey) return -1
+
+  // 1. Check if we already have this audio in history
+  const history = stemHistory[st] || []
+  const existingIdx = history.findIndex(t => t.audioKey === audioKey)
+  if (existingIdx !== -1) {
+    console.log(`[Restoration] Audio for ${st} already in RAM at index ${existingIdx}`)
+    return existingIdx
+  }
+
+  // 2. Otherwise, download and decode
+  console.log(`[Restoration] Attempting download for ${st}: ${audioKey}`)
+  try {
+    // Determine bucket (default to audio-files)
+    // Some keys might be from liked-audios
+    const bucket = audioKey.includes('liked_') ?
+      (import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios') :
+      (import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files')
+
+    const cleanBucket = bucket.trim()
+    console.log(`[Restoration] Downloading from bucket: ${cleanBucket}, file: ${audioKey}`)
+
+    const { data, error } = await supabase.storage
+      .from(cleanBucket)
+      .download(audioKey)
+
+    if (error) {
+      console.error(`[Restoration] Supabase download error for ${st}:`, error)
+      throw error
+    }
+
+    const arrayBuffer = await data.arrayBuffer()
+
+    // Ensure audio context is initialized before decoding
+    await ensureAudioContext()
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+
+    ensureStemHistory(st)
+
+    const newEntry = {
+      id: `restored_${st}_${Date.now()}`,
+      raw: audioBuffer,
+      loop: audioBuffer,
+      audioKey: audioKey,
+      tempo: metadata.tempo || DEFAULT_TEMPO,
+      bars: metadata.bars || DEFAULT_BARS,
+      prompt: metadata.prompt || ''
+    }
+
+    const newIndex = stemHistory[st].push(newEntry) - 1
+    console.log(`[Restoration] Successfully restored ${st} to index ${newIndex}`)
+    return newIndex
+  } catch (err) {
+    console.error(`[Restoration] FAILED for ${st}:`, err)
+    return -1
+  }
+}
+
+/**
  * Before applying a saved state from the cloud, we must ensure all referenced audio
  * is downloaded and added to our in-memory stemHistory.
  */
@@ -542,58 +606,13 @@ async function restoreStemsForLoad(snapshot) {
     const saved = snapshot.stems[st]
     if (!saved || !saved.audioKey) continue
 
-    // Check if we already have this audio in history
-    const history = stemHistory[st] || []
-    const existingIdx = history.findIndex(t => t.audioKey === saved.audioKey)
-    if (existingIdx !== -1) {
-      console.log(`[Restoration] Audio for ${st} already in RAM at index ${existingIdx}`)
-      saved.activeIndex = existingIdx
-      continue
-    }
+    const activeIndex = await restoreAudioBuffer(st, saved.audioKey, {
+      tempo: snapshot.metadata?.tempo || DEFAULT_TEMPO,
+      bars: snapshot.metadata?.bars || DEFAULT_BARS
+    })
 
-    // Otherwise, download and decode
-    console.log(`[Restoration] Attempting download for ${st}: ${saved.audioKey}`)
-    try {
-      // Determine bucket (default to audio-files)
-      // Some keys might be from liked-audios
-      const bucket = saved.audioKey.includes('liked_') ?
-        (import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios') :
-        (import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files')
-
-      const cleanBucket = bucket.trim()
-      console.log(`[Restoration] Downloading from bucket: ${cleanBucket}, file: ${saved.audioKey}`)
-
-      const { data, error } = await supabase.storage
-        .from(cleanBucket)
-        .download(saved.audioKey)
-
-      if (error) {
-        console.error(`[Restoration] Supabase download error for ${st}:`, error)
-        throw error
-      }
-
-      const arrayBuffer = await data.arrayBuffer()
-
-      // Ensure audio context is initialized before decoding
-      await ensureAudioContext()
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
-
-      ensureStemHistory(st)
-
-      const newEntry = {
-        id: `restored_${st}_${Date.now()}`,
-        raw: audioBuffer,
-        loop: audioBuffer,
-        audioKey: saved.audioKey,
-        tempo: snapshot.metadata?.tempo || DEFAULT_TEMPO,
-        bars: snapshot.metadata?.bars || DEFAULT_BARS
-      }
-
-      stemHistory[st].push(newEntry)
-      saved.activeIndex = stemHistory[st].length - 1
-      console.log(`[Restoration] Successfully restored ${st} to index ${saved.activeIndex}`)
-    } catch (err) {
-      console.error(`[Restoration] FAILED for ${st}:`, err)
+    if (activeIndex !== -1) {
+      saved.activeIndex = activeIndex
     }
   }
 }
@@ -1089,10 +1108,24 @@ async function handleStemLikeToggle(st) {
   return liked
 }
 
-function insertLikeIntoStem(item) {
+async function insertLikeIntoStem(item) {
   if (!item) return
-  if (Number.isInteger(item.takeIndex)) {
-    selectStemVersion(item.stemId, item.takeIndex)
+
+  // 1. Ensure audio is in history/RAM
+  // If it's already there, restoreAudioBuffer will just return the existing index
+  const activeIndex = await restoreAudioBuffer(item.stemId, item.audioKey, {
+    tempo: item.tempo || DEFAULT_TEMPO,
+    bars: item.bars || DEFAULT_BARS,
+    prompt: item.prompt || ''
+  })
+
+  // 2. Select the version
+  if (typeof activeIndex === 'number' && activeIndex >= 0) {
+    // 3. Ensure the instrument card is visible in the mixer
+    if (!visibleInstruments.includes(item.stemId)) {
+      addInstrument(item.stemId)
+    }
+    selectStemVersion(item.stemId, activeIndex)
   }
 }
 

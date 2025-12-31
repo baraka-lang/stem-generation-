@@ -1269,7 +1269,7 @@ function attachLikeCardHandlers(container, variant, itemMap) {
       const id = btn.getAttribute('data-insert-like')
       const item = itemMap.get(id)
       if (item) {
-        handleInsertLike(item, variant)
+        handleInsertLike(item, variant, btn)
       } else {
         console.warn('attachLikeCardHandlers: Item not found for insert', id)
       }
@@ -1349,10 +1349,39 @@ function renderLikeWaveforms(container, itemMap) {
   })
 }
 
-function handleInsertLike(item, variant = 'dropdown') {
+async function handleInsertLike(item, variant = 'dropdown', btn = null) {
   if (!item || !insertLikeHandler) return
-  insertLikeHandler(item)
+
+  const originalHtml = btn ? btn.innerHTML : ''
+  if (btn) {
+    btn.disabled = true
+    btn.innerHTML = `
+      <div class="flex items-center justify-center gap-2">
+        <svg class="animate-spin h-3 w-3 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <span>Inserting...</span>
+      </div>
+    `
+  }
+
+  try {
+    const result = insertLikeHandler(item)
+    if (result instanceof Promise) await result
+  } catch (err) {
+    console.error('handleInsertLike: Error during insertion:', err)
+  } finally {
+    if (btn) {
+      btn.disabled = false
+      btn.innerHTML = originalHtml
+    }
+  }
+
   if (variant === 'dropdown') closeMenu()
+  else if (variant === 'page' && typeof window.showPage === 'function') {
+    window.showPage('techno-generator-page')
+  }
 }
 
 function handlePlayRequest(item) {
@@ -1533,11 +1562,11 @@ async function syncSavedStems() {
     if (stemsScope === 'current') {
       const currentSessionSetting = localStorage.getItem('currentSessionSetting')
       console.log('syncSavedStems: currentSessionSetting raw', currentSessionSetting)
-      
+
       const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
       const raw = parsed?.session_setting_id ?? parsed?.id ?? null
       sessionSettingId = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : null)
-      
+
       console.log('syncSavedStems: Resolved sessionSettingId', sessionSettingId)
 
       // If filtering by current but no session ID, clear list
@@ -1720,10 +1749,10 @@ function renderSavedStems() {
   if (!containers.length) return
 
   const filtered = getFilteredSavedStems()
-  console.log('renderSavedStems: Rendering', { 
-    total: savedStemsCache.length, 
+  console.log('renderSavedStems: Rendering', {
+    total: savedStemsCache.length,
     filtered: filtered.length,
-    containers: containers.length 
+    containers: containers.length
   })
 
   containers.forEach((container) => {
@@ -1861,7 +1890,7 @@ function renderSavedStems() {
 function renderSavedStemWaveforms(container, itemMap) {
   const canvases = Array.from(container.querySelectorAll('[data-saved-stem-waveform]'))
   if (!canvases.length) return
-  
+
   console.log('renderSavedStemWaveforms: Processing', canvases.length, 'canvases')
 
   requestAnimationFrame(() => {
@@ -1896,10 +1925,10 @@ function renderSavedStemWaveforms(container, itemMap) {
           if (decoded && canvas.isConnected) {
             draw(decoded)
           } else {
-             console.warn('renderSavedStemWaveforms: Failed to decode or canvas disconnected', id)
+            console.warn('renderSavedStemWaveforms: Failed to decode or canvas disconnected', id)
           }
         } catch (err) {
-           console.error('renderSavedStemWaveforms: Error', err)
+          console.error('renderSavedStemWaveforms: Error', err)
         }
       } else {
         console.warn('renderSavedStemWaveforms: No audio data available for', id)
