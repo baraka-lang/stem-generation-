@@ -211,3 +211,63 @@ export function isValidWavHeader(arrayBuffer) {
     return false;
   }
 }
+
+/**
+ * Write a string to a DataView (Internal helper)
+ */
+function writeString(view, offset, string) {
+  for (let i = 0; i < string.length; i++) {
+    view.setUint8(offset + i, string.charCodeAt(i));
+  }
+}
+
+/**
+ * Convert an AudioBuffer to a WAV file ArrayBuffer
+ * @param {AudioBuffer} buffer
+ * @param {number} sampleRate
+ * @returns {ArrayBuffer}
+ */
+export function audioBufferToWav(buffer, sampleRate) {
+  const numChannels = buffer.numberOfChannels;
+  const length = buffer.length * numChannels * 2;
+  const arrayBuffer = new ArrayBuffer(44 + length);
+  const view = new DataView(arrayBuffer);
+
+  // WAV header
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + length, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // PCM format
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * numChannels * 2, true);
+  view.setUint16(32, numChannels * 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, length, true);
+
+  // Write audio data
+  // Float32 to Int16
+  const offset = 44;
+  const channels = [];
+  for (let i = 0; i < numChannels; i++) {
+    channels.push(buffer.getChannelData(i));
+  }
+
+  let pos = 0;
+  for (let i = 0; i < buffer.length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      let sample = channels[ch][i];
+      // Clamp
+      sample = Math.max(-1, Math.min(1, sample));
+      // Scale to 16-bit
+      sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+      view.setInt16(offset + pos, sample, true);
+      pos += 2;
+    }
+  }
+
+  return arrayBuffer;
+}

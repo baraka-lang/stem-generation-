@@ -1,7 +1,7 @@
 // app.js — Techno Generator (Loop-Perfect Edition) — Player/Mixer toggle + wider sliders + hotkeys
 // Modified to add card numbering, waveform navigation buttons, help modal and red borders on mute.
 
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from './Auth/index.js'
 import { initWavEncoder, encodeWAVAsync, encodeWAVSync, preComputeDataURI, terminateWavEncoder, manageCacheSize } from './audioEncoder.js'
 import { storeStemPCM, getStemPCM, getStemFormat, isPCMReadyForDrag, clearStemPCM, getPCMCacheStats } from './stemDataManager.js'
 import { pcm16leToWav, pcm16leToWavBlob, validatePcmData, parseElevenLabsFormat, generateWavFilename as generateWavFilenameFromFormat } from './pcmToWav.js'
@@ -898,7 +898,7 @@ function updateStemLikeButtons(st) {
   })
 }
 
-function handleStemLikeToggle(st) {
+async function handleStemLikeToggle(st) {
   const takeIndex = stemActiveIndex[st] ?? -1
   const activeTake = getActiveVersion(st)
   const sessionInfo = getSessionSummaryInfo()
@@ -906,13 +906,22 @@ function handleStemLikeToggle(st) {
     alert('Generate this stem first before saving it to Likes.')
     return false
   }
-  const liked = toggleLikeForStem(st, {
+
+  // Predictable ID for liked track
+  const trackId = `${st}-${takeIndex}`
+
+  // Ensure we have a valid buffer for upload
+  const bufferToSave = activeTake?.raw || activeTake?.loop || stemRaw[st] || null
+
+  const liked = await toggleLikeForStem(st, {
+    id: trackId,
+    stemId: st,
     stemName: stemConfigs[st]?.name || st,
     stemColor: stemConfigs[st]?.color || 'purple',
     bpm: activeTake?.tempo ?? sessionInfo.bpm,
     key: sessionInfo.key,
     takeIndex,
-    audioBuffer: activeTake?.raw,
+    audioBuffer: bufferToSave,
     bars: activeTake?.bars,
     audioKey: activeTake?.audioKey || activeTake?.meta?.unsavedKey || null
   })
@@ -940,28 +949,93 @@ async function toggleLikePreview(item, currentId) {
     restoreMainPlayerVolumes()
   }
 
-  if (!item?.audioBuffer) {
-    try {
-      if (item?.audioKey) {
-        await ensureAudioContext()
-        const dl = await supabase.storage.from('unsaved-audios').download(item.audioKey)
-        if (!dl.error) {
-          const buf = await dl.data.arrayBuffer()
-          const decoded = await audioContext.decodeAudioData(buf)
-          item.audioBuffer = decoded
-        }
-      }
-    } catch { }
-    if (!item?.audioBuffer) {
-      window.dispatchEvent(new CustomEvent('likePreviewStopped'))
-      return null
-    }
-  }
-
   // If the same item was playing, treat as a toggle-off
   if (currentId === item.id) {
     window.dispatchEvent(new CustomEvent('likePreviewStopped'))
     return null
+  }
+
+  if (!item?.audioBuffer) {
+    try {
+      console.log('toggleLikePreview: No buffer found, loading...', item.id)
+
+      // Try to load using the robust loading logic (could be Hex, Base64, URL, or Storage)
+      // Since toggleLikePreview is in app.js, we don't want to import likesSetsMenu.js here
+      // to avoid circular dependencies (as it's already imported there).
+      // We'll implement a robust loader here that matches likesSetsMenu.js logic.
+
+      let finalBuffer = null
+
+      // 0. Check for direct audio_data
+      if (item.audio_data) {
+        let arrayBuffer = null
+        if (typeof item.audio_data === 'string') {
+          if (item.audio_data.startsWith('\\x')) {
+            const hex = item.audio_data.substring(2)
+            const len = hex.length / 2
+            const u8 = new Uint8Array(len)
+            for (let i = 0; i < len; i++) u8[i] = parseInt(hex.substr(i * 2, 2), 16)
+            arrayBuffer = u8.buffer
+          } else {
+            try {
+              const binary = atob(item.audio_data)
+              const u8 = new Uint8Array(binary.length)
+              for (let i = 0; i < binary.length; i++) u8[i] = binary.charCodeAt(i)
+              arrayBuffer = u8.buffer
+            } catch { }
+          }
+        } else if (item.audio_data instanceof ArrayBuffer) {
+          arrayBuffer = item.audio_data
+        }
+
+        if (arrayBuffer) {
+          await ensureAudioContext()
+          finalBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0))
+        }
+      }
+
+      // 1. Check for URL
+      if (!finalBuffer && item.audioKey && /^https?:\/\//i.test(item.audioKey)) {
+        const res = await fetch(item.audioKey)
+        if (res.ok) {
+          const buf = await res.arrayBuffer()
+          await ensureAudioContext()
+          finalBuffer = await audioContext.decodeAudioData(buf)
+        }
+      }
+
+      // 2. Check for Storage Key
+      if (!finalBuffer && item.audioKey && supabase) {
+        let storagePath = item.audioKey
+        if (storagePath.includes('/audio-files/')) storagePath = storagePath.split('/audio-files/')[1]
+        else if (storagePath.includes('/unsaved-audios/')) storagePath = storagePath.split('/unsaved-audios/')[1]
+
+        console.log('toggleLikePreview: Fetching from storage', storagePath)
+        let dl = await supabase.storage.from('unsaved-audios').download(storagePath)
+        if (dl.error) {
+          dl = await supabase.storage.from('audio-files').download(storagePath)
+        }
+
+        if (!dl.error && dl.data) {
+          const buf = await dl.data.arrayBuffer()
+          await ensureAudioContext()
+          finalBuffer = await audioContext.decodeAudioData(buf)
+        } else {
+          console.error('toggleLikePreview: Download failed', dl.error)
+        }
+      }
+
+      if (finalBuffer) {
+        item.audioBuffer = finalBuffer
+      }
+    } catch (err) {
+      console.error('toggleLikePreview: Error loading audio', err)
+    }
+
+    if (!item?.audioBuffer) {
+      window.dispatchEvent(new CustomEvent('likePreviewStopped'))
+      return null
+    }
   }
 
   await ensureAudioContext()
@@ -1398,13 +1472,7 @@ function getActiveVersion(st) {
   return stemHistory[st][i]
 }
 
-/* =========================================================
-   Supabase client
-   ========================================================= */
-const supabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
-)
+// Shared supabase instance is imported from ./Auth/index.js
 
 const lastGenTimes = {}
 function rand8() { return Math.random().toString(36).slice(2, 10) }

@@ -852,23 +852,21 @@ export async function saveSetToDb(setData, sessionSettingId) {
     // stems_states is now JSONB, so we can store the object directly
     // Supabase will automatically serialize JavaScript objects to JSONB
     const { data, error } = await supabase
-      .from('stem_sets')
+      .from('stem_states')
       .insert({
-        name: setData.name || 'Untitled Set',
-        session_setting_id: sessionSettingId,
-        state_description: setData.description || null,
-        stems_states: setData.stems_states || null
+        state_name: setData.name || 'Untitled Set',
+        session_settings_id: Number(sessionSettingId),
+        stems_snapshot: setData.stems_states || null
       })
-      .select('id')
+      .select('stem_state_id')
       .single()
 
     if (error) {
       console.error('Error saving stem set:', error)
-      console.error('stems_states value:', setData.stems_states)
       return { success: false, error: error.message }
     }
 
-    return { success: true, set_id: data.id }
+    return { success: true, set_id: data.stem_state_id }
   } catch (error) {
     console.error('Exception saving stem set:', error)
     return { success: false, error: error.message }

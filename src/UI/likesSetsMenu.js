@@ -1,6 +1,7 @@
 import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
-import { getStemStates, getAllStemStates, deleteStemState, getUserStems, deleteStem } from '../Auth/stemApi.js'
+import { getStemStates, getAllStemStates, deleteStemState, getUserStems, deleteStem, upsertUserLike, removeUserLike } from '../Auth/stemApi.js'
 import { supabase } from '../Auth/index.js'
+import { encodeWAVSync } from '../audioEncoder.js'
 
 const KEY_OPTIONS = [
   'Any Key',
@@ -35,6 +36,8 @@ let stopPreviewHandler = null
 let activePreviewId = null
 let previewStopListenerAttached = false
 let cloudSyncInProgress = false
+let stemStatesSyncInProgress = false
+let savedStemsSyncInProgress = false
 const externalLikesContainers = []
 
 let favoritesTabListenersAttached = false
@@ -49,41 +52,38 @@ let favoritesPageRendered = false
 let waveformAudioContext = null
 async function ensureWaveformAudioContext() {
   if (!waveformAudioContext) {
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    waveformAudioContext = new Ctx()
+    waveformAudioContext = new (window.AudioContext || window.webkitAudioContext)()
+  }
+  // Essential for decoded audio to actually be playable/renderable in some browsers
+  if (waveformAudioContext.state === 'suspended') {
+    await waveformAudioContext.resume()
   }
   return waveformAudioContext
 }
+
+
+
 async function loadLikeAudio(item) {
+  if (!item) return null
+
   // 0. Direct audio data check (from DB bytea/base64)
   if (item.audio_data) {
-    console.log('loadLikeAudio: Found direct audio_data', { type: typeof item.audio_data, length: item.audio_data.length })
     try {
       let arrayBuffer = null
-
       if (typeof item.audio_data === 'string') {
-        // Check for Hex (Supabase/Postgres bytea output often starts with \x)
         if (item.audio_data.startsWith('\\x')) {
           const hex = item.audio_data.substring(2)
           const len = hex.length / 2
           const u8 = new Uint8Array(len)
-          for (let i = 0; i < len; i++) {
-            u8[i] = parseInt(hex.substr(i * 2, 2), 16)
-          }
+          for (let i = 0; i < len; i++) u8[i] = parseInt(hex.substr(i * 2, 2), 16)
           arrayBuffer = u8.buffer
         } else {
-          // Assume Base64 (fallback or if stored as text)
           try {
             const binaryString = atob(item.audio_data)
-            const len = binaryString.length
-            const u8 = new Uint8Array(len)
-            for (let i = 0; i < len; i++) {
-              u8[i] = binaryString.charCodeAt(i)
-            }
+            const u8 = new Uint8Array(binaryString.length)
+            for (let i = 0; i < binaryString.length; i++) u8[i] = binaryString.charCodeAt(i)
             arrayBuffer = u8.buffer
-          } catch (e) {
-            console.warn('loadLikeAudio: Failed to decode as Base64, trying raw or other format', e)
-          }
+          } catch { }
         }
       } else if (item.audio_data instanceof ArrayBuffer || item.audio_data instanceof Uint8Array) {
         arrayBuffer = item.audio_data.buffer || item.audio_data
@@ -91,9 +91,7 @@ async function loadLikeAudio(item) {
 
       if (arrayBuffer) {
         const ctx = await ensureWaveformAudioContext()
-        // copy buffer because decodeAudioData detaches it
-        const tempBuffer = arrayBuffer.slice(0)
-        const decoded = await ctx.decodeAudioData(tempBuffer)
+        const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0))
         item.audioBuffer = decoded
         return decoded
       }
@@ -102,21 +100,20 @@ async function loadLikeAudio(item) {
     }
   }
 
-  if (!item?.audioKey) return null
+  if (!item.audioKey) return null
+
   try {
     // 1. Direct URL check (e.g. signed URL or public URL)
     if (/^https?:\/\//i.test(item.audioKey)) {
       console.log('loadLikeAudio: Fetching from URL', item.audioKey)
       const res = await fetch(item.audioKey)
-      if (!res.ok) {
-        console.error('loadLikeAudio: URL fetch failed', res.status, res.statusText)
-        return null
+      if (res.ok) {
+        const buf = await res.arrayBuffer()
+        const ctx = await ensureWaveformAudioContext()
+        const decoded = await ctx.decodeAudioData(buf)
+        item.audioBuffer = decoded
+        return decoded
       }
-      const buf = await res.arrayBuffer()
-      const ctx = await ensureWaveformAudioContext()
-      const decoded = await ctx.decodeAudioData(buf)
-      item.audioBuffer = decoded
-      return decoded
     }
   } catch (e) {
     console.error('loadLikeAudio: Exception fetching URL', e)
@@ -128,35 +125,39 @@ async function loadLikeAudio(item) {
     return null
   }
 
-  // Extract path if it's a full URL but we want to use storage API (fallback)
-  // e.g. https://.../storage/v1/object/public/audio-files/folder/file.wav -> folder/file.wav
   let storagePath = item.audioKey
-  if (storagePath.includes('/audio-files/')) {
-    storagePath = storagePath.split('/audio-files/')[1]
-  } else if (storagePath.includes('/unsaved-audios/')) {
-    storagePath = storagePath.split('/unsaved-audios/')[1]
+
+  // Default to the likes bucket
+  let bucket = import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios'
+  if (bucket) bucket = bucket.trim()
+
+  // Clean up path if it contains bucket prefixes from full URLs or previous logic
+  if (storagePath.includes(`/${bucket}/`)) {
+    storagePath = storagePath.split(`/${bucket}/`)[1]
+  } else if (storagePath.includes('/liked-audios/')) {
+    storagePath = storagePath.split('/liked-audios/')[1]
   }
 
-  console.log('loadLikeAudio: Attempting download from storage. Path:', storagePath)
+  // Note: We deliberately do NOT fall back to 'unsaved-audios' or 'audio-files'.
+  // We only fetch what is strictly recorded in the likes system.
 
-  let dl = await supabase.storage.from('unsaved-audios').download(storagePath)
-  if (dl.error) {
-    console.log('loadLikeAudio: Not found in unsaved-audios, trying audio-files...')
-    dl = await supabase.storage.from('audio-files').download(storagePath)
-    if (dl.error) {
-      console.error('loadLikeAudio: Download failed from both buckets', dl.error)
+  console.log('loadLikeAudio: Fetching from Likes bucket:', bucket, 'Path:', storagePath)
+
+  try {
+    const { data, error } = await supabase.storage.from(bucket).download(storagePath)
+
+    if (error) {
+      console.error(`loadLikeAudio: Failed to download from ${bucket}`, error)
       return null
     }
-  }
 
-  const buf = await dl.data.arrayBuffer()
-  const ctx = await ensureWaveformAudioContext()
-  try {
+    const buf = await data.arrayBuffer()
+    const ctx = await ensureWaveformAudioContext()
     const decoded = await ctx.decodeAudioData(buf)
     item.audioBuffer = decoded
     return decoded
   } catch (err) {
-    console.error('loadLikeAudio: Decode failed', err)
+    console.error('loadLikeAudio: Fatal error', err)
     return null
   }
 }
@@ -287,20 +288,29 @@ export function removeLikesContainer(el) {
   }
 }
 
-export function toggleLikeForStem(stemId, track) {
+export async function toggleLikeForStem(stemId, track) {
+  console.log('toggleLikeForStem called', { stemId, track })
   if (!stemId || !track) return false
   const takeIndex = track.takeIndex ?? -1
   const existingIndex = likedTracks.findIndex((item) => item.stemId === stemId && item.takeIndex === takeIndex)
 
   if (existingIndex >= 0) {
+    // UNLIKE
+    console.log('Unliking stem', stemId)
     likedTracks.splice(existingIndex, 1)
     renderLikes()
     notifyLikeChange(stemId)
     persistLikesToLocalStorage()
+
+    // Sync removal to DB
+    removeUserLike(stemId, takeIndex).catch(err => console.error('Failed to remove like from DB:', err))
+
     return false
   }
 
-  likedTracks.unshift({
+  // LIKE
+  console.log('Liking stem', stemId)
+  const newLike = {
     id: `${stemId}-${takeIndex}`,
     stemId,
     takeIndex,
@@ -313,10 +323,79 @@ export function toggleLikeForStem(stemId, track) {
     audioKey: track.audioKey || null,
     timestamp: Date.now(),
     rating: 3
-  })
+  }
+
+  likedTracks.unshift(newLike)
   renderLikes()
   notifyLikeChange(stemId)
   persistLikesToLocalStorage()
+
+  // Sync add to DB (Async upload await)
+  try {
+    let audioKey = newLike.audioKey
+    const hasBuffer = !!newLike.audioBuffer
+    const needsUpload = !audioKey || audioKey.includes('unsaved')
+
+    console.log('Upload check:', { hasBuffer, audioKey, })
+
+    // User requested strictly extracting/recording audio from memory then uploading
+    // without fetching from unsaved-audio bucket.
+    if (hasBuffer) {
+      console.log('Encoding and uploading from RAM buffer...')
+      let blob
+      try {
+        // Use the robust WAV encoder (same as processStemsInBackground/saveCurrentStems)
+        blob = encodeWAVSync(newLike.audioBuffer)
+      } catch (encErr) {
+        console.error('WAV Encoding failed:', encErr)
+        throw encErr
+      }
+
+      const filename = `liked_${stemId}_${takeIndex}_${Date.now()}.wav`
+      const bucket = (import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios').trim()
+
+      console.log('Uploading to bucket:', bucket, 'filename:', filename)
+
+      const { data, error } = await supabase.storage
+        .from(bucket)
+        .upload(filename, blob, { contentType: 'audio/wav', upsert: false })
+
+      if (error) {
+        console.error('Upload failed details:', error)
+        // Don't throw here to allow saving metadata even if audio upload fails? 
+        // No, usually we want consistency. But user might want at least the card.
+        // For now, logging error is sufficient.
+      } else {
+        console.log('Upload successful', data)
+        audioKey = data.path
+        newLike.audioKey = audioKey
+
+        // Update local memory
+        const idx = likedTracks.findIndex(l => l.id === newLike.id)
+        if (idx !== -1) {
+          likedTracks[idx].audioKey = audioKey
+          persistLikesToLocalStorage()
+        }
+      }
+    } else {
+      // Fallback removed as per user request
+      console.warn('Cannot upload: No audio buffer available in memory (Active Version must be loaded).')
+    }
+
+    const res = await upsertUserLike({
+      ...newLike,
+      audioKey: audioKey
+    })
+
+    if (!res.success) {
+      console.error('Failed to save like to DB:', res.error)
+    } else {
+      console.log('Like saved to DB', res)
+    }
+  } catch (err) {
+    console.error('Error uploading/saving like:', err)
+  }
+
   return true
 }
 
@@ -1043,10 +1122,20 @@ function renderLikes() {
   const containers = getLikesContainers()
   if (!containers.length) return
 
-  const filtered = getFilteredLikes()
-  const itemMap = new Map(filtered.map((item) => [item.id, item]))
-
   containers.forEach(({ el, variant }) => {
+    if (cloudSyncInProgress) {
+      el.innerHTML = `
+        <div class="space-y-2">
+          ${renderLikeSkeleton(variant)}
+          ${renderLikeSkeleton(variant)}
+          ${renderLikeSkeleton(variant)}
+        </div>
+      `
+      return
+    }
+
+    const filtered = getFilteredLikes()
+    const itemMap = new Map(filtered.map((item) => [item.id, item]))
     if (!filtered.length) {
       el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No liked tracks yet. Press ♥ on any stem to add it here.</div>`
       return
@@ -1161,7 +1250,9 @@ function renderLikeWaveformCanvas(item, variant = 'dropdown') {
 
 function attachLikeCardHandlers(container, variant, itemMap) {
   container.querySelectorAll('[data-unlike]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
       const [stemId, takeIdx] = (btn.getAttribute('data-unlike') || '').split('|')
       const idxNum = parseInt(takeIdx, 10)
       removeLike(stemId, idxNum)
@@ -1169,13 +1260,31 @@ function attachLikeCardHandlers(container, variant, itemMap) {
   })
 
   container.querySelectorAll('[data-insert-like]').forEach((btn) => {
-    const item = itemMap.get(btn.getAttribute('data-insert-like'))
-    btn.addEventListener('click', () => handleInsertLike(item, variant))
+    btn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = btn.getAttribute('data-insert-like')
+      const item = itemMap.get(id)
+      if (item) {
+        handleInsertLike(item, variant)
+      } else {
+        console.warn('attachLikeCardHandlers: Item not found for insert', id)
+      }
+    })
   })
 
   container.querySelectorAll('[data-like-play]').forEach((btn) => {
-    const item = itemMap.get(btn.getAttribute('data-like-play'))
-    btn.addEventListener('click', () => handlePlayRequest(item))
+    btn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = btn.getAttribute('data-like-play')
+      const item = itemMap.get(id)
+      if (item) {
+        handlePlayRequest(item)
+      } else {
+        console.warn('attachLikeCardHandlers: Item not found for play', id)
+      }
+    })
   })
 
   // Attach star rating handlers for favorites page (interactive)
@@ -1190,7 +1299,7 @@ function renderLikeWaveforms(container, itemMap) {
 
   // Small delay to ensure DOM dimensions are calculated if we're in a transition
   requestAnimationFrame(() => {
-    canvases.forEach((canvas) => {
+    canvases.forEach(async (canvas) => {
       const id = canvas.getAttribute('data-like-waveform')
       const item = itemMap.get(id)
 
@@ -1199,35 +1308,38 @@ function renderLikeWaveforms(container, itemMap) {
         return
       }
 
-      const width = canvas.clientWidth || Number(canvas.getAttribute('width')) || 320
-      const height = canvas.clientHeight || Number(canvas.getAttribute('height')) || 64
+      const rect = canvas.getBoundingClientRect()
+      const width = rect.width || Number(canvas.getAttribute('width')) || 320
+      const height = rect.height || Number(canvas.getAttribute('height')) || 64
 
-      // Update canvas internal resolution
-      if (canvas.width !== width) canvas.width = width
-      if (canvas.height !== height) canvas.height = height
+      // Update canvas internal resolution to match displayed size
+      // Multiplying by devicePixelRatio for sharper waveforms on retina screens
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = width * dpr
+      canvas.height = height * dpr
+
+      const draw = (buf) => {
+        const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
+        drawTinyWaveform(canvas, buf, color, 'rgba(255,255,255,0.05)')
+      }
 
       if (item.audioBuffer) {
-        const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
-        drawTinyWaveform(canvas, item.audioBuffer, color, 'rgba(255,255,255,0.05)')
-      } else {
+        draw(item.audioBuffer)
+      } else if (item.audioKey || item.audio_data) {
+        // Show placeholder while loading
         const ctx = canvas.getContext('2d')
         if (ctx) {
           ctx.fillStyle = 'rgba(255,255,255,0.08)'
-          ctx.fillRect(0, 0, width, height)
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
         }
 
-        if (item.audioKey || item.audio_data) {
-          (async () => {
-            try {
-              const decoded = await loadLikeAudio(item)
-              if (decoded) {
-                const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
-                drawTinyWaveform(canvas, decoded, color, 'rgba(255,255,255,0.05)')
-              }
-            } catch (err) {
-              console.error('renderLikeWaveforms: Error loading/drawing waveform', err)
-            }
-          })()
+        try {
+          const decoded = await loadLikeAudio(item)
+          if (decoded && canvas.isConnected) {
+            draw(decoded)
+          }
+        } catch (err) {
+          console.error('renderLikeWaveforms: Error loading/drawing waveform', err)
         }
       }
     })
@@ -1290,9 +1402,19 @@ function renderSets() {
   const containers = getSetContainers()
   if (!containers.length) return
 
-  const filtered = getFilteredSets()
-
   containers.forEach(({ el, variant }) => {
+    if (stemStatesSyncInProgress) {
+      el.innerHTML = `
+        <div class="space-y-2">
+          ${renderSetSkeleton(variant)}
+          ${renderSetSkeleton(variant)}
+          ${renderSetSkeleton(variant)}
+        </div>
+      `
+      return
+    }
+
+    const filtered = getFilteredSets()
     if (!filtered.length) {
       el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved sets found. Save your current session from the player bar.</div>`
       return
@@ -1349,10 +1471,10 @@ function renderSets() {
   renderStats()
 }
 
-let stemStatesSyncInProgress = false
 async function syncStemStates() {
   if (stemStatesSyncInProgress) return
   stemStatesSyncInProgress = true
+  renderSets() // Show skeletons
 
   try {
     if (stemsScope === 'all') {
@@ -1396,10 +1518,10 @@ async function syncStemStates() {
   }
 }
 
-let savedStemsSyncInProgress = false
 async function syncSavedStems() {
   if (savedStemsSyncInProgress) return
   savedStemsSyncInProgress = true
+  renderSavedStems() // Show skeletons
 
   try {
     let sessionSettingId = null
@@ -1474,6 +1596,114 @@ function getStemContainers() {
 }
 
 
+
+function renderLikeSkeleton(variant = 'dropdown') {
+  if (variant === 'page') {
+    return `
+      <div class="flex flex-col gap-3 bg-white/5 border border-white/10 rounded-xl p-4 animate-pulse">
+        <div class="flex flex-col sm:flex-row sm:items-start gap-4">
+          <div class="flex items-start gap-3 flex-shrink-0 min-w-[200px]">
+            <div class="w-11 h-11 rounded-full bg-white/10"></div>
+            <div class="space-y-2">
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-white/20"></div>
+                <div class="h-4 w-24 bg-white/10 rounded"></div>
+              </div>
+              <div class="h-3 w-32 bg-white/10 rounded"></div>
+              <div class="flex gap-1">
+                ${'<div class="h-3 w-3 bg-white/10 rounded"></div>'.repeat(5)}
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-4 flex-1 min-w-0">
+            <div class="h-16 flex-1 bg-white/5 rounded-lg border border-white/10"></div>
+            <div class="flex flex-col gap-2 w-[120px]">
+              <div class="h-8 bg-white/10 rounded-lg"></div>
+              <div class="h-8 bg-white/10 rounded-lg"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `
+  }
+  return `
+    <div class="flex items-start gap-3 bg-white/5 border border-white/10 rounded-xl p-2.5 animate-pulse">
+      <div class="flex flex-col gap-1.5 flex-shrink-0" style="min-width: 100px;">
+        <div class="flex items-center gap-2">
+          <div class="w-2 h-2 rounded-full bg-white/20"></div>
+          <div class="h-3.5 w-16 bg-white/10 rounded"></div>
+        </div>
+        <div class="h-3 w-20 bg-white/10 rounded"></div>
+        <div class="flex gap-0.5 mt-0.5">
+          ${'<div class="h-2.5 w-2.5 bg-white/10 rounded-full"></div>'.repeat(5)}
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-1 h-12 bg-white/5 rounded-lg border border-white/10"></div>
+    </div>
+  `
+}
+
+function renderSetSkeleton(variant = 'dropdown') {
+  if (variant === 'page') {
+    return `
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white/5 border border-white/10 rounded-xl p-4 animate-pulse">
+        <div class="space-y-2 flex-1">
+          <div class="flex items-center gap-3">
+            <div class="h-5 w-40 bg-white/10 rounded"></div>
+            <div class="flex gap-1">
+              ${'<div class="h-3 w-3 bg-white/10 rounded"></div>'.repeat(5)}
+            </div>
+          </div>
+          <div class="flex gap-2">
+            ${'<div class="h-5 w-20 bg-white/5 rounded-lg border border-white/10"></div>'.repeat(5)}
+          </div>
+        </div>
+        <div class="w-full sm:w-24 h-9 bg-white/10 rounded-lg"></div>
+      </div>
+    `
+  }
+  return `
+    <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 animate-pulse">
+      <div class="space-y-2 flex-1">
+        <div class="flex items-center justify-between">
+          <div class="h-4 w-24 bg-white/10 rounded"></div>
+          <div class="flex gap-0.5">
+            ${'<div class="h-2.5 w-2.5 bg-white/10 rounded-full"></div>'.repeat(5)}
+          </div>
+        </div>
+        <div class="h-3 w-32 bg-white/5 rounded"></div>
+      </div>
+      <div class="ml-3 h-4 w-8 bg-white/10 rounded"></div>
+    </div>
+  `
+}
+
+function renderStemSkeleton() {
+  return `
+    <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 animate-pulse">
+      <div class="space-y-2 flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-white/20"></div>
+            <div class="h-3 w-24 bg-white/10 rounded"></div>
+          </div>
+          <div class="h-3 w-12 bg-white/10 rounded"></div>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="h-3 w-16 bg-white/10 rounded"></div>
+          <div class="h-3 w-3 bg-white/10 rounded"></div>
+          <div class="h-3 w-20 bg-white/10 rounded"></div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+        <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+        <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+        <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
+      </div>
+    </div>
+  `
+}
+
 function renderSavedStems() {
   const containers = getStemContainers()
   if (!containers.length) return
@@ -1484,48 +1714,9 @@ function renderSavedStems() {
     if (savedStemsSyncInProgress) {
       container.innerHTML = `
         <div class="space-y-2">
-          <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 animate-pulse">
-            <div class="space-y-2 flex-1 min-w-0">
-              <div class="flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
-                  <div class="w-2 h-2 rounded-full bg-white/20"></div>
-                  <div class="h-3 w-24 bg-white/10 rounded"></div>
-                </div>
-                <div class="h-3 w-12 bg-white/10 rounded"></div>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="h-3 w-16 bg-white/10 rounded"></div>
-                <div class="h-3 w-3 bg-white/10 rounded"></div>
-                <div class="h-3 w-20 bg-white/10 rounded"></div>
-              </div>
-            </div>
-            <div class="flex items-center gap-2 ml-3 flex-shrink-0">
-              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
-              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
-              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
-            </div>
-          </div>
-          <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 animate-pulse">
-            <div class="space-y-2 flex-1 min-w-0">
-              <div class="flex items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
-                  <div class="w-2 h-2 rounded-full bg-white/20"></div>
-                  <div class="h-3 w-32 bg-white/10 rounded"></div>
-                </div>
-                <div class="h-3 w-10 bg-white/10 rounded"></div>
-              </div>
-              <div class="flex items-center gap-2">
-                <div class="h-3 w-14 bg-white/10 rounded"></div>
-                <div class="h-3 w-3 bg-white/10 rounded"></div>
-                <div class="h-3 w-16 bg-white/10 rounded"></div>
-              </div>
-            </div>
-            <div class="flex items-center gap-2 ml-3 flex-shrink-0">
-              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
-              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
-              <div class="w-8 h-8 rounded-full bg-white/10 border border-white/10"></div>
-            </div>
-          </div>
+          ${renderStemSkeleton()}
+          ${renderStemSkeleton()}
+          ${renderStemSkeleton()}
         </div>
       `
       window.lucide?.createIcons()
@@ -1533,9 +1724,9 @@ function renderSavedStems() {
     }
     if (!filtered.length) {
       if (savedStemsCache.length > 0) {
-        container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved stems match the current filters.</div>`
+        container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4"> No saved stems match the current filters.</div> `
       } else {
-        container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved stems found.</div>`
+        container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4"> No saved stems found.</div> `
       }
       return
     }
@@ -1599,7 +1790,7 @@ function renderSavedStems() {
 
         if (item) {
           const originalIcon = btn.innerHTML
-          btn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>`
+          btn.innerHTML = `< i data - lucide="loader-2" class="w-4 h-4 animate-spin" ></i > `
           window.lucide?.createIcons()
 
           try {
@@ -1610,7 +1801,7 @@ function renderSavedStems() {
             }
 
             if (item.audioBuffer) {
-              const filename = `${item.stem_type || 'stem'}_${item.bpm}bpm.wav`
+              const filename = `${item.stem_type || 'stem'}_${item.bpm} bpm.wav`
               bufferToWavAndDownload(item.audioBuffer, filename)
             } else {
               console.error('Download failed: No audio buffer available')
@@ -1913,10 +2104,15 @@ function persistLikesToLocalStorage() {
 async function syncLikesWithCloud() {
   if (cloudSyncInProgress) return
   cloudSyncInProgress = true
+  renderLikes() // Show skeletons
   try {
     const { getUserLikes } = await import('../Auth/stemApi.js')
     const res = await getUserLikes()
-    if (!res.success) { cloudSyncInProgress = false; return }
+    if (!res.success) {
+      cloudSyncInProgress = false
+      renderLikes()
+      return
+    }
 
     const cloud = Array.isArray(res.likes) ? res.likes : []
 
@@ -1944,10 +2140,11 @@ async function syncLikesWithCloud() {
 
     likedTracks.splice(0, likedTracks.length, ...merged)
     persistLikesToLocalStorage()
-    renderLikes()
   } catch (err) {
     console.error('syncLikesWithCloud: Error', err)
+  } finally {
+    cloudSyncInProgress = false
+    renderLikes()
   }
-  cloudSyncInProgress = false
 }
 
