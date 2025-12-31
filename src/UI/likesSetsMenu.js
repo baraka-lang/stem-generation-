@@ -67,99 +67,115 @@ async function ensureWaveformAudioContext() {
 async function loadLikeAudio(item) {
   if (!item) return null
 
+  const ctx = await ensureWaveformAudioContext()
+
   // 0. Direct audio data check (from DB bytea/base64)
   if (item.audio_data) {
     try {
       let arrayBuffer = null
       if (typeof item.audio_data === 'string') {
         if (item.audio_data.startsWith('\\x')) {
+          // PostgreSQL Hex format: \x0102...
           const hex = item.audio_data.substring(2)
           const len = hex.length / 2
           const u8 = new Uint8Array(len)
-          for (let i = 0; i < len; i++) u8[i] = parseInt(hex.substr(i * 2, 2), 16)
+          for (let i = 0; i < len; i++) {
+            u8[i] = parseInt(hex.substr(i * 2, 2), 16)
+          }
           arrayBuffer = u8.buffer
         } else {
+          // Assume Base64
           try {
             const binaryString = atob(item.audio_data)
             const u8 = new Uint8Array(binaryString.length)
-            for (let i = 0; i < binaryString.length; i++) u8[i] = binaryString.charCodeAt(i)
+            for (let i = 0; i < binaryString.length; i++) {
+              u8[i] = binaryString.charCodeAt(i)
+            }
             arrayBuffer = u8.buffer
-          } catch { }
+          } catch (b64Err) {
+            console.warn('loadLikeAudio: Failed to parse as base64', b64Err)
+          }
         }
-      } else if (item.audio_data instanceof ArrayBuffer || item.audio_data instanceof Uint8Array) {
+      } else if (item.audio_data instanceof ArrayBuffer || item.audio_data.buffer instanceof ArrayBuffer) {
         arrayBuffer = item.audio_data.buffer || item.audio_data
       }
 
-      if (arrayBuffer) {
-        const ctx = await ensureWaveformAudioContext()
+      if (arrayBuffer && arrayBuffer.byteLength > 0) {
+        // Use slice(0) to pass a copy to avoid neutered buffer issues in some contexts
         const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0))
         item.audioBuffer = decoded
         return decoded
       }
     } catch (err) {
       console.error('loadLikeAudio: Failed to decode audio_data', err)
+      // If decoding failed, maybe it's not a valid audio format or corrupted
     }
   }
 
+  // 1. Storage bucket download
   if (!item.audioKey) return null
 
-  try {
-    // 1. Direct URL check (e.g. signed URL or public URL)
-    if (/^https?:\/\//i.test(item.audioKey)) {
-      console.log('loadLikeAudio: Fetching from URL', item.audioKey)
+  // Direct URL check
+  if (/^https?:\/\//i.test(item.audioKey)) {
+    try {
       const res = await fetch(item.audioKey)
       if (res.ok) {
         const buf = await res.arrayBuffer()
-        const ctx = await ensureWaveformAudioContext()
         const decoded = await ctx.decodeAudioData(buf)
         item.audioBuffer = decoded
         return decoded
       }
+    } catch (e) {
+      console.error('loadLikeAudio: URL fetch failed', e)
     }
-  } catch (e) {
-    console.error('loadLikeAudio: Exception fetching URL', e)
   }
 
-  // 2. Supabase Storage download
-  if (!supabase) {
-    console.error('loadLikeAudio: Supabase client not available')
-    return null
-  }
+  if (!supabase) return null
 
   let storagePath = item.audioKey
 
-  // Default to the likes bucket
-  let bucket = import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios'
-  if (bucket) bucket = bucket.trim()
+  // Decide primary bucket based on item metadata
+  // Stems usually have stem_type, while Likes might not (or have it but we prioritize the liked-audios bucket)
+  const stemsBucket = (import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files').trim()
+  const likesBucket = (import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios').trim()
 
-  // Clean up path if it contains bucket prefixes from full URLs or previous logic
-  if (storagePath.includes(`/${bucket}/`)) {
-    storagePath = storagePath.split(`/${bucket}/`)[1]
-  } else if (storagePath.includes('/liked-audios/')) {
-    storagePath = storagePath.split('/liked-audios/')[1]
-  }
+  // If item is a stem from the stems table (has tempo/bars/stem_type)
+  const isDedicatedStem = !!(item.stem_type || (item.tempo && item.bars))
+  const primaryBucket = isDedicatedStem ? stemsBucket : likesBucket
+  const secondaryBucket = isDedicatedStem ? likesBucket : stemsBucket
 
-  // Note: We deliberately do NOT fall back to 'unsaved-audios' or 'audio-files'.
-  // We only fetch what is strictly recorded in the likes system.
-
-  console.log('loadLikeAudio: Fetching from Likes bucket:', bucket, 'Path:', storagePath)
-
-  try {
-    const { data, error } = await supabase.storage.from(bucket).download(storagePath)
-
-    if (error) {
-      console.error(`loadLikeAudio: Failed to download from ${bucket}`, error)
-      return null
+  async function tryDownload(bucketName) {
+    let cleanPath = storagePath
+    if (cleanPath.startsWith(bucketName + '/')) {
+      cleanPath = cleanPath.replace(bucketName + '/', '')
     }
+    // General cleanup for other common bucket prefixes
+    ['audio-files', 'liked-audios', 'unsaved-audios'].forEach(b => {
+      if (cleanPath.startsWith(b + '/')) cleanPath = cleanPath.replace(b + '/', '')
+    })
+
+    console.log(`loadLikeAudio: Attempting download from [${bucketName}]:`, cleanPath)
+    const { data, error } = await supabase.storage.from(bucketName).download(cleanPath)
+    if (error) throw error
 
     const buf = await data.arrayBuffer()
-    const ctx = await ensureWaveformAudioContext()
-    const decoded = await ctx.decodeAudioData(buf)
+    return await ctx.decodeAudioData(buf)
+  }
+
+  try {
+    const decoded = await tryDownload(primaryBucket)
     item.audioBuffer = decoded
     return decoded
-  } catch (err) {
-    console.error('loadLikeAudio: Fatal error', err)
-    return null
+  } catch (primaryErr) {
+    console.warn(`loadLikeAudio: Failed primary bucket [${primaryBucket}], trying [${secondaryBucket}]...`, primaryErr.message)
+    try {
+      const decoded = await tryDownload(secondaryBucket)
+      item.audioBuffer = decoded
+      return decoded
+    } catch (secondaryErr) {
+      console.error('loadLikeAudio: All download attempts failed', secondaryErr)
+      return null
+    }
   }
 }
 
@@ -323,6 +339,7 @@ export async function toggleLikeForStem(stemId, track) {
     bars: track.bars || null,
     audioBuffer: track.audioBuffer || null,
     audioKey: track.audioKey || null,
+    sessionSettingId: resolveSessionId(),
     timestamp: Date.now(),
     rating: 3
   }
@@ -1170,11 +1187,22 @@ function getLikesContainers() {
 
 
 function getFilteredLikes() {
+  const currentSessionId = resolveSessionId()
   return likedTracks.filter((item) => {
     const bpmOk = item.bpm >= filters.bpmMin && item.bpm <= filters.bpmMax
     const keyOk = filters.key === 'Any Key' || item.key === filters.key
     const starsOk = filters.stars === null || (item.rating ?? 3) === filters.stars
-    const scopeOk = likesScope === 'all' || (item.bpm === sessionInfoProvider().bpm && item.key === sessionInfoProvider().key)
+
+    let scopeOk = true
+    if (likesScope === 'current') {
+      if (currentSessionId && item.sessionSettingId) {
+        scopeOk = Number(item.sessionSettingId) === Number(currentSessionId)
+      } else {
+        // Fallback to BPM/Key match if no IDs are available
+        scopeOk = (item.bpm === sessionInfoProvider().bpm && item.key === sessionInfoProvider().key)
+      }
+    }
+
     return bpmOk && keyOk && starsOk && scopeOk
   })
 }
@@ -1509,32 +1537,29 @@ async function syncStemStates() {
   renderSets() // Show skeletons
 
   try {
-    if (stemsScope === 'all') {
+    if (setsScope === 'all') {
       const resAll = await getAllStemStates()
+      console.log('syncStemStates [All]: Got states', resAll.states?.length)
       if (resAll.success && Array.isArray(resAll.states)) {
         stemStatesCache = resAll.states
       } else {
         stemStatesCache = []
       }
     } else {
-      const currentSessionSetting = localStorage.getItem('currentSessionSetting')
-      const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
-      const sessionSettingIdRaw = parsed?.session_setting_id ?? parsed?.id ?? null
-      const sessionSettingId =
-        typeof sessionSettingIdRaw === 'number'
-          ? sessionSettingIdRaw
-          : (typeof sessionSettingIdRaw === 'string' && /^\d+$/.test(sessionSettingIdRaw)
-            ? Number(sessionSettingIdRaw)
-            : null)
+      const sessionSettingId = resolveSessionId()
+      console.log('syncStemStates [Current]: Resolved sessionSettingId', sessionSettingId)
 
       if (!sessionSettingId) {
+        console.log('syncStemStates [Current]: No session ID found, clearing list')
         stemStatesCache = []
         renderSets()
         stemStatesSyncInProgress = false
         return
       }
 
-      const result = await getStemStates(sessionSettingId)
+      console.log('syncStemStates [Current]: Calling getAllStemStates with', sessionSettingId)
+      const result = await getAllStemStates(sessionSettingId)
+      console.log('syncStemStates [Current]: result', result)
       if (result.success && Array.isArray(result.states)) {
         stemStatesCache = result.states
       } else {
@@ -1560,18 +1585,12 @@ async function syncSavedStems() {
 
     // Determine session ID if needed
     if (stemsScope === 'current') {
-      const currentSessionSetting = localStorage.getItem('currentSessionSetting')
-      console.log('syncSavedStems: currentSessionSetting raw', currentSessionSetting)
-
-      const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
-      const raw = parsed?.session_setting_id ?? parsed?.id ?? null
-      sessionSettingId = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : null)
-
-      console.log('syncSavedStems: Resolved sessionSettingId', sessionSettingId)
+      sessionSettingId = resolveSessionId()
+      console.log('syncSavedStems [Current]: Resolved sessionSettingId', sessionSettingId)
 
       // If filtering by current but no session ID, clear list
       if (!sessionSettingId) {
-        console.log('syncSavedStems: No session ID found, clearing list')
+        console.log('syncSavedStems [Current]: No session ID found, clearing list')
         savedStemsCache = []
         renderSavedStems()
         savedStemsSyncInProgress = false
@@ -1581,12 +1600,20 @@ async function syncSavedStems() {
 
     // If scope is 'all', sessionSettingId remains null, which getUserStems interprets as "fetch all"
     // If scope is 'current', we pass the ID.
-    console.log('syncSavedStems: Calling getUserStems with', stemsScope === 'all' ? null : sessionSettingId)
+    console.log('syncSavedStems: Calling getUserStems with scope:', stemsScope, 'ID:', sessionSettingId)
     const res = await getUserStems(stemsScope === 'all' ? null : sessionSettingId)
+    console.log('syncSavedStems: API Response', res)
 
     if (res.success && Array.isArray(res.stems)) {
-      console.log('syncSavedStems: Got stems', res.stems.length)
-      savedStemsCache = res.stems
+      console.log('syncSavedStems: Raw stems count:', res.stems.length)
+      // Relaxed filter: include those with audio_url OR audio_data (bytea check might be implied if url missing)
+      // For now, let's log how many have audio_url
+      const withUrl = res.stems.filter(s => s.audio_url && s.audio_url.trim() !== '')
+      console.log('syncSavedStems: Stems with audio_url:', withUrl.length)
+
+      // If user wants to see their generated stems, we should probably show them even if no url yet
+      savedStemsCache = res.stems.filter(s => (s.audio_url && s.audio_url.trim() !== '') || (s.audio_data))
+      console.log('syncSavedStems: Cache updated, final count:', savedStemsCache.length)
     } else {
       console.warn('syncSavedStems: Failed to get stems or empty', res)
       savedStemsCache = []
@@ -1623,6 +1650,32 @@ export function setStemsScope(scope) {
     ; (async () => {
       await syncSavedStems()
     })()
+}
+
+function resolveSessionId() {
+  try {
+    const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+    if (!currentSessionSetting) return null
+
+    const parsed = JSON.parse(currentSessionSetting)
+    // Check various common field names for session setting ID, including potential typos like 'settind'
+    const raw = parsed?.session_setting_id ??
+      parsed?.session_settings_id ??
+      parsed?.current_session_setting_id ??
+      parsed?.current_session_settind_id ??
+      parsed?.id ??
+      null
+
+    if (raw === null || raw === undefined) return null
+
+    if (typeof raw === 'number') return raw
+    if (typeof raw === 'string' && /^\d+$/.test(raw)) return Number(raw)
+
+    return null
+  } catch (e) {
+    console.error('Error resolving session ID from localStorage:', e)
+    return null
+  }
 }
 
 function getStemContainers() {

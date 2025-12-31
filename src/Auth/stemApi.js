@@ -222,14 +222,15 @@ export async function getUserStems(sessionSettingId = null) {
 
     let query = supabase
       .from('stems')
-      .select('id,user_id,stem_type,prompt,tempo,bars,key_signature,generation_tier,validated,audio_url,file_size,duration_seconds,created_at,updated_at,session_setting_id,is_deleted')
+      .select('id,user_id,stem_type,prompt,tempo,bars,key_signature,generation_tier,validated,audio_data,audio_url,file_size,duration_seconds,created_at,updated_at,session_setting_id,is_deleted')
       .eq('user_id', user.id)
       .eq('is_deleted', false)
       .order('created_at', { ascending: false })
 
     if (sessionSettingId) {
-      console.log('getUserStems: Filtering by session_setting_id', sessionSettingId)
-      query = query.eq('session_setting_id', sessionSettingId)
+      const numericId = Number(sessionSettingId)
+      console.log('getUserStems: Filtering by session_setting_id', numericId)
+      query = query.eq('session_setting_id', numericId)
     } else {
       console.log('getUserStems: Fetching all stems (no session filter)')
     }
@@ -237,10 +238,10 @@ export async function getUserStems(sessionSettingId = null) {
     console.time('getUserStems: query')
     const { data, error } = await query
     console.timeEnd('getUserStems: query')
-    console.log('getUserStems: Query result', { 
-      dataCount: data?.length, 
-      firstItem: data?.[0], 
-      error 
+    console.log('getUserStems: Query result', {
+      dataCount: data?.length,
+      firstItemSessionId: data?.[0]?.session_setting_id,
+      error
     })
 
     if (error) {
@@ -1058,7 +1059,7 @@ export async function getStemStates(sessionSettingId) {
   }
 }
 
-export async function getAllStemStates() {
+export async function getAllStemStates(sessionSettingId = null) {
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }
   }
@@ -1068,14 +1069,20 @@ export async function getAllStemStates() {
       return { success: false, error: 'User not authenticated' }
     }
 
-    const { data: sessions, error: sErr } = await supabase
-      .from('session_settings')
-      .select('session_setting_id')
-      .eq('user_id', user.id)
-    if (sErr) {
-      return { success: false, error: sErr.message }
+    let ids = []
+    if (sessionSettingId) {
+      ids = [Number(sessionSettingId)]
+    } else {
+      const { data: sessions, error: sErr } = await supabase
+        .from('session_settings')
+        .select('session_setting_id')
+        .eq('user_id', user.id)
+      if (sErr) {
+        return { success: false, error: sErr.message }
+      }
+      ids = Array.isArray(sessions) ? sessions.map(s => s.session_setting_id).filter(Boolean) : []
     }
-    const ids = Array.isArray(sessions) ? sessions.map(s => s.session_setting_id).filter(Boolean) : []
+
     if (!ids.length) {
       return { success: true, states: [] }
     }
