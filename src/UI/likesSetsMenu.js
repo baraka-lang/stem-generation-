@@ -1021,7 +1021,8 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
   const baseClass = context === 'page'
     ? `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
     : `filter-panel space-y-3 text-xs text-white/80 bg-white/5 border border-white/10 rounded-xl p-3`
-  container.className = baseClass
+  const preserveHidden = container.classList.contains('hidden')
+  container.className = preserveHidden ? `${baseClass} hidden` : baseClass
 
   const currentStars = filters.stars || 0
 
@@ -1963,18 +1964,19 @@ function renderSavedStemCard(item) {
           </div>
           <span class="text-[10px] text-white/50">${dateStr}</span>
         </div>
-        <div class="text-xs text-white/60 flex items-center gap-2">
-           <span>${item.bpm} BPM</span>
-           <span>•</span>
-           <span>${item.key}</span>
-           ${duration ? `<span>• ${duration}</span>` : ''}
-        </div>
+        
         <div class="mt-2">
           <canvas class="w-full h-12 bg-white/5 rounded-lg border border-white/10"
             data-saved-stem-waveform="${item.id}"
             width="720"
             height="96"
             aria-label="Waveform for ${item.stem_type}"></canvas>
+        </div>
+        <div class="text-xs text-white/60 flex items-center gap-2">
+           <span>${item.bpm} BPM</span>
+           <span>•</span>
+           <span>${item.key}</span>
+           ${duration ? `<span>• ${duration}</span>` : ''}
         </div>
       </div>
       

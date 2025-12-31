@@ -402,6 +402,43 @@ async function applyPlayerState(snapshot) {
       startOffsetFactors[st] = saved.offset
     }
   }
+
+  // FORCE SILENCE AND MUTE HIDDEN STEMS
+  // Iterate through all possible stems. If a stem is NOT in the restored visibleInstruments list,
+  // we must ensure it is muted and its gain is set to 0.
+  if (visibleInstruments && Array.isArray(visibleInstruments)) {
+    STEM_ORDER.forEach(st => {
+      if (!visibleInstruments.includes(st)) {
+        // Mute the stem state
+        stemMuteStates[st] = true // Force muted state
+
+        // Zero out the gain node immediately
+        if (stemNodes[st]?.gain) {
+          const p = stemNodes[st].gain.gain
+          const t = audioContext.currentTime
+          p.cancelScheduledValues(t)
+          p.setValueAtTime(p.value, t)
+          p.linearRampToValueAtTime(0, t + 0.01)
+        }
+
+        // Update UI to reflect muted state (in case it is re-enabled later)
+        const icon = document.querySelector(`[data-stem="${st}"] [data-action="mute-stem"] [data-lucide]`)
+        if (icon) {
+          icon.setAttribute('data-lucide', 'volume-x')
+        }
+        reflectMuteSoloButtons(st)
+        updateMixerGlow(st)
+        updateCardNumberColor(st)
+        updateMutedBorder(st)
+        safeUpdateButtonStates(st)
+      }
+    })
+    // Re-initialize icons to ensure the volume-x icon is rendered
+    if (window.lucide?.createIcons) {
+      window.lucide.createIcons()
+    }
+  }
+
   // After restoring all stems, update session info display since tempo/bars
   // might change when selecting a different take.
   updateSessionInfoCard()
