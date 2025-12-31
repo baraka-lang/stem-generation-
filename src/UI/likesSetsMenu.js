@@ -2,6 +2,7 @@ import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
 import { getStemStates, getAllStemStates, deleteStemState, getUserStems, deleteStem, upsertUserLike, removeUserLike } from '../Auth/stemApi.js'
 import { supabase } from '../Auth/index.js'
 import { encodeWAVSync } from '../audioEncoder.js'
+import { bufferToWavAndDownload } from '../DownloadAudio/index.js'
 
 const KEY_OPTIONS = [
   'Any Key',
@@ -253,6 +254,7 @@ export function initFavoritesPageView({ getSessionInfo, onLoadSet, onInsertLike,
   // switchTab(currentTab)
   attachPreviewStopListener()
   // Initial syncs moved to lazy loading when favorites page is shown
+  refreshFavoritesUI()
 }
 
 
@@ -1529,12 +1531,17 @@ async function syncSavedStems() {
     // Determine session ID if needed
     if (stemsScope === 'current') {
       const currentSessionSetting = localStorage.getItem('currentSessionSetting')
+      console.log('syncSavedStems: currentSessionSetting raw', currentSessionSetting)
+      
       const parsed = currentSessionSetting ? JSON.parse(currentSessionSetting) : null
       const raw = parsed?.session_setting_id ?? parsed?.id ?? null
       sessionSettingId = typeof raw === 'number' ? raw : (typeof raw === 'string' && /^\d+$/.test(raw) ? Number(raw) : null)
+      
+      console.log('syncSavedStems: Resolved sessionSettingId', sessionSettingId)
 
       // If filtering by current but no session ID, clear list
       if (!sessionSettingId) {
+        console.log('syncSavedStems: No session ID found, clearing list')
         savedStemsCache = []
         renderSavedStems()
         savedStemsSyncInProgress = false
@@ -1544,11 +1551,14 @@ async function syncSavedStems() {
 
     // If scope is 'all', sessionSettingId remains null, which getUserStems interprets as "fetch all"
     // If scope is 'current', we pass the ID.
+    console.log('syncSavedStems: Calling getUserStems with', stemsScope === 'all' ? null : sessionSettingId)
     const res = await getUserStems(stemsScope === 'all' ? null : sessionSettingId)
 
     if (res.success && Array.isArray(res.stems)) {
+      console.log('syncSavedStems: Got stems', res.stems.length)
       savedStemsCache = res.stems
     } else {
+      console.warn('syncSavedStems: Failed to get stems or empty', res)
       savedStemsCache = []
     }
   } catch (err) {
@@ -1709,6 +1719,11 @@ function renderSavedStems() {
   if (!containers.length) return
 
   const filtered = getFilteredSavedStems()
+  console.log('renderSavedStems: Rendering', { 
+    total: savedStemsCache.length, 
+    filtered: filtered.length,
+    containers: containers.length 
+  })
 
   containers.forEach((container) => {
     if (savedStemsSyncInProgress) {
@@ -1737,7 +1752,9 @@ function renderSavedStems() {
 
     window.lucide?.createIcons()
 
-    // Attach Play Handlers
+    const itemMap = new Map(filtered.map((i) => [i.id, i]))
+    renderSavedStemWaveforms(container, itemMap)
+
     container.querySelectorAll('[data-play-saved-stem]').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.stopPropagation()
@@ -1840,6 +1857,55 @@ function renderSavedStems() {
   })
 }
 
+function renderSavedStemWaveforms(container, itemMap) {
+  const canvases = Array.from(container.querySelectorAll('[data-saved-stem-waveform]'))
+  if (!canvases.length) return
+  
+  console.log('renderSavedStemWaveforms: Processing', canvases.length, 'canvases')
+
+  requestAnimationFrame(() => {
+    canvases.forEach(async (canvas) => {
+      const id = canvas.getAttribute('data-saved-stem-waveform')
+      const item = itemMap.get(id)
+      if (!item) {
+        console.warn('renderSavedStemWaveforms: Item not found', id)
+        return
+      }
+      const rect = canvas.getBoundingClientRect()
+      const width = rect.width || Number(canvas.getAttribute('width')) || 320
+      const height = rect.height || Number(canvas.getAttribute('height')) || 64
+      const dpr = window.devicePixelRatio || 1
+      canvas.width = width * dpr
+      canvas.height = height * dpr
+      const draw = (buf) => {
+        const color = 'rgba(255,255,255,0.85)'
+        drawTinyWaveform(canvas, buf, color, 'rgba(255,255,255,0.05)')
+      }
+      if (item.audioBuffer) {
+        draw(item.audioBuffer)
+      } else if (item.audioKey || item.audio_data) {
+        console.log('renderSavedStemWaveforms: Loading audio for', id)
+        const ctx = canvas.getContext('2d')
+        if (ctx) {
+          ctx.fillStyle = 'rgba(255,255,255,0.08)'
+          ctx.fillRect(0, 0, canvas.width, canvas.height)
+        }
+        try {
+          const decoded = await loadLikeAudio(item)
+          if (decoded && canvas.isConnected) {
+            draw(decoded)
+          } else {
+             console.warn('renderSavedStemWaveforms: Failed to decode or canvas disconnected', id)
+          }
+        } catch (err) {
+           console.error('renderSavedStemWaveforms: Error', err)
+        }
+      } else {
+        console.warn('renderSavedStemWaveforms: No audio data available for', id)
+      }
+    })
+  })
+}
 function updateSavedStemPlayButtons(container) {
   const targets = container ? [container] : getStemContainers()
   targets.forEach((c) => {
@@ -1902,6 +1968,13 @@ function renderSavedStemCard(item) {
            <span>•</span>
            <span>${item.key}</span>
            ${duration ? `<span>• ${duration}</span>` : ''}
+        </div>
+        <div class="mt-2">
+          <canvas class="w-full h-12 bg-white/5 rounded-lg border border-white/10"
+            data-saved-stem-waveform="${item.id}"
+            width="720"
+            height="96"
+            aria-label="Waveform for ${item.stem_type}"></canvas>
         </div>
       </div>
       

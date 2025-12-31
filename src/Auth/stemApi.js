@@ -222,17 +222,26 @@ export async function getUserStems(sessionSettingId = null) {
 
     let query = supabase
       .from('stems')
-      .select('*')
+      .select('id,user_id,stem_type,prompt,tempo,bars,key_signature,generation_tier,validated,audio_url,file_size,duration_seconds,created_at,updated_at,session_setting_id,is_deleted')
       .eq('user_id', user.id)
       .eq('is_deleted', false)
       .order('created_at', { ascending: false })
 
     if (sessionSettingId) {
+      console.log('getUserStems: Filtering by session_setting_id', sessionSettingId)
       query = query.eq('session_setting_id', sessionSettingId)
+    } else {
+      console.log('getUserStems: Fetching all stems (no session filter)')
     }
 
+    console.time('getUserStems: query')
     const { data, error } = await query
-    console.log('getUserStems: Query result', { dataCount: data?.length, error })
+    console.timeEnd('getUserStems: query')
+    console.log('getUserStems: Query result', { 
+      dataCount: data?.length, 
+      firstItem: data?.[0], 
+      error 
+    })
 
     if (error) {
       console.error('Error fetching stems:', error)
