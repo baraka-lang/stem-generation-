@@ -5088,9 +5088,9 @@ async function setupAutoDownloadPanel() {
 
   autoDownloadPanelEl = document.createElement('div')
   autoDownloadPanelEl.id = 'autoDownloadPanel'
-  autoDownloadPanelEl.className = 'hidden fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 max-w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 overflow-hidden'
+  autoDownloadPanelEl.className = 'hidden fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 max-w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 overflow-hidden hidden'
   autoDownloadPanelEl.innerHTML = `
-    <div class="flex items-start gap-3">
+    <div class="flex items-start gap-3 ">
       <div class="flex-1 min-w-0">
         <div class="text-sm font-semibold truncate" data-auto-download-status>Auto-download disabled</div>
         <p class="text-[12px] text-white/70 mt-1 truncate" data-auto-download-note>
