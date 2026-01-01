@@ -1658,13 +1658,7 @@ function resolveSessionId() {
     if (!currentSessionSetting) return null
 
     const parsed = JSON.parse(currentSessionSetting)
-    // Check various common field names for session setting ID, including potential typos like 'settind'
-    const raw = parsed?.session_setting_id ??
-      parsed?.session_settings_id ??
-      parsed?.current_session_setting_id ??
-      parsed?.current_session_settind_id ??
-      parsed?.id ??
-      null
+    const raw = parsed?.session_setting_id ?? null
 
     if (raw === null || raw === undefined) return null
 

@@ -4779,17 +4779,6 @@ async function generateStem(st) {
     // Push the new version into history
     pushStemVersion(st, newVersion)
 
-    // NEW: Add stem persistence for cloud history/sync
-    hookIntoStemGeneration(st, newVersion, (audioKey) => {
-      import('./UI/likesSetsMenu.js').then(({ updateLikeAudioKey }) => {
-        ensureStemHistory(st)
-        const idx = stemHistory[st].indexOf(newVersion)
-        if (idx >= 0) {
-          updateLikeAudioKey(st, idx, audioKey)
-        }
-      })
-    })
-
     // Store the current endpoint factor on the newly created history entry so it can be restored when selecting the take.
     {
       ensureStemHistory(st)
