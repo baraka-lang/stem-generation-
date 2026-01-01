@@ -9,23 +9,6 @@ import { supabase as sharedClient, getCurrentUser } from './index.js'
 // Use the shared Supabase client to ensure auth session consistency
 let supabase = sharedClient
 
-// Fallback if shared client is not available or initialized
-if (!supabase) {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-  const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
-
-  if (supabaseUrl && supabaseKey) {
-    const { createClient } = await import('@supabase/supabase-js')
-    supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: {
-        persistSession: true,
-        detectSessionInUrl: true,
-        autoRefreshToken: true
-      }
-    })
-  }
-}
-
 
 /**
  * Upload stem audio to Supabase Storage

@@ -11,7 +11,7 @@ import { formatBarsForDisplay, getPlaybackBars, normalizeBarsValue } from './Uti
 import { retryEdgeFunctionCall, isRetryableError } from './Utilities/retryHelper.js'
 import { loopFixConfig } from './Config/environment.js'
 import { initFavoritesPageView, initLikesSetsMenu, isTrackLiked, refreshFavoritesUI, syncSavedSetsMenu, toggleLikeForStem } from './UI/likesSetsMenu.js'
-import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl } from './TechnoGenerators/sessionSetup.js'
+import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl, syncCurrentSessionWithCloud } from './TechnoGenerators/sessionSetup.js'
 import { hookIntoStemGeneration } from './Auth/stemGenerationIntegration.js'
 import { uploadStemAudio } from './Auth/stemApi.js'
 
@@ -6291,8 +6291,15 @@ async function handleSaveCurrentStems() {
   const btn = document.getElementById('saveSTemsBtn')
   if (!btn) return
 
-  // 1. Import Toasts (dynamically to ensure availability)
+  // 1. Import Toasts and AuthGuard (dynamically to ensure availability)
   const { showInfoToast, showSuccessToast, showErrorToast } = await import('./UI/toast.js')
+  const { getAuthGuard } = await import('./Auth/authGuard.js')
+
+  // Check if user is logged in
+  if (!getAuthGuard().getIsAuthenticated()) {
+    showInfoToast('Please login to save stems.')
+    return
+  }
 
   // 2. Identify stems to save
   const stemsToSave = visibleInstruments.filter(st => {
@@ -8137,6 +8144,12 @@ export async function initApp() {
       guard.addAuthListener((event, session, user) => {
         try { updateUserMenuVisibility() } catch { }
         try { updateUserMenu() } catch { }
+
+        // Late-sync session settings if user just signed in
+        if (event === 'SIGNED_IN') {
+          syncCurrentSessionWithCloud(stemControlValues).catch(err => console.error('Failed to sync session on sign-in:', err))
+        }
+
         ; (async () => {
           try {
             const { updateEmailConfirmationNotification } = await import('./UI/emailConfirmationNotification.js')

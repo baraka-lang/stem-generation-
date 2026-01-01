@@ -354,3 +354,39 @@ export function applySessionSettingsToUI(stemControlValues, updateTempoIndicator
   })
 }
 
+
+/**
+ * Synchronize the current session with the cloud if it was created while logged out.
+ * This is typically called after a successful login.
+ */
+export async function syncCurrentSessionWithCloud(stemControlValues) {
+  const current = loadSessionSettingsFromStorage()
+  if (!current || current.session_setting_id) return
+
+  const guardUser = getAuthGuard()?.getCurrentUser()
+  if (!guardUser?.id) return
+
+  console.log('🔄 Late-syncing session with cloud...', current.session_name)
+
+  try {
+    const sessionValues = { ...current, user_id: guardUser.id }
+    const cloudResult = await saveSessionSettingsToCloud(sessionValues)
+
+    if (cloudResult.success && cloudResult.session_setting_id) {
+      const finalId = cloudResult.session_setting_id
+
+      // Update local storage
+      current.session_setting_id = finalId
+      saveSessionSettingsToStorage(current)
+
+      // Update in-memory state if provided
+      if (stemControlValues?.master) {
+        stemControlValues.master.session_setting_id = finalId
+      }
+
+      console.log('✅ Session late-sync successful, ID:', finalId)
+    }
+  } catch (err) {
+    console.error('❌ Failed to late-sync session with cloud:', err)
+  }
+}
