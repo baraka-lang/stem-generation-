@@ -6297,7 +6297,7 @@ async function handleSaveCurrentStems() {
 
   // Check if user is logged in
   if (!getAuthGuard().getIsAuthenticated()) {
-    showInfoToast('Please login to save stems.')
+    showErrorToast('Please login to save stems.')
     return
   }
 
