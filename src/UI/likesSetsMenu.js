@@ -341,7 +341,7 @@ export async function toggleLikeForStem(stemId, track) {
     audioKey: track.audioKey || null,
     sessionSettingId: resolveSessionId(),
     timestamp: Date.now(),
-    rating: 3
+    rating: 0
   }
 
   likedTracks.unshift(newLike)
