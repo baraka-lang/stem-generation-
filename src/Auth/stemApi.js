@@ -293,10 +293,21 @@ export async function upsertUserLike(like) {
     }
     const { data, error } = await supabase
       .from('user_likes')
-      .upsert(payload, { onConflict: 'user_id,stem_id,take_index' })
+      .upsert(payload, { onConflict: 'user_id,audio_key' })
       .select('id,updated_at')
       .single()
     if (error) {
+      // Fallback if audio_key constraint doesn't exist or other error
+      // This is a bit risky but we want to avoid breaking legacy likes
+      if (error.code === '42703' || error.message.includes('column') || error.message.includes('unique')) {
+        const { data: retryData, error: retryError } = await supabase
+          .from('user_likes')
+          .upsert(payload, { onConflict: 'user_id,stem_id,take_index' })
+          .select('id,updated_at')
+          .single()
+        if (retryError) return { success: false, error: retryError.message }
+        return { success: true, id: retryData.id, updated_at: retryData.updated_at }
+      }
       return { success: false, error: error.message }
     }
     return { success: true, id: data.id, updated_at: data.updated_at }
@@ -329,7 +340,7 @@ export async function getUserLikes() {
   }
 }
 
-export async function removeUserLike(stemId, takeIndex) {
+export async function removeUserLike(stemId, takeIndex, audioKey = null) {
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }
   }
@@ -339,10 +350,18 @@ export async function removeUserLike(stemId, takeIndex) {
       return { success: false, error: 'User not authenticated' }
     }
 
+    const matchCriteria = { user_id: user.id }
+    if (audioKey) {
+      matchCriteria.audio_key = audioKey
+    } else {
+      matchCriteria.stem_id = stemId
+      matchCriteria.take_index = takeIndex ?? -1
+    }
+
     const { error } = await supabase
       .from('user_likes')
       .delete()
-      .match({ user_id: user.id, stem_id: stemId, take_index: takeIndex ?? -1 })
+      .match(matchCriteria)
     if (error) {
       return { success: false, error: error.message }
     }

@@ -317,18 +317,25 @@ export async function toggleLikeForStem(stemId, track) {
   console.log('toggleLikeForStem called', { stemId, track })
   if (!stemId || !track) return false
   const takeIndex = track.takeIndex ?? -1
-  const existingIndex = likedTracks.findIndex((item) => item.stemId === stemId && item.takeIndex === takeIndex)
+  const audioKey = track.audioKey || null
+
+  const existingIndex = likedTracks.findIndex((item) => {
+    if (audioKey && item.audioKey === audioKey) return true
+    // Fallback for legacy tracks or cases where audioKey is missing
+    return item.stemId === stemId && item.takeIndex === takeIndex && !audioKey
+  })
 
   if (existingIndex >= 0) {
     // UNLIKE
     console.log('Unliking stem', stemId)
-    likedTracks.splice(existingIndex, 1)
+    const removedItem = likedTracks.splice(existingIndex, 1)[0]
     renderLikes()
     notifyLikeChange(stemId)
     persistLikesToLocalStorage()
 
     // Sync removal to DB
-    removeUserLike(stemId, takeIndex).catch(err => console.error('Failed to remove like from DB:', err))
+    // Use audioKey for more precise removal if possible
+    removeUserLike(stemId, takeIndex, removedItem.audioKey).catch(err => console.error('Failed to remove like from DB:', err))
 
     return false
   }
@@ -336,7 +343,7 @@ export async function toggleLikeForStem(stemId, track) {
   // LIKE
   console.log('Liking stem', stemId)
   const newLike = {
-    id: `${stemId}-${takeIndex}`,
+    id: audioKey ? `like-${audioKey}` : `${stemId}-${takeIndex}-${Date.now()}`,
     stemId,
     takeIndex,
     stemName: track.stemName || stemId,
@@ -425,8 +432,12 @@ export async function toggleLikeForStem(stemId, track) {
   return true
 }
 
-export function isTrackLiked(stemId, takeIndex) {
-  return likedTracks.some((item) => item.stemId === stemId && item.takeIndex === takeIndex)
+export function isTrackLiked(stemId, takeIndex, audioKey = null) {
+  return likedTracks.some((item) => {
+    if (audioKey && item.audioKey === audioKey) return true
+    if (!audioKey) return item.stemId === stemId && item.takeIndex === takeIndex
+    return false
+  })
 }
 
 export function updateLikeAudioKey(stemId, takeIndex, audioKey) {

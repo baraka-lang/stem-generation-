@@ -1066,7 +1066,9 @@ window.addEventListener('loadStemState', async (e) => {
 
 function updateStemLikeButtons(st) {
   const activeIdx = stemActiveIndex[st] ?? -1
-  const liked = isTrackLiked(st, activeIdx)
+  const activeTake = getActiveVersion(st)
+  const audioKey = activeTake?.audioKey || activeTake?.meta?.unsavedKey || null
+  const liked = isTrackLiked(st, activeIdx, audioKey)
   const buttons = document.querySelectorAll(`[data-action="toggle-like"][data-stem="${st}"]`)
   buttons.forEach((btn) => {
     btn.setAttribute('aria-pressed', liked ? 'true' : 'false')
@@ -1074,6 +1076,14 @@ function updateStemLikeButtons(st) {
     btn.classList.toggle('bg-red-500/10', liked)
     btn.classList.toggle('border', liked)
     btn.classList.toggle('border-red-400/40', liked)
+  })
+}
+
+function resetStemLikeButtonUI(st) {
+  const buttons = document.querySelectorAll(`[data-action="toggle-like"][data-stem="${st}"]`)
+  buttons.forEach((btn) => {
+    btn.setAttribute('aria-pressed', 'false')
+    btn.classList.remove('text-red-400', 'bg-red-500/10', 'border', 'border-red-400/40')
   })
 }
 
@@ -4518,11 +4528,13 @@ async function generateStem(st) {
   const ctrl = getNewStemController(st)
   const { signal } = ctrl
 
-  // The create button (opens the settings modal) also acts as the trigger for generation.  Select
-  // the button that opens the settings (open-create-settings) so we can show loading state.
+  // Selected the button that opens the settings (open-create-settings) so we can show loading state.
   const button = document.querySelector(`[data-stem="${st}"] [data-action="open-create-settings"]`)
   const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
   const card = document.querySelector(`[data-stem="${st}"]`)
+
+  // Reset Like button visually when generation starts
+  resetStemLikeButtonUI(st)
 
   try {
     if (button) {
@@ -8505,6 +8517,9 @@ function showGenerateSettingsModal(st) {
     }
     // Disable body scrolling while any generate settings modal is open
     document.body.style.overflow = 'hidden'
+
+    // Reset Like button visually when opening settings
+    resetStemLikeButtonUI(st)
   }
 }
 
