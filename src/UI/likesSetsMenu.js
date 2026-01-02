@@ -1,5 +1,5 @@
 import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
-import { getStemStates, getAllStemStates, deleteStemState, getUserStems, deleteStem, upsertUserLike, removeUserLike } from '../Auth/stemApi.js'
+import { getStemStates, getAllStemStates, deleteStemState, updateStemState, getUserStems, deleteStem, upsertUserLike, removeUserLike } from '../Auth/stemApi.js'
 import { supabase } from '../Auth/index.js'
 import { encodeWAVSync } from '../audioEncoder.js'
 import { bufferToWavAndDownload } from '../DownloadAudio/index.js'
@@ -448,20 +448,57 @@ export function syncSavedSetsMenu(list) {
   renderSets()
 }
 
-export function setLikeRating(trackId, rating) {
+export async function setLikeRating(trackId, rating) {
   const track = likedTracks.find(t => t.id === trackId)
   if (track) {
     track.rating = Math.max(1, Math.min(5, rating))
     renderLikes()
+    persistLikesToLocalStorage()
+
+    // Sync to DB
+    try {
+      const res = await upsertUserLike(track)
+      if (!res.success) {
+        console.error('Failed to update like rating in DB:', res.error)
+      }
+    } catch (err) {
+      console.error('Error updating like rating:', err)
+    }
   }
 }
 
-export function setSetRating(setIndex, rating) {
-  if (setIndex >= 0 && setIndex < savedSetsCache.length) {
-    const set = savedSetsCache[setIndex]
-    if (!set.metadata) set.metadata = {}
-    set.metadata.rating = Math.max(1, Math.min(5, rating))
-    renderSets()
+export async function setSetRating(id, rating) {
+  // id could be a local index (number) or a cloud ID (string like 'cloud-123')
+  const isCloud = typeof id === 'string' && id.startsWith('cloud-')
+  const numericId = isCloud ? Number(id.replace('cloud-', '')) : Number(id)
+
+  if (isCloud) {
+    const cloudSet = stemStatesCache.find(s => s.stem_state_id === numericId)
+    if (cloudSet) {
+      if (!cloudSet.stems_snapshot) cloudSet.stems_snapshot = {}
+      if (!cloudSet.stems_snapshot.metadata) cloudSet.stems_snapshot.metadata = {}
+
+      cloudSet.stems_snapshot.metadata.rating = Math.max(1, Math.min(5, rating))
+      renderSets()
+
+      // Sync to DB
+      try {
+        const res = await updateStemState(numericId, { stems_snapshot: cloudSet.stems_snapshot })
+        if (!res.success) {
+          console.error('Failed to update cloud set rating in DB:', res.error)
+        }
+      } catch (err) {
+        console.error('Error updating cloud set rating:', err)
+      }
+    }
+  } else {
+    // Local set handling (if still relevant)
+    if (numericId >= 0 && numericId < savedSetsCache.length) {
+      const set = savedSetsCache[numericId]
+      if (!set.metadata) set.metadata = {}
+      set.metadata.rating = Math.max(1, Math.min(5, rating))
+      renderSets()
+    }
   }
 }
 
@@ -523,8 +560,7 @@ function attachStarHandlers(container, type) {
       if (type === 'like') {
         setLikeRating(target, value)
       } else if (type === 'set') {
-        const setIndex = parseInt(target, 10)
-        setSetRating(setIndex, value)
+        setSetRating(target, value)
       } else if (type === 'filter') {
         // Toggle filter behavior
         if (filters.stars === value) {
@@ -1252,7 +1288,7 @@ function renderLikeCard(item, variant = 'dropdown') {
         </div>
         <div class="text-[11px] text-white/70">${item.bpm} BPM · ${item.key}</div>
         <div class="mt-0.5">
-          ${renderStarRating(rating, '', 'sm', false)}
+          ${renderStarRating(rating, item.id, 'sm', true)}
         </div>
       </div>
       <div class="flex items-center gap-2 flex-1 min-w-0 relative">
@@ -1318,10 +1354,8 @@ function attachLikeCardHandlers(container, variant, itemMap) {
     })
   })
 
-  // Attach star rating handlers for favorites page (interactive)
-  if (variant === 'page') {
-    attachStarHandlers(container, 'like')
-  }
+  // Attach star rating handlers (interactive)
+  attachStarHandlers(container, 'like')
 }
 
 function renderLikeWaveforms(container, itemMap) {
@@ -1521,9 +1555,9 @@ function renderSets() {
       })
     })
 
-    // Attach star rating handlers for favorites page (interactive)
+    // Attach star rating handlers (interactive)
+    attachStarHandlers(el, 'set')
     if (variant === 'page') {
-      attachStarHandlers(el, 'set')
       attachRenameHandlers(el)
     }
   })
@@ -2137,7 +2171,7 @@ function renderSetCard(entry, variant = 'dropdown') {
           <div class="flex items-center gap-3">
             <span class="text-base font-semibold set-name-display" ${isLocal ? `data-set-name-display="${id}"` : ''}>${label}</span>
             <div class="star-rating-container" data-current-rating="${displayRating}">
-              ${renderStarRating(displayRating, isLocal ? id.toString() : '', 'sm-plus', isLocal)}
+              ${renderStarRating(displayRating, isLocal ? id.toString() : 'cloud-' + id, 'sm-plus', true)}
             </div>
           </div>
           <div class="flex flex-wrap items-center gap-2 text-[12px] text-white/70">
@@ -2178,7 +2212,9 @@ function renderSetCard(entry, variant = 'dropdown') {
       <div class="space-y-1 flex-1 min-w-0">
         <div class="flex items-center justify-between gap-2">
           <span class="text-sm font-medium truncate">${label}</span>
-          ${renderStarRating(displayRating, '', 'sm', false)}
+          <div class="star-rating-container" data-current-rating="${displayRating}">
+            ${renderStarRating(displayRating, isLocal ? id.toString() : 'cloud-' + id, 'sm', true)}
+          </div>
         </div>
         <div class="text-xs text-white/60">${!isLocal ? 'Cloud · ' : ''}${bpm} BPM · ${bars} bars · ${key}</div>
       </div>

@@ -1110,3 +1110,34 @@ export async function deleteStemState(stemStateId) {
     return { success: false, error: err.message }
   }
 }
+
+/**
+ * Update a stem state in the database
+ * @param {number} stemStateId - ID of the stem state to update
+ * @param {Object} updateData - Data to update (state_name, stems_snapshot)
+ * @returns {Promise<{success: boolean, error?: string}>}
+ */
+export async function updateStemState(stemStateId, updateData) {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    const { error } = await supabase
+      .from('stem_states')
+      .update({
+        ...updateData,
+        updated_at: new Date().toISOString()
+      })
+      .eq('stem_state_id', stemStateId)
+
+    if (error) {
+      console.error('Error updating stem state:', error)
+      return { success: false, error: error.message }
+    }
+
+    return { success: true }
+  } catch (err) {
+    console.error('Exception updating stem state:', err)
+    return { success: false, error: err.message }
+  }
+}
