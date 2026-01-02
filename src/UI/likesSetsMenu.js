@@ -41,6 +41,13 @@ let stemStatesSyncInProgress = false
 let savedStemsSyncInProgress = false
 const externalLikesContainers = []
 
+const paginations = {
+  likes: 1,
+  sets: 1,
+  stems: 1
+}
+const ITEMS_PER_PAGE = 10
+
 let favoritesTabListenersAttached = false
 let likesScope = 'current'
 let setsScope = 'current'
@@ -740,6 +747,66 @@ function generateBPMOptions(selected, min = 0, max = 300) {
   return options.join('')
 }
 
+function renderPaginationControls(type, totalItems) {
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
+  if (totalPages <= 1) return ''
+
+  const currentPage = paginations[type]
+
+  return `
+    <div class="flex items-center justify-center gap-4 pt-4 pb-2 border-t border-white/5 mt-4">
+      <button data-page-prev="${type}" 
+        class="w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition"
+        ${currentPage <= 1 ? 'disabled' : ''}>
+        <i data-lucide="chevron-left" class="w-4 h-4 text-white"></i>
+      </button>
+      
+      <div class="text-xs font-medium text-white/70">
+        Page <span class="text-white">${currentPage}</span> of ${totalPages}
+      </div>
+      
+      <button data-page-next="${type}" 
+        class="w-9 h-9 rounded-lg border border-white/10 flex items-center justify-center hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition"
+        ${currentPage >= totalPages ? 'disabled' : ''}>
+        <i data-lucide="chevron-right" class="w-4 h-4 text-white"></i>
+      </button>
+    </div>
+  `
+}
+
+function attachPaginationHandlers(container, type, totalItems, renderFn) {
+  const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE)
+
+  const prevBtn = container.querySelector(`[data-page-prev="${type}"]`)
+  const nextBtn = container.querySelector(`[data-page-next="${type}"]`)
+
+  if (prevBtn) {
+    prevBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (paginations[type] > 1) {
+        paginations[type]--
+        renderFn()
+        // Scroll to top of section for better UX
+        const section = container.closest('section')
+        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    })
+  }
+
+  if (nextBtn) {
+    nextBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (paginations[type] < totalPages) {
+        paginations[type]++
+        renderFn()
+        // Scroll to top of section for better UX
+        const section = container.closest('section')
+        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
+    })
+  }
+}
+
 function buildDropdown() {
   if (dropdownEl) return
   const existing = document.getElementById('likesSetsDropdown')
@@ -1165,6 +1232,11 @@ function handleFilterChange(e, prefix) {
     filters.key = e.target.value
   }
 
+  // Reset pagination on filter change
+  paginations.likes = 1
+  paginations.sets = 1
+  paginations.stems = 1
+
   if (prefix === 'likes') {
     renderLikes()
   } else if (prefix === 'sets') {
@@ -1197,12 +1269,26 @@ function renderLikes() {
       return
     }
 
-    el.innerHTML = filtered
+    // Pagination logic for page variant
+    let displayedItems = filtered
+    let paginationHtml = ''
+    if (variant === 'page') {
+      const start = (paginations.likes - 1) * ITEMS_PER_PAGE
+      const end = start + ITEMS_PER_PAGE
+      displayedItems = filtered.slice(start, end)
+      paginationHtml = renderPaginationControls('likes', filtered.length)
+    }
+
+    el.innerHTML = displayedItems
       .map((item) => renderLikeCard(item, variant))
-      .join('')
+      .join('') + paginationHtml
 
     attachLikeCardHandlers(el, variant, itemMap)
     renderLikeWaveforms(el, itemMap)
+
+    if (variant === 'page') {
+      attachPaginationHandlers(el, 'likes', filtered.length, renderLikes)
+    }
   })
 
   updateLikePlayButtons()
@@ -1514,9 +1600,23 @@ function renderSets() {
       return
     }
 
-    el.innerHTML = filtered
+    // Pagination logic for page variant
+    let displayedItems = filtered
+    let paginationHtml = ''
+    if (variant === 'page') {
+      const start = (paginations.sets - 1) * ITEMS_PER_PAGE
+      const end = start + ITEMS_PER_PAGE
+      displayedItems = filtered.slice(start, end)
+      paginationHtml = renderPaginationControls('sets', filtered.length)
+    }
+
+    el.innerHTML = displayedItems
       .map((entry) => renderSetCard(entry, variant))
-      .join('')
+      .join('') + paginationHtml
+
+    if (variant === 'page') {
+      attachPaginationHandlers(el, 'sets', filtered.length, renderSets)
+    }
 
     el.querySelectorAll('[data-load-set]').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1857,14 +1957,22 @@ function renderSavedStems() {
       return
     }
 
-    container.innerHTML = filtered
+    // Pagination logic (Stems are always in "page" context in favorites page variant)
+    const start = (paginations.stems - 1) * ITEMS_PER_PAGE
+    const end = start + ITEMS_PER_PAGE
+    const displayedItems = filtered.slice(start, end)
+    const paginationHtml = renderPaginationControls('stems', filtered.length)
+
+    container.innerHTML = displayedItems
       .map((item) => renderSavedStemCard(item))
-      .join('')
+      .join('') + paginationHtml
 
     window.lucide?.createIcons()
 
-    const itemMap = new Map(filtered.map((i) => [i.id, i]))
+    const itemMap = new Map(displayedItems.map((i) => [i.id, i]))
     renderSavedStemWaveforms(container, itemMap)
+
+    attachPaginationHandlers(container, 'stems', filtered.length, renderSavedStems)
 
     container.querySelectorAll('[data-play-saved-stem]').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
