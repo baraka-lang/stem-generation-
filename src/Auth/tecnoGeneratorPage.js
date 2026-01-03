@@ -40,7 +40,7 @@ export async function checkAuthenticationStatus() {
   const authGuard = getAuthGuard()
   const isAuthenticated = authGuard.getIsAuthenticated()
   const currentUser = authGuard.getCurrentUser()
-  
+
   const userStatusContainer = document.getElementById('userStatusContainer')
   const loggedInUserMenu = document.getElementById('logedInUserMenu')
   const guestModeNotice = document.getElementById('guestModeNotice')
@@ -57,7 +57,7 @@ export async function checkAuthenticationStatus() {
 
   if (!userStatusContainer) {
     console.error('❌ userStatusContainer not found in techno generator page')
-    return 
+    return
   }
   if (!loggedInUserMenu) {
     console.error('❌ loggedInUserMenu not found in techno generator page')
@@ -68,12 +68,12 @@ export async function checkAuthenticationStatus() {
     // User is authenticated - show logged-in user menu, hide guest status
     renderAuthenticatedUI(currentUser)
     if (guestModeNotice) guestModeNotice.classList.add('hidden')
-    
+
   } else {
     // User is not authenticated (guest mode) - show guest status, hide logged-in menu
     renderGuestUI()
     if (guestModeNotice) guestModeNotice.classList.remove('hidden')
-    
+
   }
 }
 
@@ -85,7 +85,7 @@ function renderAuthenticatedUI(user) {
   const loginBtn = document.getElementById('loginBtn')
   const studioMenu = document.querySelector('[data-anchor-id="studio-menu"]')
   const userMenu = document.getElementById('userMenu')
-  
+
   // Show user menu button, hide login button
   if (userMenuBtn) {
     userMenuBtn.classList.remove('hidden')
@@ -117,10 +117,10 @@ function renderAuthenticatedUI(user) {
   setTimeout(() => {
     setupUserMenuDropdown()
   }, 50)
-  
+
   // Setup help button functionality
   setupHelpButton()
-  
+
   // Update user menu with current user info
   updateUserMenuInfo(user)
 }
@@ -131,7 +131,7 @@ function renderAuthenticatedUI(user) {
 function renderGuestUI() {
   const userMenuBtn = document.getElementById('userMenuBtn')
   const loginBtn = document.getElementById('loginBtn')
-  
+
   // Hide user menu button, show login button
   if (userMenuBtn) {
     userMenuBtn.classList.add('hidden')
@@ -143,14 +143,14 @@ function renderGuestUI() {
   // Add event listener for the login button
   if (loginBtn) {
     loginBtn.addEventListener('click', () => {
-      ;(async () => {
+      ; (async () => {
         try {
           const { showLoginModal } = await import('./loginPage.js')
           if (typeof showLoginModal === 'function') {
             showLoginModal()
             return
           }
-        } catch {}
+        } catch { }
       })()
     })
   }
@@ -177,14 +177,14 @@ function showHelpModal() {
   const helpModal = document.getElementById('helpModal')
   const helpModalOverlay = document.getElementById('helpModalOverlay')
   const helpModalCloseBtn = document.getElementById('helpModalCloseBtn')
-  
+
   if (!helpModal) {
     return
   }
 
   // Show the modal
   helpModal.classList.remove('hidden')
-  
+
   // Trigger animation after a small delay
   setTimeout(() => {
     helpModal.classList.remove('opacity-0')
@@ -197,7 +197,7 @@ function showHelpModal() {
     helpModal.classList.add('opacity-0')
     helpModal.querySelector('.relative').classList.remove('scale-100')
     helpModal.querySelector('.relative').classList.add('scale-95')
-    
+
     setTimeout(() => {
       helpModal.classList.add('hidden')
     }, 300) // Match the transition duration
@@ -207,7 +207,7 @@ function showHelpModal() {
   if (helpModalCloseBtn) {
     const newCloseBtn = helpModalCloseBtn.cloneNode(true)
     helpModalCloseBtn.parentNode.replaceChild(newCloseBtn, helpModalCloseBtn)
-    
+
     newCloseBtn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -219,7 +219,7 @@ function showHelpModal() {
   if (helpModalOverlay) {
     const newOverlay = helpModalOverlay.cloneNode(true)
     helpModalOverlay.parentNode.replaceChild(newOverlay, helpModalOverlay)
-    
+
     newOverlay.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -245,9 +245,9 @@ function setupUserMenuDropdown() {
   setTimeout(() => {
     const userMenuBtn = document.getElementById('userMenuBtn')
     const userMenu = document.getElementById('userMenu')
-    
+
     if (!userMenuBtn || !userMenu) {
-        console.error('❌ User menu elements not found!', {
+      console.error('❌ User menu elements not found!', {
         userMenuBtn: document.getElementById('userMenuBtn'),
         userMenu: document.getElementById('userMenu')
       })
@@ -265,7 +265,7 @@ function setupUserMenuDropdown() {
       e.preventDefault()
       e.stopPropagation()
       const isHidden = newUserMenu.classList.contains('hidden')
-      
+
       if (isHidden) {
         newUserMenu.classList.remove('hidden')
         newUserMenuBtn.setAttribute('aria-expanded', 'true')
@@ -278,19 +278,19 @@ function setupUserMenuDropdown() {
     // Close dropdown when clicking outside
     const clickOutsideHandler = (e) => {
       if (newUserMenu.classList.contains('hidden')) return
-      
+
       const target = e.target
       if (newUserMenu.contains(target) || newUserMenuBtn.contains(target)) return
-      
+
       newUserMenu.classList.add('hidden')
       newUserMenuBtn.setAttribute('aria-expanded', 'false')
     }
-    
+
     document.addEventListener('click', clickOutsideHandler)
 
     // Setup menu item functionality
     setupUserMenuItems()
-    
+
   }, 100)
 }
 
@@ -298,7 +298,7 @@ function setupUserMenuDropdown() {
  * Setup user menu item functionality
  */
 function setupUserMenuItems() {
-  
+
   // Library button
   const libraryBtn = document.getElementById('userMenuLibrary')
   if (libraryBtn) {
@@ -361,7 +361,7 @@ async function handleLogout() {
       console.error('Logout error:', error)
       return
     }
-    
+
     console.log('👋 User logged out successfully')
     // Update UI to guest mode
     await checkAuthenticationStatus()
@@ -397,7 +397,7 @@ export function showSaveLoginModal() {
   const modal = document.createElement('div')
   modal.id = 'saveLoginModal'
   modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm'
-  
+
   modal.innerHTML = `
     <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
       <h2 class="text-xl font-medium text-white mb-4">Save Your Work</h2>
@@ -418,24 +418,24 @@ export function showSaveLoginModal() {
       </div>
     </div>
   `
-  
+
   document.body.appendChild(modal)
-  
+
   // Add event listeners
   document.getElementById('saveModalLoginBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
     window.location.hash = '#login'
   })
-  
+
   document.getElementById('saveModalSignupBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
     window.location.hash = '#login'
   })
-  
+
   document.getElementById('saveModalCancelBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
   })
-  
+
   // Close on backdrop click
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
@@ -451,7 +451,7 @@ export function showDownloadRestrictionModal() {
   const modal = document.createElement('div')
   modal.id = 'downloadRestrictionModal'
   modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm'
-  
+
   modal.innerHTML = `
     <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
       <h2 class="text-xl font-medium text-white mb-4">Email Confirmation Required</h2>
@@ -469,20 +469,20 @@ export function showDownloadRestrictionModal() {
       </div>
     </div>
   `
-  
+
   document.body.appendChild(modal)
-  
+
   // Add event listeners
   document.getElementById('downloadModalResendBtn').addEventListener('click', async () => {
     // TODO: Implement resend confirmation email
     alert('Resend confirmation email feature coming soon!')
     document.body.removeChild(modal)
   })
-  
+
   document.getElementById('downloadModalCancelBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
   })
-  
+
   // Close on backdrop click
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
@@ -494,7 +494,7 @@ export function showDownloadRestrictionModal() {
 export function setupSelectionPage() {
   try {
     selectionCheckAuthenticationStatus()
-  } catch {}
+  } catch { }
   window.addEventListener('authStateChanged', () => { selectionCheckAuthenticationStatus() })
 }
 
@@ -522,7 +522,7 @@ function renderSelectionAuthenticatedUI(user) {
   const userStatusContainer = document.getElementById('userStatusContainer')
   const loggedInUserMenu = document.getElementById('logedInUserMenu')
   if (!userStatusContainer || !loggedInUserMenu) return
-  userStatusContainer.innerHTML = `<div class="flex items-center space-x-4"><span class="text-sm text-white/60">Welcome, ${user.email}</span></div>`
+  userStatusContainer.innerHTML = `<div class="flex items-center space-x-4 justify-end me-3"><span class="text-sm text-white/60">Welcome, ${user.email}</span></div>`
   loggedInUserMenu.innerHTML = `
     <div class="flex items-center space-x-4">
       <button data-likes-menu-toggle data-anchor-id="selection-menu"
@@ -553,12 +553,12 @@ function renderSelectionAuthenticatedUI(user) {
   setTimeout(() => { setupSelectionUserMenuDropdown() }, 50)
   setupSelectionHelpButton()
   updateSelectionUserMenuInfo(user)
-  try { window.lucide?.createIcons() } catch {}
-  ;(async () => {
+  try { window.lucide?.createIcons() } catch { }
+  ; (async () => {
     try {
       const { initLikesSetsMenu } = await import('../UI/likesSetsMenu.js')
       if (typeof initLikesSetsMenu === 'function') initLikesSetsMenu()
-    } catch {}
+    } catch { }
   })()
 }
 
@@ -574,14 +574,14 @@ function renderSelectionGuestUI() {
   const loginBtn = document.getElementById('loginBtnSel')
   if (loginBtn) {
     loginBtn.addEventListener('click', () => {
-      ;(async () => {
+      ; (async () => {
         try {
           const { showLoginModal } = await import('./loginPage.js')
           if (typeof showLoginModal === 'function') {
             showLoginModal()
             return
           }
-        } catch {}
+        } catch { }
       })()
     })
   }

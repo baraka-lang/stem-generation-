@@ -2,7 +2,7 @@
 
 <!-- Studio Header - Only visible on studio pages -->
 <header id="studioHeader" class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10 hidden">
-  <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between">
+  <div class="mx-auto px-4 py-2 flex items-center justify-between">
     <!-- Logo Section -->
     <div class="flex items-center space-x-3">
       <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
@@ -16,11 +16,14 @@
       </div>
     </div>
     <div id="checkEmailNotification" class="flex items-center space-x-3"></div>
-    <!-- User Status Container - Dynamically populated by JavaScript -->
-    <div id="userStatusContainer"></div>
+    <div class="flex items-center justify-end">
 
-    <!-- User Menu Container - Dynamically populated by JavaScript -->
-    <div id="logedInUserMenu" class="hidden"></div>
+      <!-- User Status Container - Dynamically populated by JavaScript -->
+      <div id="userStatusContainer"></div>
+
+      <!-- User Menu Container - Dynamically populated by JavaScript -->
+      <div id="logedInUserMenu" class="hidden"></div>
+    </div>
   </div>
 </header>
 
@@ -313,8 +316,9 @@
 
       <!-- Save button and dropdown group -->
       <div id="saveGroup"
-        class="flex items-center gap-5 ps-2 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2-">
-        <select id="savedSetsDropdown" class="bg-transparent text-white/80 text-xs sm:text-sm px-2">
+        class="flex items-center justify-between gap-5 ps-2 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2 w-fit">
+        <select style="max-width: 100px !important;" id="savedSetsDropdown"
+          class="bg-transparent text-white/80 text-xs sm:text-sm px-2">
           <option value="">------</option>
         </select>
         <button title="Save current state of session" id="saveStateBtn" aria-label="Save current state"
