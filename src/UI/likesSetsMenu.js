@@ -2331,7 +2331,7 @@ function renderSetCard(entry, variant = 'dropdown') {
       <div class="space-y-1 flex-1 min-w-0">
         <div class="flex items-center justify-between gap-2">
           <span class="text-sm font-medium truncate">${label}</span>
-          <div class="star-rating-container" data-current-rating="${displayRating}">
+          <div class="star-rating-container hidden" data-current-rating="${displayRating}">
             ${renderStarRating(displayRating, isLocal ? id.toString() : 'cloud-' + id, 'sm', true)}
           </div>
         </div>

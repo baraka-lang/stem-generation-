@@ -218,9 +218,93 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
   }
   // Save button applies settings and locks them (single handler to avoid duplicates)
   saveBtn.onclick = async (e) => {
-    console.log('saveBtn clicked');
     try { e.preventDefault() } catch { }
     try { e.stopPropagation() } catch { }
+
+    // Always show modal to ask user if they want to save current state
+    showSaveStateBeforeSessionModal(async (shouldSave) => {
+      // Show loading state on Start Session button
+      const setupSaveBtn = document.getElementById('setupSaveBtn')
+      const originalText = setupSaveBtn?.textContent || 'Start Session'
+
+      if (setupSaveBtn) {
+        setupSaveBtn.disabled = true
+        setupSaveBtn.innerHTML = '<i data-lucide="loader-2" class="w-4 h-4 animate-spin inline-block"></i> <span>Processing...</span>'
+        window.lucide?.createIcons()
+      }
+
+      if (shouldSave) {
+        // Save the current state first
+        await saveCurrentStateBeforeSession()
+      }
+      // Proceed with session setup
+      await proceedWithSessionSetup()
+    }, saveBtn)
+  }
+
+  // Helper function to show the save state modal
+  function showSaveStateBeforeSessionModal(callback) {
+    const modal = document.getElementById('saveStateBeforeSessionModal')
+    const skipBtn = document.getElementById('saveStateBeforeSessionSkipBtn')
+    const saveBtn = document.getElementById('saveStateBeforeSessionSaveBtn')
+    const spinner = document.getElementById('saveStateBeforeSessionSpinner')
+    const label = document.getElementById('saveStateBeforeSessionLabel')
+
+    if (!modal || !skipBtn || !saveBtn) return
+
+    // Show modal
+    modal.classList.remove('hidden')
+    requestAnimationFrame(() => {
+      modal.style.opacity = '1'
+    })
+
+    // Handle skip button
+    skipBtn.onclick = () => {
+      closeModal()
+      callback(false)
+    }
+
+    // Handle save button
+    saveBtn.onclick = async () => {
+      // Show spinner
+      if (spinner && label) {
+        spinner.classList.remove('hidden')
+        label.textContent = 'Saving...'
+      }
+
+      closeModal()
+      callback(true)
+    }
+
+    function closeModal() {
+      modal.style.opacity = '0'
+      setTimeout(() => {
+        modal.classList.add('hidden')
+        if (spinner && label) {
+          spinner.classList.add('hidden')
+          label.textContent = 'Save & Continue'
+        }
+      }, 300)
+    }
+  }
+
+  // Helper function to save current state before session
+  async function saveCurrentStateBeforeSession() {
+    try {
+      // Import the save function from app.js
+      if (typeof window.saveNewSet === 'function') {
+        await window.saveNewSet()
+        console.log('[SessionSetup] Current state saved successfully')
+      } else {
+        console.warn('[SessionSetup] saveNewSet function not available')
+      }
+    } catch (err) {
+      console.error('[SessionSetup] Error saving current state:', err)
+    }
+  }
+
+  // Main function to proceed with session setup
+  async function proceedWithSessionSetup() {
     const sessionName = sessionNameInput ? sessionNameInput.value.trim() || generateDefaultSessionName() : generateDefaultSessionName()
     const tempoVal = Math.round(Number(tempoSlider.value) || DEFAULT_TEMPO)
     const barsVal = parseInt(barsSelector.value, 10) || DEFAULT_BARS
@@ -266,7 +350,6 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
           sessionValues.session_setting_id = finalId
           stemControlValues.master.session_setting_id = finalId
           saveSessionSettingsToStorage(sessionValues)
-          console.log('Session synced with cloud, ID:', finalId)
         } else {
           console.warn('Could not save session to cloud, continuing with local only:', cloudResult.error)
         }
@@ -278,7 +361,11 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
     showSuccessToast("Session setup complete!")
 
     setSessionSetupDone(true)
-    applySessionSettingsToUI(stemControlValues, updateTempoIndicator)
+    // Reload page after 3 seconds
+    setTimeout(() => {
+      location.reload()
+    }, 3000)
+    // applySessionSettingsToUI(stemControlValues, updateTempoIndicator)
     // Hide modal
     modal.style.opacity = '0'
     setTimeout(() => { modal.classList.add('hidden') }, 300)
@@ -385,6 +472,11 @@ export async function syncCurrentSessionWithCloud(stemControlValues) {
       }
 
       console.log('✅ Session late-sync successful, ID:', finalId)
+
+      // page should reload to show the session in the favorites page
+      setTimeout(() => {
+        window.location.reload()
+      }, 1000)
     }
   } catch (err) {
     console.error('❌ Failed to late-sync session with cloud:', err)

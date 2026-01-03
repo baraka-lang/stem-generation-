@@ -729,7 +729,6 @@ function initSavedStateFeature() {
     }
     // Create and store the handler function
     saveBtnHandler = async () => {
-      console.log('Save button clicked')
       // Check if user is authenticated before allowing save
       const { canUserSave } = await import('./Auth/selectionPage.js')
       const canSave = await canUserSave()
@@ -904,8 +903,18 @@ function openSaveSetModal() {
   if (!modal) return
   const desc = document.getElementById('saveSetDescription')
   if (desc) {
-    const nextNum = savedSets.length + 1
-    desc.textContent = `Save current state as Set ${nextNum}?`
+    // Load session setting name from localStorage
+    const sessionSettingStr = localStorage.getItem('currentSessionSetting');
+    let sessionSetting = null;
+    try {
+      sessionSetting = sessionSettingStr ? JSON.parse(sessionSettingStr) : null;
+    } catch (err) {
+      console.error('Error parsing session setting:', err);
+    }
+
+    const sessionName = sessionSetting?.session_name || 'Unnamed Session';
+    const nextNum = savedSets.length + 1;
+    desc.textContent = `Save current state as Set ${nextNum} - ${sessionName}?`;
   }
   // Reset spinner and label
   const spinner = document.getElementById('saveSetSpinner')
@@ -946,8 +955,21 @@ async function saveNewSet() {
     spinner.classList.remove('hidden')
     label.textContent = 'Saving'
   }
-  // Save the state
-  let snapshot = buildSavedSetRecord(`Set ${savedSets.length + 1}`)
+
+  // Get session name from localStorage
+  const sessionSettingStr = localStorage.getItem('currentSessionSetting');
+  let sessionName = 'Unnamed Session';
+  try {
+    const sessionSetting = sessionSettingStr ? JSON.parse(sessionSettingStr) : null;
+    sessionName = sessionSetting?.session_name || 'Unnamed Session';
+  } catch (err) {
+    console.error('Error parsing session setting:', err);
+  }
+
+  // Save the state with session name included
+  const setNumber = savedSets.length + 1;
+  const setName = `Set ${setNumber} - ${sessionName}`;
+  let snapshot = buildSavedSetRecord(setName);
 
   // Ensure audio is persisted to cloud before saving DB record
   try {
@@ -1000,6 +1022,11 @@ async function saveNewSet() {
     label.textContent = 'Save'
   }
   closeSaveSetModal()
+}
+
+// Expose saveNewSet globally for session setup
+if (typeof window !== 'undefined') {
+  window.saveNewSet = saveNewSet
 }
 
 /**
