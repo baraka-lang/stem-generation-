@@ -117,7 +117,7 @@ CREATE TABLE public.user_likes (
   bpm integer,
   key_signature text,
   bars integer,
-  rating integer NOT NULL DEFAULT 3 CHECK (rating >= 1 AND rating <= 5),
+  rating integer NOT NULL DEFAULT 0 CHECK (rating >= 0 AND rating <= 5),
   audio_key text,
   unsaved_stem_id uuid,
   created_at timestamp with time zone NOT NULL DEFAULT now(),

@@ -317,6 +317,9 @@ function getSessionSummaryInfo() {
 async function applyPlayerState(snapshot) {
   if (!snapshot || !snapshot.stems) return
 
+  // Ensure all necessary audio is restored from cloud if needed
+  await restoreStemsForLoad(snapshot)
+
   // Restore visible instruments if saved
   if (snapshot.visibleInstruments && Array.isArray(snapshot.visibleInstruments)) {
     // Hide all instruments first
@@ -1079,16 +1082,7 @@ async function confirmLoadSet(idx) {
   // Note: loadSavedSet() closes the modal
 }
 
-window.addEventListener('loadStemState', async (e) => {
-  const detail = e.detail || {}
-  const snapshot = detail.stems_snapshot || null
-  if (!snapshot) return
-  try {
-    await applyPlayerState(snapshot)
-  } catch (err) {
-    console.error('Failed to apply stem state', err)
-  }
-})
+
 
 
 function updateStemLikeButtons(st) {

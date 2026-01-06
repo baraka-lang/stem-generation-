@@ -472,7 +472,7 @@
           ><i data-lucide="memory-stick" class="w-5 h-5"></i
         ></span>
       </div>
-
+     
       <!-- Session info card (desktop only) -->
       <div
         class="flex items-center gap-2 border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2 pe-0 bg-white/5 backdrop-blur-lg"
@@ -493,6 +493,19 @@
         </button>
       </div>
 
+      <div
+        style="display: none !important"
+        id="saveGroup"
+        class="flex items-center justify-between gap-5 ps-2 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap px-2 w-fit"
+      >
+        <select
+          style="max-width: 100px !important; display: none !important"
+          id="savedSetsDropdown"
+          class="bg-transparent text-white/80 text-xs sm:text-sm px-2"
+        >
+          <option value="">------</option>
+        </select>
+      </div>
       <!-- Download All button: icon only, consistent across mobile and desktop -->
       <button
         title="Download all"
@@ -501,6 +514,15 @@
         class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
       >
         <i data-lucide="download" class="w-5 h-5"></i>
+      </button>
+       <button
+        title="Save current state of session"
+        id="saveStateBtn"
+        aria-label="Save current state"
+        class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg player-surface hover:bg-white/10 transition"
+        title="Save current set"
+      >
+        <i data-lucide="save-all" class="w-5 h-5"></i>
       </button>
       <button
         title="Save current stems"
@@ -520,7 +542,10 @@
       >
         <i data-lucide="sliders" class="w-5 h-5"></i>
       </button>
-      <div class="flex items-start gap-3" title="Automatically save stems when generated.">
+      <div
+        class="flex items-start gap-3 items-center"
+        title="Automatically save stems when generated."
+      >
         <div class="flex-1 min-w-0">
           <div
             class="text-sm font-semibold text-white truncate"
@@ -528,7 +553,6 @@
           >
             Auto-download disabled
           </div>
-          
         </div>
         <div class="flex flex-col gap-2">
           <button

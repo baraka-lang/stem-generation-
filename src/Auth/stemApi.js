@@ -297,16 +297,71 @@ export async function upsertUserLike(like) {
       .select('id,updated_at')
       .single()
     if (error) {
-      // Fallback if audio_key constraint doesn't exist or other error
-      // This is a bit risky but we want to avoid breaking legacy likes
+      // Fallback 1: Try legacy constraint if primary fails
       if (error.code === '42703' || error.message.includes('column') || error.message.includes('unique')) {
         const { data: retryData, error: retryError } = await supabase
           .from('user_likes')
           .upsert(payload, { onConflict: 'user_id,stem_id,take_index' })
           .select('id,updated_at')
           .single()
-        if (retryError) return { success: false, error: retryError.message }
-        return { success: true, id: retryData.id, updated_at: retryData.updated_at }
+        
+        if (!retryError) {
+          return { success: true, id: retryData.id, updated_at: retryData.updated_at }
+        }
+
+        // Fallback 2: Manual Upsert (if constraints are missing entirely, e.g. 42P10)
+        // This handles cases where migration state is inconsistent
+        if (retryError.code === '42P10' || retryError.message.includes('constraint')) {
+           console.warn('Upsert failed due to missing constraints. Attempting manual check-and-update.')
+           
+           // Try to find existing record
+           let match = null
+           if (payload.audio_key) {
+              const { data: existing } = await supabase
+                .from('user_likes')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('audio_key', payload.audio_key)
+                .maybeSingle()
+              match = existing
+           }
+           
+           if (!match) {
+              const { data: existing } = await supabase
+                .from('user_likes')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('stem_id', payload.stem_id)
+                .eq('take_index', payload.take_index)
+                .maybeSingle()
+              match = existing
+           }
+
+           if (match) {
+              // Update existing
+              const { data: updated, error: updateError } = await supabase
+                .from('user_likes')
+                .update(payload)
+                .eq('id', match.id)
+                .select('id,updated_at')
+                .single()
+              
+              if (updateError) return { success: false, error: updateError.message }
+              return { success: true, id: updated.id, updated_at: updated.updated_at }
+           } else {
+              // Insert new
+              const { data: inserted, error: insertError } = await supabase
+                .from('user_likes')
+                .insert(payload)
+                .select('id,updated_at')
+                .single()
+              
+              if (insertError) return { success: false, error: insertError.message }
+              return { success: true, id: inserted.id, updated_at: inserted.updated_at }
+           }
+        }
+        
+        return { success: false, error: retryError.message }
       }
       return { success: false, error: error.message }
     }
