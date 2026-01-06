@@ -5125,64 +5125,13 @@ async function setupAutoDownloadPanel() {
   const isMobile = window.innerWidth < 640
   if (isMobile) return
 
-  autoDownloadPanelEl = document.createElement('div')
-  autoDownloadPanelEl.id = 'autoDownloadPanel'
-  autoDownloadPanelEl.className = 'hidden fixed bottom-28 right-4 left-4 sm:left-auto sm:right-6 sm:w-80 max-w-80 z-30 bg-black/80 border border-white/15 rounded-2xl backdrop-blur-lg shadow-2xl p-4 overflow-hidden hidden'
-  autoDownloadPanelEl.innerHTML = `
-    <div class="flex items-start gap-3 ">
-      <div class="flex-1 min-w-0">
-        <div class="text-sm font-semibold truncate" data-auto-download-status>Auto-download disabled</div>
-        <p class="text-[12px] text-white/70 mt-1 truncate" data-auto-download-note>
-          Automatically save stems when generated.
-        </p>
-      </div>
-      <div class="flex flex-col gap-2">
-        <button class="px-3 py-1.5 rounded-lg bg-white/90 text-black text-xs font-semibold hover:bg-white" data-action="auto-download-configure">Enable</button>
-        <button class="text-[11px] text-white/70 hover:text-white hidden" data-action="auto-download-disable">Disable</button>
-      </div>
-    </div>
-  `
-  document.body.appendChild(autoDownloadPanelEl)
+  autoDownloadPanelEl = document.getElementById('autoDownloadPanel')
+  if (!autoDownloadPanelEl) return
+
   autoDownloadStatusEl = autoDownloadPanelEl.querySelector('[data-auto-download-status]')
   autoDownloadNoteEl = autoDownloadPanelEl.querySelector('[data-auto-download-note]')
   autoDownloadActionBtn = autoDownloadPanelEl.querySelector('[data-action="auto-download-configure"]')
   autoDownloadDisableBtn = autoDownloadPanelEl.querySelector('[data-action="auto-download-disable"]')
-
-  if (autoDownloadActionBtn) {
-    autoDownloadActionBtn.addEventListener('click', async () => {
-      try {
-        if (isElectronMode()) {
-          const result = await chooseElectronSaveDirectory()
-          if (!result.canceled) {
-            console.log(`[Electron] Save directory selected: ${result.path}`)
-            updateAutoDownloadPanel()
-            queueAutoDownloadsForAvailableStems()
-          }
-        } else {
-          await requestAutoDownloadDirectory()
-          updateAutoDownloadPanel()
-          queueAutoDownloadsForAvailableStems()
-        }
-      } catch (err) {
-        alert(`Unable to enable auto-save: ${err?.message || err}`)
-      }
-    })
-  }
-
-  if (autoDownloadDisableBtn) {
-    autoDownloadDisableBtn.addEventListener('click', async () => {
-      try {
-        if (isElectronMode()) {
-          disableElectronSave()
-        } else {
-          await disableAutoDownload()
-        }
-        updateAutoDownloadPanel()
-      } catch (err) {
-        console.warn('Failed to disable auto-save:', err)
-      }
-    })
-  }
 }
 
 function updateAutoDownloadPanel(status = null) {
@@ -7265,6 +7214,40 @@ function setupEventListeners() {
       const action = btn.dataset.action
       const st = btn.dataset.stem
       console.log('[Click] Button action clicked:', action, 'stem:', st)
+      if (action === 'auto-download-configure') {
+        try {
+          if (isElectronMode()) {
+            const result = await chooseElectronSaveDirectory()
+            if (!result.canceled) {
+              console.log(`[Electron] Save directory selected: ${result.path}`)
+              updateAutoDownloadPanel()
+              queueAutoDownloadsForAvailableStems()
+            }
+          } else {
+            await requestAutoDownloadDirectory()
+            updateAutoDownloadPanel()
+            queueAutoDownloadsForAvailableStems()
+          }
+        } catch (err) {
+          alert(`Unable to enable auto-save: ${err?.message || err}`)
+        }
+        return
+      }
+
+      if (action === 'auto-download-disable') {
+        try {
+          if (isElectronMode()) {
+            disableElectronSave()
+          } else {
+            await disableAutoDownload()
+          }
+          updateAutoDownloadPanel()
+        } catch (err) {
+          console.warn('Failed to disable auto-save:', err)
+        }
+        return
+      }
+
       if (action === 'generate' && st) { await generateStem(st); return }
       // When clicking the new generate button, open the settings modal instead of generating immediately
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
