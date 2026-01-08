@@ -46,21 +46,18 @@ function selectBestFormat(availableFormats = null) {
   // If no formats specified, try PRIMARY_OUTPUT_FORMAT first
   if (!availableFormats || !Array.isArray(availableFormats)) {
     const selected = FORMAT_LADDER[0]
-    console.log(`[FMT] ElevenLabs format selection: trying ${selected.format} (${selected.tier}: ${selected.label})`)
     return selected.format
   }
 
   // Find first format in ladder that's available
   for (const config of FORMAT_LADDER) {
     if (availableFormats.includes(config.format)) {
-      console.log(`[FMT] ElevenLabs -> ${config.format} chosen (${config.tier}: ${config.label}, ${config.sampleRate}Hz)`)
       return config.format
     }
   }
 
   // Fallback to last format if nothing matches
   const fallback = FORMAT_LADDER[FORMAT_LADDER.length - 1]
-  console.warn(`[FMT] No preferred format available, using fallback: ${fallback.format} (${fallback.label})`)
   return fallback.format
 }
 
@@ -508,16 +505,13 @@ async function ensureAudioPersistence(snapshot) {
       const isTemporary = !!(take.audioKey && (take.audioKey.includes('unsaved') || take.audioKey.includes('blob:')))
       const needsUpload = !isCloudPath || isTemporary
 
-      console.log(`[Persistence] Check ${st}:`, { audioKey: take.audioKey, isCloudPath, isTemporary, needsUpload })
 
       if (needsUpload && take.raw) {
-        console.log(`[Persistence] Persisting audio for ${st} (reason: ${!isCloudPath ? 'Invalid path' : 'Temporary path'})...`)
         try {
           const blob = encodeWAVSync(take.raw)
           const uploadRes = await uploadStemAudio(blob, null, st)
 
           if (uploadRes.success) {
-            console.log(`[Persistence] Successfully persisted ${st} to: ${uploadRes.path}`)
             take.audioKey = uploadRes.path
             saved.audioKey = uploadRes.path
           } else {
@@ -546,12 +540,10 @@ async function restoreAudioBuffer(st, audioKey, metadata = {}) {
   const history = stemHistory[st] || []
   const existingIdx = history.findIndex(t => t.audioKey === audioKey)
   if (existingIdx !== -1) {
-    console.log(`[Restoration] Audio for ${st} already in RAM at index ${existingIdx}`)
     return existingIdx
   }
 
   // 2. Otherwise, download and decode
-  console.log(`[Restoration] Attempting download for ${st}: ${audioKey}`)
   try {
     // Determine bucket (default to audio-files)
     // Some keys might be from liked-audios
@@ -560,7 +552,6 @@ async function restoreAudioBuffer(st, audioKey, metadata = {}) {
       (import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files')
 
     const cleanBucket = bucket.trim()
-    console.log(`[Restoration] Downloading from bucket: ${cleanBucket}, file: ${audioKey}`)
 
     const { data, error } = await supabase.storage
       .from(cleanBucket)
@@ -590,7 +581,6 @@ async function restoreAudioBuffer(st, audioKey, metadata = {}) {
     }
 
     const newIndex = stemHistory[st].push(newEntry) - 1
-    console.log(`[Restoration] Successfully restored ${st} to index ${newIndex}`)
     return newIndex
   } catch (err) {
     console.error(`[Restoration] FAILED for ${st}:`, err)
@@ -795,7 +785,6 @@ function initSavedStateFeature() {
           }
         }
       } catch (e) {
-        console.warn('Could not populate saved sets dropdown from cloud:', e)
       }
     })()
 
@@ -981,7 +970,6 @@ async function saveNewSet() {
     console.error('[SaveSet] Audio persistence failed:', err)
   }
 
-  console.log('snapshot', snapshot)
 
   const stemStateForDb = {
     state_name: snapshot?.metadata?.name || null,
@@ -1000,11 +988,8 @@ async function saveNewSet() {
           : null)
     if (sessionSettingId) {
       const { saveStemStateToDb } = await import('./Auth/stemApi.js')
-      console.log('[SaveSet] Calling saveStemStateToDb with session_setting_id:', sessionSettingId)
       await saveStemStateToDb(sessionSettingId, stemStateForDb)
-      console.log('[SaveSet] Stem state saved to cloud')
     } else {
-      console.log('[SaveSet] No session_setting_id in localStorage; skipping cloud save')
     }
   } catch { }
   // Also persist locally in savedSets for immediate UI feedback
@@ -1166,7 +1151,6 @@ async function toggleLikePreview(item, currentId) {
     try {
       likePreviewSource.stop()
     } catch (err) {
-      console.warn('Failed to stop existing like preview:', err)
     }
     likePreviewSource = null
     likePreviewId = null
@@ -1181,7 +1165,6 @@ async function toggleLikePreview(item, currentId) {
 
   if (!item?.audioBuffer) {
     try {
-      console.log('toggleLikePreview: No buffer found, loading...', item.id)
 
       // Try to load using the robust loading logic (could be Hex, Base64, URL, or Storage)
       // Since toggleLikePreview is in app.js, we don't want to import likesSetsMenu.js here
@@ -1234,7 +1217,6 @@ async function toggleLikePreview(item, currentId) {
         if (storagePath.includes('/audio-files/')) storagePath = storagePath.split('/audio-files/')[1]
         else if (storagePath.includes('/unsaved-audios/')) storagePath = storagePath.split('/unsaved-audios/')[1]
 
-        console.log('toggleLikePreview: Fetching from storage', storagePath)
         let dl = await supabase.storage.from('unsaved-audios').download(storagePath)
         if (dl.error) {
           dl = await supabase.storage.from('audio-files').download(storagePath)
@@ -1293,7 +1275,6 @@ function stopLikePreview(item) {
   try {
     likePreviewSource.stop()
   } catch (err) {
-    console.warn('Failed to stop like preview:', err)
   }
   likePreviewSource = null
   likePreviewId = null
@@ -1370,7 +1351,6 @@ function closeDownloadConfirmModal() {
  * Open the single stem download modal.
  */
 async function openDownloadStemModal(st) {
-  console.log('[Download] Opening download modal for stem:', st)
 
   // Check authentication
   try {
@@ -1399,7 +1379,6 @@ async function openDownloadStemModal(st) {
   if (stemNameEl) {
     stemNameEl.textContent = stemConfigs[st]?.name || st
   } else {
-    console.warn('[Download] Stem name element not found')
   }
 
   // Store the stem ID for later use
@@ -1410,10 +1389,8 @@ async function openDownloadStemModal(st) {
   if (loopRadio) {
     loopRadio.checked = true
   } else {
-    console.warn('[Download] Loop radio button not found')
   }
 
-  console.log('[Download] Opening modal with opacity transition')
   modal.classList.remove('hidden')
   requestAnimationFrame(() => {
     modal.style.opacity = '1'
@@ -1441,7 +1418,6 @@ function closeDownloadStemModal() {
  * Execute the download of a single stem after user confirmation.
  */
 function confirmDownloadStem() {
-  console.log('[Download] Confirm download clicked')
   const modal = document.getElementById('downloadStemModal')
   if (!modal) {
     console.error('[Download] Modal not found in confirmDownloadStem')
@@ -1457,7 +1433,6 @@ function confirmDownloadStem() {
   // Get the selected download mode from the modal
   const rawRadio = document.getElementById('downloadStemModeRaw')
   const mode = rawRadio && rawRadio.checked ? 'raw' : 'loop'
-  console.log('[Download] Downloading stem:', st, 'mode:', mode)
 
   // Initiate download
   downloadStem(st, mode)
@@ -1623,7 +1598,6 @@ async function prepareStemmForDrag(st, audioBuffer) {
 
   try {
     stemDragReady[st] = false
-    console.log(`Preparing ${st} for drag...`)
 
     const wavBlob = await encodeWAVAsync(audioBuffer)
 
@@ -1639,7 +1613,6 @@ async function prepareStemmForDrag(st, audioBuffer) {
     stemDragReady[st] = true
     safeUpdateButtonStates(st)
 
-    console.log(`✓ ${st} ready for drag: ${(wavBlob.size / 1024).toFixed(1)}KB`)
   } catch (err) {
     console.error(`Failed to prepare ${st} for drag:`, err)
     stemDragReady[st] = false
@@ -1657,19 +1630,16 @@ async function prepareStemmForDrag(st, audioBuffer) {
 function invalidateStemCache(st) {
   if (stemWavCache[st]) {
     delete stemWavCache[st]
-    console.log(`Invalidated WAV cache for ${st}`)
   }
   if (stemWavDataUrlCache[st]) {
     delete stemWavDataUrlCache[st]
   }
   if (stemArrayBufferCache[st]) {
     delete stemArrayBufferCache[st]
-    console.log(`Cleared ArrayBuffer cache for ${st}`)
   }
   if (stemBlobUrls[st]) {
     URL.revokeObjectURL(stemBlobUrls[st])
     delete stemBlobUrls[st]
-    console.log(`Cleaned up blob URL for ${st}`)
   }
   stemDragReady[st] = false
 }
@@ -2246,7 +2216,6 @@ async function ensureAudioContext() {
         navigator.audioSession.type = 'playback'
       }
     } catch (err) {
-      console.warn('Failed to set navigator.audioSession.type:', err)
     }
 
     // ----------------------------------------------------------------------
@@ -2295,7 +2264,6 @@ async function ensureAudioContext() {
                   if (audio.parentNode) audio.parentNode.removeChild(audio)
                 }, 1000)
               } catch (inner) {
-                console.warn('silent mode fallback failed', inner)
               }
             })()
         }
@@ -2322,7 +2290,6 @@ async function ensureAudioContext() {
           // Some browsers may reject resume() if hardware is still
           // unavailable (e.g. during an ongoing call).  Log and
           // silently ignore; playback will resume on the next attempt.
-          console.warn('AudioContext resume failed:', err)
         }
       }
     }
@@ -3130,9 +3097,7 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
     const rawBuffer = stemRaw[st] || rebuilt
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
-    console.log(`[Endpoint] Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
   } catch (pcmErr) {
-    console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
 
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
@@ -3231,10 +3196,8 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
-    console.log(`${label} Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
   } catch (pcmErr) {
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
-    console.warn(`${label} Failed to extract PCM for ${st}:`, pcmErr.message)
   }
 
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
@@ -3255,18 +3218,14 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
  * @param {string} st The stem identifier
  */
 function openWaveformEditModal(st) {
-  console.log('[Modal] openWaveformEditModal called with stem:', st)
   if (!st) {
-    console.warn('[Modal] No stem provided')
     return
   }
   const modal = document.getElementById('waveformEditModal')
-  console.log('[Modal] Modal element:', modal)
   if (!modal) {
     console.error('[Modal] waveformEditModal not found!')
     return
   }
-  console.log('[Modal] Opening modal for stem:', st)
   waveformEditState.isOpen = true
   waveformEditState.stem = st
   // Prevent background scrolling and interaction while the modal is open
@@ -3510,10 +3469,8 @@ function closeWaveformEditModal(save) {
  * @param {string} st The stem identifier
  */
 function showCleanStemModal(st) {
-  console.log(`[Clean] showCleanStemModal called for stem: ${st}`)
 
   if (!st) {
-    console.warn('[Clean] No stem provided to showCleanStemModal')
     return
   }
 
@@ -3525,14 +3482,12 @@ function showCleanStemModal(st) {
 
   // Store the stem being cleaned
   currentCleanStem = st
-  console.log(`[Clean] Set currentCleanStem to: ${currentCleanStem}`)
 
   // Update the stem name in the modal
   const stemNameSpan = document.getElementById('cleanStemName')
   if (stemNameSpan) {
     const cfg = stemConfigs[st]
     stemNameSpan.textContent = cfg?.label || st
-    console.log(`[Clean] Updated modal with stem name: ${cfg?.label || st}`)
   }
 
   // Show modal with animation
@@ -3544,7 +3499,6 @@ function showCleanStemModal(st) {
 
   // Prevent background scrolling
   document.body.style.overflow = 'hidden'
-  console.log('[Clean] Modal displayed')
 }
 
 /**
@@ -3579,11 +3533,9 @@ function hideCleanStemModal() {
  * @returns {Promise<{fixed: AudioBuffer, method: string, diagnostics: object}>}
  */
 async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, context = {}) {
-  console.log(`[LoopFix] Starting loop fix for separated ${st} - BPM: ${targetBpm}, Bars: ${bars}`)
 
   // Check if Gemini loop fix is enabled
   const useGemini = loopFixConfig?.isGeminiEnabled?.() || false
-  console.log(`[LoopFix] Gemini enabled: ${useGemini}`)
 
   let loopFixMethod = 'heuristic'
   let diagnostics = {}
@@ -3591,11 +3543,9 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
   if (useGemini) {
     try {
       // Convert AudioBuffer to WAV for Gemini API
-      console.log('[LoopFix] Converting audio to WAV for Gemini analysis...')
       const wavBuffer = audioBufferToWav(audioBuffer, audioBuffer.sampleRate)
       const audioBase64 = arrayBufferToBase64(wavBuffer)
 
-      console.log(`[LoopFix] Calling loop-fix-gemini function (${(wavBuffer.byteLength / 1024).toFixed(1)}KB)`)
 
       // Call the Gemini loop fix edge function
       const response = await supabase.functions.invoke('loop-fix-gemini', {
@@ -3615,12 +3565,10 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
       })
 
       if (response.error) {
-        console.warn('[LoopFix] Gemini API error, falling back to heuristic:', response.error)
         throw new Error('Gemini API failed')
       }
 
       if (response.data && response.data.fixed_audio_base64) {
-        console.log('[LoopFix] Gemini loop fix successful, decoding fixed audio...')
 
         // Decode the fixed audio
         const fixedAudioData = base64ToArrayBuffer(response.data.fixed_audio_base64)
@@ -3631,9 +3579,7 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
         if (diagnosticsHeader) {
           try {
             diagnostics = JSON.parse(diagnosticsHeader)
-            console.log('[LoopFix] Gemini diagnostics:', diagnostics)
           } catch (e) {
-            console.warn('[LoopFix] Failed to parse diagnostics:', e)
           }
         }
 
@@ -3646,17 +3592,14 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
         }
 
         loopFixMethod = 'gemini'
-        console.log(`[LoopFix] Gemini loop fix complete - detected BPM: ${diagnostics.detected_bpm?.toFixed(2) || 'N/A'}`)
 
         return { fixed: fixedBuffer, method: loopFixMethod, diagnostics }
       }
     } catch (geminiError) {
-      console.warn('[LoopFix] Gemini loop fix failed, using heuristic fallback:', geminiError.message)
     }
   }
 
   // Heuristic fallback: rebuild the loop using existing alignment logic
-  console.log('[LoopFix] Using heuristic loop fix method...')
 
   try {
     const master = stemControlValues.master || {}
@@ -3682,7 +3625,6 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
     )
 
     if (aligned && aligned.loop) {
-      console.log('[LoopFix] Heuristic loop fix successful')
       diagnostics = {
         method: 'heuristic',
         detectedHead: aligned.detectedHead,
@@ -3699,7 +3641,6 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
   }
 
   // If all methods fail, return original buffer
-  console.warn('[LoopFix] All loop fix methods failed, using original audio')
   return {
     fixed: audioBuffer,
     method: 'none',
@@ -3720,19 +3661,16 @@ async function separateCurrentStem(st) {
   // Get the current active take
   const activeIdx = stemActiveIndex[st]
   if (activeIdx == null || activeIdx < 0 || !stemHistory[st] || !stemHistory[st][activeIdx]) {
-    console.warn('No active take to separate for stem:', st)
     return
   }
 
   const currentTake = stemHistory[st][activeIdx]
   if (!currentTake || !currentTake.raw) {
-    console.warn('Current take has no audio data:', st)
     return
   }
 
   // Preserve current endpoint factor (Gemini loop fix state) to reapply after separation
   const preservedEndpointFactor = endpointFactors[st] || 1
-  console.log(`[stem-separation] Preserving endpoint factor for ${st}:`, preservedEndpointFactor)
 
   // Update UI to show processing state
   const separateBtn = document.getElementById('editSeparateBtn')
@@ -3752,7 +3690,6 @@ async function separateCurrentStem(st) {
   if (separateHint) separateHint.textContent = 'Processing audio (this may take 10-30 seconds)...'
 
   try {
-    console.log('[stem-separation] Starting separation for:', st);
 
     // Validate current take has valid audio data
     const rawBuffer = currentTake.raw
@@ -3765,7 +3702,6 @@ async function separateCurrentStem(st) {
       throw new Error(`Invalid sample rate: ${sampleRate}. Expected 8000-96000 Hz.`);
     }
 
-    console.log('[stem-separation] Converting audio to WAV - channels:', rawBuffer.numberOfChannels, 'length:', rawBuffer.length, 'sampleRate:', sampleRate, 'duration:', rawBuffer.duration, 's');
 
     // Validate audio duration
     if (rawBuffer.duration > 300) {
@@ -3782,7 +3718,6 @@ async function separateCurrentStem(st) {
     }
 
     const wavSizeMB = (wavBuffer.byteLength / 1024 / 1024).toFixed(2);
-    console.log('[stem-separation] WAV buffer size:', wavBuffer.byteLength, 'bytes', `(${wavSizeMB} MB)`);
 
     // Validate WAV buffer is not empty
     if (wavBuffer.byteLength === 0) {
@@ -3808,7 +3743,6 @@ async function separateCurrentStem(st) {
     }
 
     const base64SizeMB = (base64Audio.length / 1024 / 1024).toFixed(2);
-    console.log('[stem-separation] Base64 audio length:', base64Audio.length, 'characters', `(${base64SizeMB} MB)`);
 
     // Final size check on base64 data
     if (base64Audio.length > 35 * 1024 * 1024) {
@@ -3816,7 +3750,6 @@ async function separateCurrentStem(st) {
     }
 
     // Call the separation edge function with retry logic
-    console.log('[stem-separation] Calling edge function with stemType:', st);
 
     let retryCount = 0
     const { data, error } = await retryEdgeFunctionCall(
@@ -3841,7 +3774,6 @@ async function separateCurrentStem(st) {
       }
     )
 
-    console.log('[stem-separation] Edge function response - data:', !!data, 'error:', !!error, 'retries:', retryCount);
 
     // Validate error response
     if (error) {
@@ -3872,9 +3804,6 @@ async function separateCurrentStem(st) {
       throw new Error('No response data received from separation API');
     }
 
-    console.log('[stem-separation] Response data keys:', Object.keys(data));
-    console.log('[stem-separation] Response success:', data.success);
-    console.log('[stem-separation] Response has audioData:', !!data.audioData);
 
     // Check for API error in response
     if (data.error) {
@@ -3907,17 +3836,14 @@ async function separateCurrentStem(st) {
       throw new Error('Received empty audio data from separation API');
     }
 
-    console.log('[stem-separation] Received separated audio - stemType:', data.stemType, 'audioData length:', data.audioData.length);
 
     // Decode the separated audio data with validation
-    console.log('[stem-separation] Decoding base64 audio data...');
     let separatedAudioData;
     try {
       separatedAudioData = base64ToArrayBuffer(data.audioData);
       if (!separatedAudioData || separatedAudioData.byteLength === 0) {
         throw new Error('Decoded audio buffer is empty');
       }
-      console.log('[stem-separation] Decoded array buffer size:', separatedAudioData.byteLength, 'bytes');
     } catch (decodeError) {
       console.error('[stem-separation] Base64 decode failed:', decodeError);
       throw new Error('Failed to decode separated audio data. Response may be corrupted.');
@@ -3929,14 +3855,12 @@ async function separateCurrentStem(st) {
     }
 
     // Decode the audio file using Web Audio API
-    console.log('[stem-separation] Decoding audio with Web Audio API...');
     let decodedBuffer;
     try {
       decodedBuffer = await audioContext.decodeAudioData(separatedAudioData);
       if (!decodedBuffer) {
         throw new Error('Audio context returned null buffer');
       }
-      console.log('[stem-separation] Audio decoded successfully - duration:', decodedBuffer.duration, 'seconds, channels:', decodedBuffer.numberOfChannels, 'sampleRate:', decodedBuffer.sampleRate);
     } catch (audioDecodeError) {
       console.error('[stem-separation] Web Audio API decode failed:', audioDecodeError);
       throw new Error('Failed to decode separated audio. The file may be corrupted or in an unsupported format.');
@@ -3975,19 +3899,15 @@ async function separateCurrentStem(st) {
     }
 
     // Apply loop fix to ensure correct beat alignment
-    console.log('[stem-separation] Applying loop fix to separated audio...')
     let loopFixResult
     try {
       loopFixResult = await applyLoopFixToSeparatedAudio(decodedBuffer, st, tempo, bars, loopFixContext)
-      console.log(`[stem-separation] Loop fix complete - method: ${loopFixResult.method}`)
 
       // Use the fixed buffer for further processing
       if (loopFixResult.fixed && loopFixResult.method !== 'none') {
         decodedBuffer = loopFixResult.fixed
-        console.log('[stem-separation] Using loop-fixed audio buffer')
       }
     } catch (loopFixError) {
-      console.warn('[stem-separation] Loop fix failed, using original audio:', loopFixError.message)
     }
 
     // Restore hint styling
@@ -4015,9 +3935,7 @@ async function separateCurrentStem(st) {
       throw new Error('Failed to build loop from separated audio - audio may be too short or incompatible');
     }
 
-    console.log('[stem-separation] Loop buffer created - duration:', aligned.loop.duration, 'seconds');
     if (loopFixResult) {
-      console.log(`[stem-separation] Loop fix diagnostics:`, loopFixResult.diagnostics);
     }
 
     // Create a new history entry
@@ -4068,10 +3986,8 @@ async function separateCurrentStem(st) {
         clearStemPCM(st) // Clear any existing PCM data before storing new
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
-        console.log(`[Separation] Extracted PCM for ${st} (full raw): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         deferAutoDownload(st)
       } catch (pcmErr) {
-        console.warn(`[Separation] Failed to extract PCM for ${st}:`, pcmErr.message)
       }
     }
 
@@ -4091,7 +4007,6 @@ async function separateCurrentStem(st) {
 
     // Reapply the preserved endpoint factor (Gemini loop fix) to maintain loop quality
     if (preservedEndpointFactor !== 1) {
-      console.log(`[stem-separation] Reapplying endpoint factor ${preservedEndpointFactor} to maintain loop quality`)
       endpointFactors[st] = preservedEndpointFactor
       await adjustEndpoint(st, preservedEndpointFactor)
     }
@@ -4393,7 +4308,6 @@ async function composeOnce(payload, signal, statusEl = null) {
     const formatLabel = formatConfig ? `${formatConfig.tier}: ${formatConfig.label}` : 'Unknown'
 
     try {
-      console.log(`[FMT] Attempting ElevenLabs generation: ${fmt} (${formatLabel})`)
 
       const { data, error } = await retryEdgeFunctionCall(
         () => supabase.functions.invoke('eleven-music-compose', {
@@ -4406,7 +4320,6 @@ async function composeOnce(payload, signal, statusEl = null) {
           maxDelay: 8000,
           onRetry: (attempt, maxAttempts, delay) => {
             retryCount = attempt
-            console.log(`[composeOnce] Retry ${attempt}/${maxAttempts} for ${fmt} after ${delay}ms`)
             if (statusEl) {
               statusEl.textContent = `Connection issue, retrying (${attempt}/${maxAttempts})...`
             }
@@ -4414,7 +4327,6 @@ async function composeOnce(payload, signal, statusEl = null) {
         }
       )
 
-      console.log(`[composeOnce] Response:`, { hasData: !!data, hasError: !!error, dataType: typeof data, retries: retryCount })
 
       if (error) {
         const errMsg = error.message || error.toString()
@@ -4432,10 +4344,8 @@ async function composeOnce(payload, signal, statusEl = null) {
       }
 
       if (data instanceof ArrayBuffer) {
-        console.log(`[FMT] ✓ ElevenLabs generation successful: ${fmt} (${formatLabel}) - ${data.byteLength} bytes`)
         return data
       } else if (data instanceof Blob) {
-        console.log(`[FMT] ✓ ElevenLabs generation successful: ${fmt} (${formatLabel}) - ${data.size} bytes`)
         return await data.arrayBuffer()
       } else if (typeof data === 'object' && data.error) {
         const errMsg = data.error + (data.hint ? ` - ${data.hint}` : '')
@@ -4468,7 +4378,6 @@ async function composeWithRetries(st, tempo, bars, signal, statusEl) {
   const seconds = beats * (60 / tempo)
   let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
   music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
-  console.log(`[Generation] User requested: ${bars} bars, Generating: ${generationBars} bars (${music_length_ms}ms)`)
   const master = getMasterForPrompt()
   const controls = stemControlValues[st] || {}
   for (let tier = 0; tier < 3; tier++) {
@@ -4536,7 +4445,6 @@ function buildSessionGenerationContext(targetStemId) {
 
     return ctx
   } catch (err) {
-    console.warn('[SessionContext] Failed to build session context:', err)
     return null
   }
 }
@@ -4611,8 +4519,6 @@ async function generateStem(st) {
 
       // Log format details for diagnostics
       const audioBytes = audio_b64 ? Math.floor(audio_b64.length * 0.75) : 0
-      console.log(`[FMT] stemId=${st} fmt=${receivedFormat} sr=${receivedSampleRate} ch=${receivedChannels} bytes=${audioBytes}`)
-      console.log(`[Gen] Received ${st}: ${receivedFormat} (${receivedSampleRate}Hz, ${receivedChannels}ch)`)
 
       // Decode the base64 audio string for playback
       const commaIdx = (audio_b64 || '').indexOf(',')
@@ -4688,10 +4594,8 @@ async function generateStem(st) {
         // Use normalizedRaw for auto-download to get full 16-bar audio
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
-        console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         deferAutoDownload(st)
       } catch (pcmErr) {
-        console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
     } catch (supErr) {
       // Supabase call failed or returned error; fallback to local generation
@@ -4712,7 +4616,6 @@ async function generateStem(st) {
         const seconds = beats * (60 / tempo)
         let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
         music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
-        console.log(`[Generation] User requested: ${bars} bars, Generating: ${generationBars} bars (${music_length_ms}ms)`)
         const body = USE_COMPOSITION_PLAN
           ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
           : { prompt, music_length_ms }
@@ -4788,10 +4691,8 @@ async function generateStem(st) {
         clearStemPCM(st) // Clear any existing PCM data before storing new
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
-        console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         deferAutoDownload(st)
       } catch (pcmErr) {
-        console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
     }
 
@@ -4869,7 +4770,6 @@ async function generateStem(st) {
           await ensureAudioContext()
           startTransport()
         } catch (err) {
-          console.warn('Failed to auto‑start transport:', err)
         }
       }
     }
@@ -5020,7 +4920,6 @@ function setDragImageForFilename(event, filename) {
 
     setTimeout(() => dragImg.remove(), 100)
   } catch (imgErr) {
-    console.warn('Failed to set custom drag image:', imgErr)
   }
 }
 
@@ -5047,10 +4946,8 @@ function tryAttachFileHandleDrag(e, st, btn) {
     if (btn) {
       btn.style.opacity = '0.7'
     }
-    console.log(`[Drag] Browser: Using FileSystemHandle for folder drop only: ${filename}`)
     return true
   } catch (handleErr) {
-    console.warn(`[Drag] File handle drag failed for ${st}, falling back:`, handleErr)
     return false
   }
 }
@@ -5067,7 +4964,6 @@ function scheduleAutoDownloadForStem(st) {
   if (isElectronMode() && isElectronSaveEnabled()) {
     saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename)
       .then(result => {
-        console.log(`[Electron] Saved ${st}: ${result.path}`)
         updateDragButtonState(st)
       })
       .catch(err => {
@@ -5081,7 +4977,6 @@ function scheduleAutoDownloadForStem(st) {
       filename,
       timestamp: pcmCache.timestamp
     }).catch(err => {
-      console.warn(`[AutoDownload] Failed to save ${st}:`, err?.message || err)
     })
   }
 }
@@ -5329,7 +5224,6 @@ function encodeWAVLegacy(audioBuffer) {
   }
 
   if (!hasAudio) {
-    console.warn('Audio buffer appears to contain only silence')
   }
 
   const bps = 2 // 16-bit
@@ -5390,7 +5284,6 @@ function encodeWAVLegacy(audioBuffer) {
     throw new Error('Failed to create WAV blob')
   }
 
-  console.log(`✓ Encoded WAV: ${(blob.size / 1024).toFixed(1)}KB, ${sr}Hz, ${srcCh}ch, ${len} samples`)
 
   return blob
 }
@@ -5411,7 +5304,6 @@ function downloadStem(st, mode = 'loop') {
 
       // Fallback to loop if raw is not available
       if (!buf) {
-        console.warn(`No raw audio for ${st}, falling back to loop`)
         buf = stemLoop[st]
         modeLabel = 'Edited Loop (fallback)'
         mode = 'loop'
@@ -5435,7 +5327,6 @@ function downloadStem(st, mode = 'loop') {
       return
     }
 
-    console.log(`Downloading stem ${st} (${modeLabel}): ${buf.length} samples, ${buf.duration.toFixed(2)}s`)
 
     // Encode to WAV with error handling
     let wav
@@ -5454,7 +5345,6 @@ function downloadStem(st, mode = 'loop') {
       return
     }
 
-    console.log(`WAV blob created: ${(wav.size / 1024).toFixed(1)}KB`)
 
     // Use proper filename with session info and mode (loop or raw)
     const filename = generateWavFilename(st, mode)
@@ -5476,7 +5366,6 @@ function downloadStem(st, mode = 'loop') {
       URL.revokeObjectURL(url)
     }, 100)
 
-    console.log(`✓ Download initiated: ${filename}`)
   } catch (err) {
     console.error('Download failed:', err)
     alert(`Download failed: ${err.message}`)
@@ -6035,12 +5924,10 @@ function safeUpdateButtonStates(st) {
   try {
     updateDragButtonState(st)
   } catch (err) {
-    console.warn(`[UI] Failed to update drag button for ${st}:`, err.message)
   }
   try {
     updateCleanButtonState(st)
   } catch (err) {
-    console.warn(`[UI] Failed to update clean button for ${st}:`, err.message)
   }
 }
 
@@ -6099,9 +5986,7 @@ function updateDragButtonState(st) {
   dragBtn.disabled = !hasValidData || !isChromium || !dragPayloadReady
 
   // Log PCM cache status for debugging
-  console.log(`[DragButton] ${st} - hasValidData: ${hasValidData}, isPCMReady: ${isPCMReady}, fileHandleReady: ${fileHandleReady}, isChromium: ${isChromium}, pcmCache: ${pcmCache ? 'exists' : 'missing'}`)
   if (hasValidData && !isPCMReady && !fileHandleReady) {
-    console.warn(`[DragButton] ${st} has audio buffer but PCM not ready. PCM cache:`, pcmCache)
   }
 
   // Update tooltip with detailed information
@@ -6399,7 +6284,6 @@ function setupEventListeners() {
     Object.keys(stemBlobUrls).forEach(st => {
       if (stemBlobUrls[st]) {
         URL.revokeObjectURL(stemBlobUrls[st])
-        console.log(`Cleaned up blob URL for ${st} on page unload`)
       }
     })
   })
@@ -6459,29 +6343,20 @@ function setupEventListeners() {
   const cleanCloseBtn = document.getElementById('cleanModalCloseBtn')
   const cleanOverlay = document.getElementById('cleanStemOverlay')
 
-  console.log('[Setup] Clean modal buttons found:', {
-    cancel: !!cleanCancelBtn,
-    confirm: !!cleanConfirmBtn,
-    close: !!cleanCloseBtn,
-    overlay: !!cleanOverlay
-  })
+
 
   if (cleanCancelBtn) cleanCancelBtn.addEventListener('click', () => hideCleanStemModal())
   if (cleanCloseBtn) cleanCloseBtn.addEventListener('click', () => hideCleanStemModal())
   if (cleanOverlay) cleanOverlay.addEventListener('click', () => hideCleanStemModal())
   if (cleanConfirmBtn) {
     cleanConfirmBtn.addEventListener('click', async () => {
-      console.log('[Clean] Confirm button clicked, currentCleanStem:', currentCleanStem)
       const st = currentCleanStem
       if (st) {
-        console.log(`[Clean] Starting separation for ${st}`)
         hideCleanStemModal()
         await separateCurrentStem(st)
       } else {
-        console.warn('[Clean] No stem selected for cleaning')
       }
     })
-    console.log('[Setup] Clean confirm button event listener attached')
   } else {
     console.error('[Setup] Clean confirm button NOT found! Modal may not have loaded.')
   }
@@ -6939,12 +6814,10 @@ function setupEventListeners() {
     const pcmCache = getStemPCM(st)
 
     if (!savedRecord && pcmCache?.pcmData) {
-      console.log(`[PreWarm] Initiating save for ${st} before drag`)
       const filename = generateWavFilename(st)
 
       saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename)
         .then(result => {
-          console.log(`[PreWarm] ✓ File ready: ${result.path}`)
           updateDragButtonState(st)
         })
         .catch(err => {
@@ -6969,7 +6842,6 @@ function setupEventListeners() {
     try {
       // Check if PCM data is ready for drag
       if (!isPCMReadyForDrag(st)) {
-        console.warn(`[Drag] PCM data not ready for ${st}`)
         e.preventDefault()
         alert('Audio is still being prepared. Please wait a moment and try again.')
         return
@@ -6985,7 +6857,6 @@ function setupEventListeners() {
       }
 
       const { pcmData, sampleRate, numChannels, format } = pcmCache
-      console.log(`[Drag] Initiating drag for ${st}: ${format} (${sampleRate}Hz, ${numChannels}ch, ${(pcmData.byteLength / 1024).toFixed(1)}KB)`)
 
       const filename = generateWavFilename(st)
 
@@ -6995,27 +6866,19 @@ function setupEventListeners() {
       const autoRecord = getStemAutoDownloadRecord(st)
 
       if (isElectron) {
-        console.log(`[Drag] Electron mode detected`)
 
         const savedPath = getSavedFilePath(st)
         const savedRecord = getSavedFileRecord(st)
         const saveDir = getElectronSaveDirectory()
         const saveEnabled = isElectronSaveEnabled()
 
-        console.log(`[Drag] Debug state:`)
-        console.log(`  - savedPath:`, savedPath)
-        console.log(`  - savedRecord:`, savedRecord)
-        console.log(`  - saveDir:`, saveDir)
-        console.log(`  - auto-save enabled:`, saveEnabled)
 
         if (savedPath && savedRecord?.status === 'saved') {
-          console.log(`[Drag] Using saved file: ${savedPath}`)
 
           try {
             const result = window.electronAPI.startNativeDragWithPath(st, savedPath, filename)
 
             if (result.success) {
-              console.log(`[Drag] ✓ Native drag started: ${result.method} (${result.elapsed}ms)`)
               e.preventDefault()
               if (btn) btn.style.opacity = '0.7'
               return
@@ -7056,10 +6919,6 @@ function setupEventListeners() {
       }
 
       // Browser-based drag for folders and desktop
-      console.warn(`[DRAG] sender=browser event=dragstart stemId=${st}`)
-      console.warn(`[DRAG] ⚠️  BROWSER MODE: Drag to folders or desktop`)
-      console.warn(`[DRAG] Files are automatically saved to your download folder`)
-      console.warn(`[DRAG] You can also drag files from your file manager`)
 
       // Wrap PCM to WAV for browser drag
       const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
@@ -7068,7 +6927,6 @@ function setupEventListeners() {
         lastModified: Date.now()
       })
 
-      console.log(`[Drag] Created WAV file: ${filename} (${(wavFile.size / 1024).toFixed(1)}KB)`)
 
       // Clean up any existing blob URL for this stem
       if (stemBlobUrls[st]) {
@@ -7086,9 +6944,7 @@ function setupEventListeners() {
         try {
           e.dataTransfer.items.add(wavFile)
           addedViaItems = true
-          console.log(`[Drag] ✓ Added file via DataTransferItem API`)
         } catch (itemErr) {
-          console.warn('[Drag] DataTransferItem.add() failed:', itemErr)
         }
       }
 
@@ -7097,9 +6953,7 @@ function setupEventListeners() {
       try {
         const downloadURL = `audio/wav:${filename}:${url}`
         e.dataTransfer.setData('DownloadURL', downloadURL)
-        console.log(`[Drag] Set DownloadURL format`)
       } catch (dlErr) {
-        console.warn('[Drag] DownloadURL not supported:', dlErr)
       }
 
       // Standard formats
@@ -7111,13 +6965,11 @@ function setupEventListeners() {
         e.dataTransfer.setData('audio/wav', url)
         e.dataTransfer.setData('audio/x-wav', url)
       } catch (mimeErr) {
-        console.warn('[Drag] MIME type data not supported:', mimeErr)
       }
 
       e.dataTransfer.effectAllowed = 'copy'
       e.dataTransfer.dropEffect = 'copy'
 
-      console.log(`[Drag] Browser drag prepared: ${addedViaItems ? 'File+URL+DownloadURL' : 'URL+DownloadURL'}`)
 
       // Create custom drag image with filename display
       setDragImageForFilename(e, filename)
@@ -7150,11 +7002,9 @@ function setupEventListeners() {
       if (stemBlobUrls[st]) {
         URL.revokeObjectURL(stemBlobUrls[st])
         delete stemBlobUrls[st]
-        console.log(`Cleaned up blob URL for ${st}`)
       }
     }, 1000) // 1 second - enough time for the drag operation to complete
 
-    console.log(`Drag operation completed for ${st}`)
   })
 
   // Click actions (Generate / Download / Filter mode / options overlay / history / waveform navigation)
@@ -7207,13 +7057,11 @@ function setupEventListeners() {
     if (btn) {
       const action = btn.dataset.action
       const st = btn.dataset.stem
-      console.log('[Click] Button action clicked:', action, 'stem:', st)
       if (action === 'auto-download-configure') {
         try {
           if (isElectronMode()) {
             const result = await chooseElectronSaveDirectory()
             if (!result.canceled) {
-              console.log(`[Electron] Save directory selected: ${result.path}`)
               updateAutoDownloadPanel()
               queueAutoDownloadsForAvailableStems()
             }
@@ -7237,7 +7085,6 @@ function setupEventListeners() {
           }
           updateAutoDownloadPanel()
         } catch (err) {
-          console.warn('Failed to disable auto-save:', err)
         }
         return
       }
@@ -7247,15 +7094,12 @@ function setupEventListeners() {
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
       // Handle clean button: directly separate stem (no modal)
       if (action === 'clean-stem' && st) {
-        console.log(`[Clean] Clean button clicked for stem: ${st}`)
         await separateCurrentStem(st)
 
         // Verify PCM data is ready for drag-and-drop
         const pcmReady = isPCMReadyForDrag(st)
-        console.log(`[Clean] Separation complete. PCM ready for drag: ${pcmReady}`)
         if (pcmReady) {
           const pcmCache = getStemPCM(st)
-          console.log(`[Clean] PCM cache: ${pcmCache.format} (${(pcmCache.pcmData.byteLength / 1024).toFixed(1)}KB)`)
         }
 
         // Seamlessly swap in the new audio if playing, or start playback if stopped
@@ -7282,12 +7126,10 @@ function setupEventListeners() {
             return
           }
 
-          console.log(`[ShowInFolder] Revealing: ${savedPath}`)
 
           window.electronAPI.showItemInFolder(savedPath)
             .then(result => {
               if (result.success) {
-                console.log(`[ShowInFolder] ✓ Revealed: ${result.path}`)
               } else {
                 console.error('[ShowInFolder] Failed:', result.error)
                 alert(`Could not reveal file: ${result.error}`)
@@ -7431,14 +7273,11 @@ function setupEventListeners() {
         return
       }
     } else {
-      console.log('[Click] Not a button action, checking for waveform click')
       const cw = e.target.closest('.waveform-canvas')
-      console.log('[Click] Waveform canvas found:', cw, 'stem:', cw?.dataset.stem)
       if (cw?.dataset.stem) {
         // Open the waveform edit modal instead of toggling an overlay or
         // opening the history drawer.  This modal allows the user to
         // adjust volume and endpoint with full controls and save/discard.
-        console.log('[Click] Opening waveform edit modal for:', cw.dataset.stem)
         openWaveformEditModal(cw.dataset.stem)
         return
       }
@@ -7609,9 +7448,7 @@ function selectStemVersion(st, index) {
     const rawBuffer = take.raw || playbackLoop
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
-    console.log(`[Version] Extracted PCM for ${st} v${index + 1} (${rawBuffer === take.raw ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
   } catch (pcmErr) {
-    console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
@@ -7866,7 +7703,6 @@ function addInstrument(stemId) {
   // Reinitialize lucide icons for the newly shown card
   window.lucide?.createIcons()
 
-  console.log(`✅ Added instrument: ${stemId}`)
 }
 
 function updateAllCardNumbers() {
@@ -7904,11 +7740,9 @@ function updatePlusButtonVisibility() {
 function initTechnoGenerator() {
   // Prevent duplicate initialization
   if (technoGeneratorInitialized) {
-    console.log('🎛️ Techno Generator already initialized')
     return
   }
 
-  console.log('🎛️ Initializing Techno Generator…')
   injectGlobalStyles()
   initializeStemControlValues()
 
@@ -8007,7 +7841,6 @@ function initTechnoGenerator() {
   // before generating any stems.  The modal will only appear once
   // per session.
   showSessionSetupModal()
-  console.log('✅ App ready (session ' + SESSION_TAG + ')')
 }
 
 // Expose init function for external triggers
@@ -8026,7 +7859,6 @@ async function checkWindowsUACStatus() {
     const elevationStatus = await window.electronAPI.getElevationStatus()
 
     if (elevationStatus.elevated && diagnostics.platform === 'win32') {
-      console.warn('[UAC] ⚠️  Running as Administrator - file operations may be affected!')
 
       // Show warning banner
       const uacWarning = document.createElement('div')
@@ -8050,7 +7882,6 @@ async function checkWindowsUACStatus() {
       document.body.appendChild(uacWarning)
     }
   } catch (err) {
-    console.warn('[UAC] Could not check elevation status:', err)
   }
 }
 
@@ -8120,7 +7951,6 @@ function setupDownloadStemModalListeners() {
 }
 
 export async function initApp() {
-  console.log('🎬 Initializing App Navigation System…')
 
   // Initialize WAV encoder worker for non-blocking audio encoding
   initWavEncoder()
@@ -8226,7 +8056,6 @@ export async function initApp() {
   window.addEventListener('loadStemState', async (event) => {
     const state = event.detail
     if (state && state.stems_snapshot) {
-      console.log('Loading cloud stem state:', state.state_name)
       // Show spinner
       const spinner = document.getElementById('loadSetSpinner')
       const label = document.getElementById('loadSetConfirmLabel')
@@ -8244,7 +8073,6 @@ export async function initApp() {
 
       try {
         await applyPlayerState(state.stems_snapshot)
-        console.log('Cloud stem state loaded successfully')
       } catch (err) {
         console.error('Failed to load cloud stem state:', err)
       }
@@ -8272,7 +8100,6 @@ export async function initApp() {
   // Add browser drag warning banner to DOM
   addBrowserDragWarningBanner()
 
-  console.log('✅ Navigation system ready')
 
   // Cleanup on page unload
   window.addEventListener('beforeunload', () => {
@@ -8316,10 +8143,8 @@ async function handleHashChange() {
       try {
         const { initConfirmEmailPage } = await import('./Auth/confirmEmail.js')
         if (typeof initConfirmEmailPage === 'function') {
-          console.log('[router] Initializing confirm email page logic')
           initConfirmEmailPage()
         } else {
-          console.warn('[router] initConfirmEmailPage not a function')
         }
       } catch (e) {
         console.error('[router] Failed to initialize confirm email page:', e?.message || e)

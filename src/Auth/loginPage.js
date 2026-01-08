@@ -106,7 +106,6 @@ function validatePassword() {
  */
 function updateRequirementIndicator(element, isValid) {
   if (!element) {
-    console.warn('updateRequirementIndicator: element not found')
     return
   }
 
@@ -167,7 +166,6 @@ function updateRequirementIndicator(element, isValid) {
  * Note: This function is kept for compatibility but actual toggles are handled by event delegation
  */
 function setupPasswordToggles() {
-  console.log('Password toggles are handled by event delegation - no direct setup needed')
 }
 
 export function setupLoginPage() {
@@ -216,7 +214,6 @@ export function setupLoginPage() {
   const resetSuccessText = document.getElementById('resetSuccessText')
 
   if (!loginForm || !loginBtn) {
-    console.warn('Login form elements not found')
     return
   }
 
@@ -291,7 +288,6 @@ export function setupLoginPage() {
     if (signupToggleBtn) {
       e.preventDefault()
       e.stopPropagation()
-      console.log('Signup password toggle clicked')
 
       const signupPasswordInput = document.getElementById('signupPassword')
       const signupEyeIcon = document.getElementById('signupEyeIcon')
@@ -302,7 +298,6 @@ export function setupLoginPage() {
         signupPasswordInput.type = isPassword ? 'text' : 'password'
         signupEyeIcon.classList.toggle('hidden', !isPassword)
         signupEyeOffIcon.classList.toggle('hidden', isPassword)
-        console.log('Signup password toggled, new type:', signupPasswordInput.type)
 
         // Refresh Lucide icons after toggling
           if (window.safeCreateIcons) {
@@ -319,7 +314,6 @@ export function setupLoginPage() {
     if (confirmToggleBtn) {
       e.preventDefault()
       e.stopPropagation()
-      console.log('Signup confirm password toggle clicked')
 
       const confirmPasswordInput = document.getElementById('signupConfirmPassword')
       const confirmEyeIcon = document.getElementById('confirmEyeIcon')
@@ -330,7 +324,6 @@ export function setupLoginPage() {
         confirmPasswordInput.type = isPassword ? 'text' : 'password'
         confirmEyeIcon.classList.toggle('hidden', !isPassword)
         confirmEyeOffIcon.classList.toggle('hidden', isPassword)
-        console.log('Signup confirm password toggled, new type:', confirmPasswordInput.type)
 
         // Refresh Lucide icons after toggling
           if (window.safeCreateIcons) {
@@ -723,7 +716,6 @@ export function setupLoginPage() {
       if (signupSubmitBtn) signupSubmitBtn.disabled = true
       if (resetSubmitBtn) resetSubmitBtn.disabled = true
 
-      console.warn('⚠️ Supabase not configured - authentication disabled')
     }
   }
 
@@ -735,7 +727,6 @@ export function setupLoginPage() {
     const verifiedEmail = localStorage.getItem('verifiedEmail')
     
     if (emailVerified === 'true' && verifiedEmail) {
-      console.log('[login-page] Email verification detected for:', verifiedEmail)
       
       // Show success notification
       showEmailVerificationSuccess(verifiedEmail)
@@ -850,7 +841,6 @@ export function setupLoginPage() {
         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
           const isVisible = !loginPage.classList.contains('hidden')
           if (isVisible) {
-            console.log('Login page became visible, re-initializing password toggles')
             // Re-initialize password toggles when page becomes visible
             setTimeout(() => {
               setupPasswordToggles()

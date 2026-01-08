@@ -81,7 +81,7 @@ export async function uploadStemAudio(file, userId, stemType) {
  * @returns {Promise<{success: boolean, stemId?: string, error?: string}>}
  */
 export async function saveStem(stemData) {
-  // console.log(stemData)
+
   if (!supabase) {
     return { success: false, error: 'Supabase not configured' }
   }
@@ -188,7 +188,6 @@ export async function saveStem(stemData) {
  * @returns {Promise<{success: boolean, stems?: Array, error?: string}>}
  */
 export async function getUserStems(sessionSettingId = null) {
-  console.log('getUserStems: Start', { sessionSettingId })
   if (!supabase) {
     console.error('getUserStems: Supabase not configured')
     return { success: false, error: 'Supabase not configured' }
@@ -201,7 +200,6 @@ export async function getUserStems(sessionSettingId = null) {
       return { success: false, error: 'User not authenticated' }
     }
 
-    console.log('getUserStems: Authenticated user', user.id)
 
     let query = supabase
       .from('stems')
@@ -212,20 +210,13 @@ export async function getUserStems(sessionSettingId = null) {
 
     if (sessionSettingId) {
       const numericId = Number(sessionSettingId)
-      console.log('getUserStems: Filtering by session_setting_id', numericId)
       query = query.eq('session_setting_id', numericId)
     } else {
-      console.log('getUserStems: Fetching all stems (no session filter)')
     }
 
     console.time('getUserStems: query')
     const { data, error } = await query
     console.timeEnd('getUserStems: query')
-    console.log('getUserStems: Query result', {
-      dataCount: data?.length,
-      firstItemSessionId: data?.[0]?.session_setting_id,
-      error
-    })
 
     if (error) {
       console.error('Error fetching stems:', error)
@@ -304,7 +295,7 @@ export async function upsertUserLike(like) {
           .upsert(payload, { onConflict: 'user_id,stem_id,take_index' })
           .select('id,updated_at')
           .single()
-        
+
         if (!retryError) {
           return { success: true, id: retryData.id, updated_at: retryData.updated_at }
         }
@@ -312,55 +303,54 @@ export async function upsertUserLike(like) {
         // Fallback 2: Manual Upsert (if constraints are missing entirely, e.g. 42P10)
         // This handles cases where migration state is inconsistent
         if (retryError.code === '42P10' || retryError.message.includes('constraint')) {
-           console.warn('Upsert failed due to missing constraints. Attempting manual check-and-update.')
-           
-           // Try to find existing record
-           let match = null
-           if (payload.audio_key) {
-              const { data: existing } = await supabase
-                .from('user_likes')
-                .select('id')
-                .eq('user_id', user.id)
-                .eq('audio_key', payload.audio_key)
-                .maybeSingle()
-              match = existing
-           }
-           
-           if (!match) {
-              const { data: existing } = await supabase
-                .from('user_likes')
-                .select('id')
-                .eq('user_id', user.id)
-                .eq('stem_id', payload.stem_id)
-                .eq('take_index', payload.take_index)
-                .maybeSingle()
-              match = existing
-           }
 
-           if (match) {
-              // Update existing
-              const { data: updated, error: updateError } = await supabase
-                .from('user_likes')
-                .update(payload)
-                .eq('id', match.id)
-                .select('id,updated_at')
-                .single()
-              
-              if (updateError) return { success: false, error: updateError.message }
-              return { success: true, id: updated.id, updated_at: updated.updated_at }
-           } else {
-              // Insert new
-              const { data: inserted, error: insertError } = await supabase
-                .from('user_likes')
-                .insert(payload)
-                .select('id,updated_at')
-                .single()
-              
-              if (insertError) return { success: false, error: insertError.message }
-              return { success: true, id: inserted.id, updated_at: inserted.updated_at }
-           }
+          // Try to find existing record
+          let match = null
+          if (payload.audio_key) {
+            const { data: existing } = await supabase
+              .from('user_likes')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('audio_key', payload.audio_key)
+              .maybeSingle()
+            match = existing
+          }
+
+          if (!match) {
+            const { data: existing } = await supabase
+              .from('user_likes')
+              .select('id')
+              .eq('user_id', user.id)
+              .eq('stem_id', payload.stem_id)
+              .eq('take_index', payload.take_index)
+              .maybeSingle()
+            match = existing
+          }
+
+          if (match) {
+            // Update existing
+            const { data: updated, error: updateError } = await supabase
+              .from('user_likes')
+              .update(payload)
+              .eq('id', match.id)
+              .select('id,updated_at')
+              .single()
+
+            if (updateError) return { success: false, error: updateError.message }
+            return { success: true, id: updated.id, updated_at: updated.updated_at }
+          } else {
+            // Insert new
+            const { data: inserted, error: insertError } = await supabase
+              .from('user_likes')
+              .insert(payload)
+              .select('id,updated_at')
+              .single()
+
+            if (insertError) return { success: false, error: insertError.message }
+            return { success: true, id: inserted.id, updated_at: inserted.updated_at }
+          }
         }
-        
+
         return { success: false, error: retryError.message }
       }
       return { success: false, error: error.message }
