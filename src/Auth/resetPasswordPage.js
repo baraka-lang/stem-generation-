@@ -662,6 +662,9 @@ export function setupResetPasswordPage() {
      * Clear the password form
      */
     function clearForm() {
+      const passwordInput = document.getElementById('newPasswordReset')
+      const confirmPasswordInput = document.getElementById('confirmPasswordReset')
+
       if (passwordInput) passwordInput.value = ''
       if (confirmPasswordInput) confirmPasswordInput.value = ''
       hideMessages()
