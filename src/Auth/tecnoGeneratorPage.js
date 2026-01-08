@@ -5,6 +5,7 @@
 
 import { signIn, signUp, signOut, getCurrentSession } from './index.js'
 import { getAuthGuard } from './authGuard.js'
+import { showLoginModal } from './loginPage.js'
 
 /**
  * Initialize techno generator page functionality
@@ -424,12 +425,12 @@ export function showSaveLoginModal() {
   // Add event listeners
   document.getElementById('saveModalLoginBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
-    window.location.hash = '#login'
+    showLoginModal()
   })
 
   document.getElementById('saveModalSignupBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
-    window.location.hash = '#login'
+    showLoginModal()
   })
 
   document.getElementById('saveModalCancelBtn').addEventListener('click', () => {
