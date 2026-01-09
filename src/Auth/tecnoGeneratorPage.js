@@ -536,7 +536,6 @@ function renderSelectionAuthenticatedUI(user) {
       </button>
       <button id="helpBtnSel" class="hidden sm:flex w-8 h-8 md:w-auto md:px-2 md:py-1 text-xs rounded-full md:rounded-md border border-white/10 md:border-white/15 hover:bg-white/10 items-center justify-center" title="Help">
         <i data-lucide="help-circle" class="w-4 h-4 text-white/80 sm:mr-1 md:mr-0"></i>
-        
       </button>
       <div class="relative">
         <button id="userMenuBtnSel" class="w-8 h-8 md:w-9 md:h-9 rounded-full border border-white/20 bg-white/5 flex items-center justify-center hover:bg-white/10 ring-2 ring-transparent hover:ring-white/10 transition-all" aria-haspopup="true" aria-expanded="false" title="User menu">
