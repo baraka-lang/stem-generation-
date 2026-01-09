@@ -28,11 +28,11 @@ function setupEventListeners() {
     backBtn.addEventListener('click', () => {
       console.log('🏠 Back to Studio button clicked')
       // Navigate to home page using hash routing
-      window.location.hash = '#studio'
+      // window.location.hash = ''
       // Fallback: directly show techno generator page if hash change doesn't work
       setTimeout(() => {
         if (window.showPage) {
-          console.log('🔄 Fallback: showing techno-generator-page directly')
+          // console.log('🔄 Fallback: showing techno-generator-page directly')
           window.showPage('techno-generator-page')
           // Also initialize the techno generator
           if (window.initTechnoGenerator) {
@@ -79,7 +79,7 @@ async function loadUserProfile() {
   try {
     const authGuard = getAuthGuard()
     const currentUser = authGuard.getCurrentUser()
-    
+
     if (!currentUser) {
       showErrorMessage('User not authenticated')
       return
@@ -90,10 +90,10 @@ async function loadUserProfile() {
 
     // Load profile data from Supabase
     const profileData = await loadProfileData(currentUser.id)
-    
+
     // Populate form fields
     populateProfileForm(currentUser, profileData)
-    
+
     // Load subscription data
     await loadSubscriptionData(currentUser.id)
 
@@ -239,11 +239,11 @@ function updateProfileAvatar(profileData) {
  */
 async function handleProfileUpdate(event) {
   event.preventDefault()
-  
+
   const updateBtn = document.getElementById('updateProfileBtn')
   const updateBtnText = document.getElementById('updateProfileBtnText')
   const updateBtnSpinner = document.getElementById('updateProfileBtnSpinner')
-  
+
   try {
     // Show loading state
     updateBtn.disabled = true
@@ -252,13 +252,13 @@ async function handleProfileUpdate(event) {
 
     const authGuard = getAuthGuard()
     const currentUser = authGuard.getCurrentUser()
-    
+
     if (!currentUser) {
       throw new Error('User not authenticated')
     }
 
     const fullName = document.getElementById('profileFullName').value.trim()
-    
+
     if (!fullName) {
       throw new Error('Full name is required')
     }
@@ -267,7 +267,7 @@ async function handleProfileUpdate(event) {
     const { supabase } = await import('./index.js')
     const { error } = await supabase
       .from('profiles')
-      .update({ 
+      .update({
         full_name: fullName,
         updated_at: new Date().toISOString()
       })
@@ -306,7 +306,7 @@ function setupChangePasswordModal() {
     modal.classList.add('opacity-0')
     modal.querySelector('.relative').classList.remove('scale-100')
     modal.querySelector('.relative').classList.add('scale-95')
-    
+
     setTimeout(() => {
       modal.classList.add('hidden')
       // Clear form
@@ -330,7 +330,7 @@ function showChangePasswordModal() {
   if (!modal) return
 
   modal.classList.remove('hidden')
-  
+
   setTimeout(() => {
     modal.classList.remove('opacity-0')
     modal.querySelector('.relative').classList.remove('scale-95')
@@ -343,11 +343,11 @@ function showChangePasswordModal() {
  */
 async function handleChangePassword(event) {
   event.preventDefault()
-  
+
   const submitBtn = document.getElementById('changePasswordSubmitBtn')
   const btnText = document.getElementById('changePasswordBtnText')
   const btnSpinner = document.getElementById('changePasswordBtnSpinner')
-  
+
   try {
     // Show loading state
     submitBtn.disabled = true
@@ -369,7 +369,7 @@ async function handleChangePassword(event) {
     const newPassword = newPasswordElement.value.trim()
     const confirmPassword = confirmPasswordElement.value.trim()
 
- 
+
 
     // Validation
     if (newPassword !== confirmPassword) {
@@ -383,7 +383,7 @@ async function handleChangePassword(event) {
     // Get current user email for verification
     const { supabase } = await import('./index.js')
     const { data: { user }, error: userError } = await supabase.auth.getUser()
-    
+
     if (userError || !user) {
       throw new Error('Unable to verify current user')
     }
@@ -408,14 +408,14 @@ async function handleChangePassword(event) {
     }
 
     showChangePasswordSuccessMessage('Password changed successfully!')
-    
+
     // Close modal after success
     setTimeout(() => {
       const modal = document.getElementById('changePasswordModal')
       modal.classList.add('opacity-0')
       modal.querySelector('.relative').classList.remove('scale-100')
       modal.querySelector('.relative').classList.add('scale-95')
-      
+
       setTimeout(() => {
         modal.classList.add('hidden')
         document.getElementById('changePasswordForm').reset()
@@ -452,7 +452,7 @@ async function handleDownloadData() {
   try {
     const authGuard = getAuthGuard()
     const currentUser = authGuard.getCurrentUser()
-    
+
     if (!currentUser) {
       showErrorMessage('User not authenticated')
       return
@@ -464,9 +464,9 @@ async function handleDownloadData() {
     // 2. Fetching profile data
     // 3. Creating a ZIP file with all data
     // 4. Triggering download
-    
+
     alert('Data download feature coming soon!')
-    
+
   } catch (error) {
     console.error('Error downloading data:', error)
     showErrorMessage('Failed to download data')
@@ -494,7 +494,7 @@ function setupDeleteAccountModal() {
     modal.classList.add('opacity-0')
     modal.querySelector('.relative').classList.remove('scale-100')
     modal.querySelector('.relative').classList.add('scale-95')
-    
+
     setTimeout(() => {
       modal.classList.add('hidden')
       // Clear form
@@ -518,7 +518,7 @@ function showDeleteAccountModal() {
   if (!modal) return
 
   modal.classList.remove('hidden')
-  
+
   setTimeout(() => {
     modal.classList.remove('opacity-0')
     modal.querySelector('.relative').classList.remove('scale-95')
@@ -559,15 +559,15 @@ async function handleDeleteAccount() {
     // 2. Deleting all user data from database
     // 3. Deleting the auth user
     // 4. Redirecting to landing page
-    
+
     alert('Account deletion feature coming soon!')
-    
+
     // For now, just close the modal
     const modal = document.getElementById('deleteAccountModal')
     modal.classList.add('opacity-0')
     modal.querySelector('.relative').classList.remove('scale-100')
     modal.querySelector('.relative').classList.add('scale-95')
-    
+
     setTimeout(() => {
       modal.classList.add('hidden')
       document.getElementById('deleteConfirmText').value = ''
@@ -605,17 +605,17 @@ function hideLoadingState() {
 function showErrorMessage(message) {
   const errorElement = document.getElementById('profileErrorMessage')
   const errorTextElement = document.getElementById('profileErrorText')
-  
+
   if (errorElement && errorTextElement) {
     errorTextElement.textContent = message
     errorElement.classList.remove('hidden')
-    
+
     // Hide success message if visible
     const successElement = document.getElementById('profileSuccessMessage')
     if (successElement) {
       successElement.classList.add('hidden')
     }
-    
+
     // Auto-hide after 5 seconds
     setTimeout(() => {
       errorElement.classList.add('hidden')
@@ -629,17 +629,17 @@ function showErrorMessage(message) {
 function showSuccessMessage(message) {
   const successElement = document.getElementById('profileSuccessMessage')
   const successTextElement = document.getElementById('profileSuccessText')
-  
+
   if (successElement && successTextElement) {
     successTextElement.textContent = message
     successElement.classList.remove('hidden')
-    
+
     // Hide error message if visible
     const errorElement = document.getElementById('profileErrorMessage')
     if (errorElement) {
       errorElement.classList.add('hidden')
     }
-    
+
     // Auto-hide after 5 seconds
     setTimeout(() => {
       successElement.classList.add('hidden')
@@ -653,11 +653,11 @@ function showSuccessMessage(message) {
 function showChangePasswordErrorMessage(message) {
   const errorElement = document.getElementById('changePasswordErrorMessage')
   const errorTextElement = document.getElementById('changePasswordErrorText')
-  
+
   if (errorElement && errorTextElement) {
     errorTextElement.textContent = message
     errorElement.classList.remove('hidden')
-    
+
     // Hide success message if visible
     const successElement = document.getElementById('changePasswordSuccessMessage')
     if (successElement) {
@@ -672,11 +672,11 @@ function showChangePasswordErrorMessage(message) {
 function showChangePasswordSuccessMessage(message) {
   const successElement = document.getElementById('changePasswordSuccessMessage')
   const successTextElement = document.getElementById('changePasswordSuccessText')
-  
+
   if (successElement && successTextElement) {
     successTextElement.textContent = message
     successElement.classList.remove('hidden')
-    
+
     // Hide error message if visible
     const errorElement = document.getElementById('changePasswordErrorMessage')
     if (errorElement) {
@@ -691,7 +691,7 @@ function showChangePasswordSuccessMessage(message) {
 function hideChangePasswordMessages() {
   const errorElement = document.getElementById('changePasswordErrorMessage')
   const successElement = document.getElementById('changePasswordSuccessMessage')
-  
+
   if (errorElement) errorElement.classList.add('hidden')
   if (successElement) successElement.classList.add('hidden')
 }

@@ -1015,6 +1015,18 @@ async function saveNewSet() {
 // Expose saveNewSet globally for session setup
 if (typeof window !== 'undefined') {
   window.saveNewSet = saveNewSet
+  window.hasActiveStemsToSave = hasActiveStemsToSave
+}
+
+/**
+ * Check if there are any active stems to save.
+ * @returns {boolean}
+ */
+function hasActiveStemsToSave() {
+  return visibleInstruments.some(st => {
+    const active = getActiveVersion(st)
+    return active && (active.raw || active.loop)
+  })
 }
 
 /**
@@ -7482,7 +7494,7 @@ function selectStemVersion(st, index) {
    App init + navigation
    ========================================================= */
 function showPage(pageId) {
-  const pages = ['selection-page', 'techno-generator-page', 'favorites-page']
+  const pages = ['selection-page', 'techno-generator-page', 'favorites-page', 'profile-page', 'reset-password-page']
   pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
   const targetPage = document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
   currentPageId = pageId
