@@ -370,14 +370,9 @@ export function setupResetPasswordPage() {
 
           clearForm()
           showSuccess('Password updated successfully! Redirecting to main app...')
-          setTimeout(async () => {
-            try {
-              const { showLoginModal } = await import('./loginPage.js')
-              if (typeof showLoginModal === 'function') {
-                showLoginModal()
-                return
-              }
-            } catch { }
+          setTimeout(() => {
+            const redirectUrl = getRedirectUrl()
+            window.location.href = "/"
           }, 3000)
           console.groupEnd()
           return
