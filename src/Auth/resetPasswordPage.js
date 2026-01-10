@@ -371,8 +371,7 @@ export function setupResetPasswordPage() {
           clearForm()
           showSuccess('Password updated successfully! Redirecting to main app...')
           setTimeout(() => {
-            const redirectUrl = getRedirectUrl()
-            window.location.href = "/"
+            document.location = "/"
           }, 3000)
           console.groupEnd()
           return
