@@ -3,6 +3,7 @@ import { getStemStates, getAllStemStates, deleteStemState, updateStemState, getU
 import { supabase } from '../Auth/index.js'
 import { encodeWAVSync } from '../audioEncoder.js'
 import { bufferToWavAndDownload } from '../DownloadAudio/index.js'
+import posthog from '../Config/posthog.js'
 
 const KEY_OPTIONS = [
   'Any Key',
@@ -1617,6 +1618,14 @@ function renderSets() {
       btn.addEventListener('click', () => {
         const index = parseInt(btn.getAttribute('data-load-set'), 10)
         if (Number.isInteger(index) && loadSetHandler) {
+          // Track Set Loaded (Local)
+          const set = savedSetsCache[index]
+          posthog.capture('set_loaded', {
+            set_id: `local-${index}`,
+            stems_count: set?.metadata?.activeStemCount || 0,
+            takes_count: set?.metadata?.totalTakes || 0
+          })
+
           loadSetHandler(index)
           closeMenu()
         }
@@ -1628,6 +1637,13 @@ function renderSets() {
         const id = parseInt(btn.getAttribute('data-load-cloud-set'), 10)
         const state = stemStatesCache.find(s => s.stem_state_id === id)
         if (state) {
+          // Track Set Loaded (Cloud)
+          posthog.capture('set_loaded', {
+            set_id: id,
+            stems_count: state.stems_snapshot?.metadata?.activeStemCount || 0,
+            takes_count: state.stems_snapshot?.metadata?.totalTakes || 0
+          })
+
           window.dispatchEvent(new CustomEvent('loadStemState', { detail: state }))
           closeMenu()
         }

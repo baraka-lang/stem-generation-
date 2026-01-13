@@ -14,6 +14,16 @@ import { initFavoritesPageView, initLikesSetsMenu, isTrackLiked, refreshFavorite
 import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl, syncCurrentSessionWithCloud } from './TechnoGenerators/sessionSetup.js'
 import { hookIntoStemGeneration } from './Auth/stemGenerationIntegration.js'
 import { uploadStemAudio } from './Auth/stemApi.js'
+import posthog from './Config/posthog.js'
+
+// Track initial page view
+const pageData = {
+  path: window.location.pathname,
+  title: document.title,
+  surface: 'page'
+}
+posthog.capture('page_view', pageData)
+console.log('PostHog Capture: page_view', pageData)
 
 /* =========================================================
    Feature flags / Env toggles
@@ -988,8 +998,21 @@ async function saveNewSet() {
           : null)
     if (sessionSettingId) {
       const { saveStemStateToDb } = await import('./Auth/stemApi.js')
-      await saveStemStateToDb(sessionSettingId, stemStateForDb)
+      const dbResult = await saveStemStateToDb(sessionSettingId, stemStateForDb)
+
+      // Track set saved event
+      posthog.capture('set_saved', {
+        set_id: dbResult?.stem_state_id || snapshot?.metadata?.name || 'unknown',
+        stems_count: snapshot?.metadata?.activeStemCount || 0,
+        takes_count: snapshot?.metadata?.totalTakes || 0
+      })
     } else {
+      // If no session ID, still track but with local info
+      posthog.capture('set_saved', {
+        set_id: snapshot?.metadata?.name || 'unsaved_local',
+        stems_count: snapshot?.metadata?.activeStemCount || 0,
+        takes_count: snapshot?.metadata?.totalTakes || 0
+      })
     }
   } catch { }
   // Also persist locally in savedSets for immediate UI feedback
@@ -1105,7 +1128,7 @@ function resetStemLikeButtonUI(st) {
   })
 }
 
-async function handleStemLikeToggle(st) {
+async function handleStemLikeToggle(st, options = {}) {
   const takeIndex = stemActiveIndex[st] ?? -1
   const activeTake = getActiveVersion(st)
   const sessionInfo = getSessionSummaryInfo()
@@ -1132,6 +1155,14 @@ async function handleStemLikeToggle(st) {
     bars: activeTake?.bars,
     audioKey: activeTake?.audioKey || activeTake?.meta?.unsavedKey || null
   })
+
+  if (liked) {
+    posthog.capture('stem_liked', {
+      instrument: st,
+      like_location: options.like_location || 'stem_card'
+    })
+  }
+
   updateStemLikeButtons(st)
   return liked
 }
@@ -1445,6 +1476,12 @@ function confirmDownloadStem() {
   // Get the selected download mode from the modal
   const rawRadio = document.getElementById('downloadStemModeRaw')
   const mode = rawRadio && rawRadio.checked ? 'raw' : 'loop'
+
+  // Track stem download click
+  posthog.capture('stem_download_clicked', {
+    instrument: st,
+    download_location: 'stem_card_modal'
+  })
 
   // Initiate download
   downloadStem(st, mode)
@@ -3769,7 +3806,8 @@ async function separateCurrentStem(st) {
         body: {
           audioData: base64Audio,
           stemType: st,
-          outputFormat: 'mp3_44100_128'
+          outputFormat: 'mp3_44100_128',
+          tp_session_id: posthog.get_property('tp_session_id') || 'unknown'
         }
       }),
       {
@@ -4460,7 +4498,7 @@ function buildSessionGenerationContext(targetStemId) {
     return null
   }
 }
-async function generateStem(st) {
+async function generateStem(st, options = {}) {
   const tNow = Date.now()
   const last = lastGenTimes[st] || 0
   if (tNow - last < 3000) return
@@ -4473,6 +4511,12 @@ async function generateStem(st) {
   const button = document.querySelector(`[data-stem="${st}"] [data-action="open-create-settings"]`)
   const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
   const card = document.querySelector(`[data-stem="${st}"]`)
+
+  // Track generation requested
+  posthog.capture('stem_generation_requested', {
+    instrument: st,
+    surface: options.surface || 'card_button'
+  })
 
   // Reset Like button visually when generation starts
   resetStemLikeButtonUI(st)
@@ -4510,7 +4554,8 @@ async function generateStem(st) {
           mode: stemControlValues.master?.mode || 'Minor'
         },
         session_context: sessionContext || undefined,
-        use_grok: false
+        use_grok: false,
+        tp_session_id: posthog.get_property('tp_session_id') || 'unknown'
       }
       const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
       if (error || !data) {
@@ -4789,9 +4834,22 @@ async function generateStem(st) {
     updateCardNumberColor(st)
     updateHistoryIndicator(st)
     safeUpdateButtonStates(st)
+
+    // Track generation success
+    posthog.capture('stem_generation_succeeded', {
+      instrument: st,
+      total_latency_ms: Date.now() - tNow,
+      take_id: newVersion.id
+    })
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.error(`❌ Generation error (${st}):`, err)
+
+      // Track generation failure
+      posthog.capture('stem_generation_failed', {
+        instrument: st,
+        error_message: err.message
+      })
 
       // Provide user-friendly error messages based on error type
       let userMessage = err.message
@@ -6303,6 +6361,11 @@ function setupEventListeners() {
   // Player Play/Pause
   const playBtn = document.getElementById('playBtn')
   if (playBtn) playBtn.addEventListener('click', async () => {
+    // Track play button click
+    if (typeof posthog !== 'undefined') {
+      posthog.capture('play_button_toggled', { is_playing: !isPlaying })
+    }
+
     await ensureAudioContext()
     if (isPlaying) stopTransport()
     else {
@@ -6337,6 +6400,12 @@ function setupEventListeners() {
         console.error('Auth check failed', e)
         return
       }
+
+      // Track Download All click
+      posthog.capture('download_all_clicked', {
+        download_location: 'bottom_player_download_all'
+      })
+
       openDownloadConfirmModal()
     })
   }
@@ -7101,7 +7170,7 @@ function setupEventListeners() {
         return
       }
 
-      if (action === 'generate' && st) { await generateStem(st); return }
+      if (action === 'generate' && st) { await generateStem(st, { surface: 'card_button' }); return }
       // When clicking the new generate button, open the settings modal instead of generating immediately
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
       // Handle clean button: directly separate stem (no modal)
@@ -7123,7 +7192,7 @@ function setupEventListeners() {
         }
         return
       }
-      if (action === 'toggle-like' && st) { handleStemLikeToggle(st); return }
+      if (action === 'toggle-like' && st) { handleStemLikeToggle(st, { like_location: 'stem_card' }); return }
       if (action === 'download-stem' && st) { openDownloadStemModal(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       if (action === 'show-in-folder' && st) {
@@ -8414,7 +8483,7 @@ async function applyGenerateSettingsAndStart() {
   }
   hideGenerateSettingsModal()
   // Trigger generation for this stem
-  await generateStem(st)
+  await generateStem(st, { surface: 'modal' })
 }
 
 /* =========================================================

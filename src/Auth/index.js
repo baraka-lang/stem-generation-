@@ -6,6 +6,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { sendPasswordResetEmail, sendConfirmationEmail, sendWelcomeEmail } from '../Config/emailService.js'
 import { supabaseConfig } from '../Config/environment.js'
+import posthog from '../Config/posthog.js'
 
 // Check if Supabase environment variables are loaded
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
@@ -184,9 +185,11 @@ export async function signIn(email, password) {
 
 /**
  * Sign out the current user
+ * @param {Object} options - Optional tracking parameters
+ * @param {string} options.surface - The UI surface triggering the logout
  * @returns {Promise<{error: AuthError | null}>}
  */
-export async function signOut() {
+export async function signOut(options = {}) {
   console.log('🚪 signOut() called')
 
   if (!supabase) {
@@ -205,6 +208,14 @@ export async function signOut() {
     }
 
     console.log('✅ Sign out successful')
+
+    // Track successful signout
+    if (typeof posthog !== 'undefined') {
+      posthog.capture('auth_signed_out', {
+        surface: options.surface || 'unknown'
+      })
+    }
+
     return { error: null }
   } catch (error) {
     console.error('Sign out exception:', error)

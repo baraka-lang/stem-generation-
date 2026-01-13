@@ -357,7 +357,7 @@ async function updateUserMenuInfo(user) {
  */
 async function handleLogout() {
   try {
-    const { error } = await signOut()
+    const { error } = await signOut({ surface: 'user_menu' })
     if (error) {
       console.error('Logout error:', error)
       return
@@ -689,7 +689,7 @@ async function updateSelectionUserMenuInfo(user) {
 
 async function handleSelectionLogout() {
   try {
-    const { error } = await signOut()
+    const { error } = await signOut({ surface: 'selection_menu' })
     if (error) return
     await selectionCheckAuthenticationStatus()
   } catch { }

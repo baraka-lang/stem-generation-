@@ -10,6 +10,7 @@ import { getPlaybackBars } from '../Utilities/barUtils.js'
 import { saveSessionSettingsToCloud } from '../Auth/stemApi.js'
 import { getAuthGuard } from '../Auth/authGuard.js'
 import { showSuccessToast } from '../UI/toast.js'
+import posthog from '../Config/posthog.js'
 
 /**
  * Load session settings from localStorage if available
@@ -343,6 +344,15 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
       selected_accidental: selectedAccidental,
       mode: modeVal
     }
+
+    // Track session started
+    posthog.capture('session_started', {
+      tempo: tempoVal,
+      bars: barsVal,
+      key: `${rootBase}${selectedAccidental}`,
+      scale: modeVal,
+      surface: 'modal'
+    })
 
     // 1. Replace the session setting in local storage immediately
     saveSessionSettingsToStorage(sessionValues)

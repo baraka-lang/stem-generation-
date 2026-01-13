@@ -5,6 +5,7 @@
 
 import { signIn, signUp, resetPassword } from './index.js'
 import { initializeUserProfile } from './userProfile.js'
+import posthog from '../Config/posthog.js'
 
 export function showLoginModal() {
   const modal = document.getElementById('loginModal')
@@ -419,6 +420,12 @@ export function setupLoginPage() {
         // Initialize user profile
         await initializeUserProfile(user)
 
+        // Track successful login
+        posthog.capture('auth_signin_succeeded', {
+          auth_method: 'email_password',
+          surface: 'login_modal'
+        })
+
         showSuccess('Login successful!')
         setTimeout(() => {
 
@@ -477,6 +484,12 @@ export function setupLoginPage() {
       if (user) {
         if (isNewUser) {
           showSignupSuccess('Account created! Please check your email to verify your account.')
+
+          // Track successful signup
+          posthog.capture('auth_signup_succeeded', {
+            auth_method: 'email_password',
+            surface: 'login_modal'
+          })
 
           // Clear form only on successful new user creation
           document.getElementById('signupEmail').value = ''
