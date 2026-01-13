@@ -8,28 +8,28 @@ const getEnvironment = () => {
   // Check for Vercel environment variables
   if (typeof window !== 'undefined' && window.location) {
     const hostname = window.location.hostname;
-    
+
     // Production environment
-    if (hostname === 'stemflow.app' || hostname === 'www.stemflow.app') {
+    if (hostname === 'stemflow.app' || hostname === 'www.stemflow.app' || hostname === 'tunepal.ai' || hostname === 'www.tunepal.ai') {
       return 'production';
     }
-    
-    // Staging environment (your staging domain)
-    if (hostname.includes('vercel.app') && hostname.includes('staging')) {
+
+    // Staging environment
+    if ((hostname.includes('vercel.app') && hostname.includes('staging')) || hostname.includes('staging.tunepal.ai')) {
       return 'staging';
     }
-    
+
     // Preview environment (Vercel preview deployments)
-    if (hostname.includes('vercel.app') && !hostname.includes('staging')) {
+    if (hostname.includes('vercel.app')) {
       return 'preview';
     }
-    
+
     // Development environment
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       return 'development';
     }
   }
-  
+
   // Fallback to environment variables
   return import.meta.env.VITE_ENVIRONMENT || 'development';
 };
@@ -42,25 +42,25 @@ const environmentConfigs = {
     domain: 'localhost:5173',
     protocol: 'http'
   },
-  
+
   preview: {
-    baseUrl: import.meta.env.VITE_VERCEL_URL ? `https://${import.meta.env.VITE_VERCEL_URL}` : 'https://your-preview-url.vercel.app',
-    apiUrl: import.meta.env.VITE_VERCEL_URL ? `https://${import.meta.env.VITE_VERCEL_URL}` : 'https://your-preview-url.vercel.app',
-    domain: import.meta.env.VITE_VERCEL_URL || 'your-preview-url.vercel.app',
+    baseUrl: import.meta.env.VITE_VERCEL_URL ? `https://${import.meta.env.VITE_VERCEL_URL}` : 'https://preview.tunepal.ai',
+    apiUrl: import.meta.env.VITE_VERCEL_URL ? `https://${import.meta.env.VITE_VERCEL_URL}` : 'https://preview.tunepal.ai',
+    domain: import.meta.env.VITE_VERCEL_URL || 'preview.tunepal.ai',
     protocol: 'https'
   },
-  
+
   staging: {
-    baseUrl: 'https://staging.stemflow.app',
-    apiUrl: 'https://staging.stemflow.app',
-    domain: 'staging.stemflow.app',
+    baseUrl: 'https://staging.tunepal.ai',
+    apiUrl: 'https://staging.tunepal.ai',
+    domain: 'staging.tunepal.ai',
     protocol: 'https'
   },
-  
+
   production: {
-    baseUrl: 'https://www.stemflow.app',
-    apiUrl: 'https://www.stemflow.app',
-    domain: 'www.stemflow.app',
+    baseUrl: 'https://tunepal.ai',
+    apiUrl: 'https://tunepal.ai',
+    domain: 'tunepal.ai',
     protocol: 'https'
   }
 };
@@ -81,7 +81,7 @@ export const urlGenerators = {
     const baseUrl = config.baseUrl;
     return `${baseUrl}/reset-password#?token=${token}&type=${type}`;
   },
-  
+
   /**
    * Generate email confirmation URL with JWT token
    * @param {string} accessToken - Access token from Supabase
@@ -92,7 +92,7 @@ export const urlGenerators = {
     const baseUrl = config.baseUrl;
     return `${baseUrl}/confirm-email.html?access_token=${accessToken}&refresh_token=${refreshToken}&type=signup`;
   },
-  
+
   /**
    * Generate welcome redirect URL
    * @param {string} path - Optional path to redirect to
@@ -119,7 +119,7 @@ export const supabaseConfig = {
   url: import.meta.env.VITE_SUPABASE_URL || 'https://your-project.supabase.co',
   anonKey: import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-anon-key',
   serviceRoleKey: import.meta.env.VITE_SUPABASE_SERVICE_ROLE_KEY || '',
-  
+
   // Environment-specific settings
   auth: {
     redirectTo: `${config.baseUrl}/profile.html`,

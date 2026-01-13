@@ -745,10 +745,8 @@ function initSavedStateFeature() {
           const { showErrorToast } = await import('./UI/toast.js')
           showErrorToast('No stems found in the current state')
           return
-        } else {
-          // User is authenticated, proceed with save
-          openSaveSetModal()
         }
+        openSaveSetModal()
 
 
       } else {

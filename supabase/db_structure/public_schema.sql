@@ -105,8 +105,18 @@ CREATE TABLE public.unsaved_stems (
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   is_saved boolean NOT NULL DEFAULT false,
   CONSTRAINT unsaved_stems_pkey PRIMARY KEY (id),
-  CONSTRAINT unsaved_stems_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.profiles(id)
+  CONSTRAINT unsaved_stems_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
+
+ALTER TABLE public.unsaved_stems ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "unsaved_stems_insert_policy" ON public.unsaved_stems
+FOR INSERT TO public
+WITH CHECK (user_id = auth.uid() OR user_id IS NULL);
+
+CREATE POLICY "unsaved_stems_select_policy" ON public.unsaved_stems
+FOR SELECT TO public
+USING (user_id = auth.uid() OR user_id IS NULL);
 CREATE TABLE public.user_likes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
