@@ -289,7 +289,8 @@ export async function upsertUserLike(like) {
       .single()
     if (error) {
       // Fallback 1: Try legacy constraint if primary fails
-      if (error.code === '42703' || error.message.includes('column') || error.message.includes('unique')) {
+      // 42P10 is "no unique or exclusion constraint matching the ON CONFLICT specification"
+      if (error.code === '42703' || error.code === '42P10' || error.message.includes('column') || error.message.includes('unique')) {
         const { data: retryData, error: retryError } = await supabase
           .from('user_likes')
           .upsert(payload, { onConflict: 'user_id,stem_id,take_index' })

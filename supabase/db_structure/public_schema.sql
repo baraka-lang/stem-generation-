@@ -124,5 +124,7 @@ CREATE TABLE public.user_likes (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT user_likes_pkey PRIMARY KEY (id),
   CONSTRAINT user_likes_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
-  CONSTRAINT user_likes_unsaved_stem_id_fkey FOREIGN KEY (unsaved_stem_id) REFERENCES public.unsaved_stems(id)
+  CONSTRAINT user_likes_unsaved_stem_id_fkey FOREIGN KEY (unsaved_stem_id) REFERENCES public.unsaved_stems(id),
+  CONSTRAINT user_likes_user_id_audio_key_val_unique UNIQUE (user_id, audio_key),
+  CONSTRAINT user_likes_user_id_stem_take_unique UNIQUE (user_id, stem_id, take_index)
 );
