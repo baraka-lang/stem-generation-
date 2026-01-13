@@ -737,8 +737,20 @@ function initSavedStateFeature() {
       const canSave = await canUserSave()
 
       if (canSave) {
-        // User is authenticated, proceed with save
-        openSaveSetModal()
+        // Check if snapshot has stem
+        const snapshot = getCurrentPlayerState()
+        const activeStems = Object.values(snapshot.stems || {}).filter(s => s.activeIndex >= 0)
+
+        if (activeStems.length === 0) {
+          const { showErrorToast } = await import('./UI/toast.js')
+          showErrorToast('No stems found in the current state')
+          return
+        } else {
+          // User is authenticated, proceed with save
+          openSaveSetModal()
+        }
+
+
       } else {
         const { showErrorToast } = await import('./UI/toast.js')
         showErrorToast('You must be logged in to save')
@@ -7594,6 +7606,12 @@ if (typeof window !== 'undefined') {
 
 function openFavoritesPage() {
   showPage('favorites-page')
+  const titleElement = document.querySelector('title');
+  if (titleElement) {
+    titleElement.textContent = 'Favorites';
+  }
+
+
   refreshFavoritesUI()
   window.lucide?.createIcons()
   window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -7601,13 +7619,26 @@ function openFavoritesPage() {
 
 function setupFavoritesPageNavigation() {
   const backBtn = document.getElementById('favoritesBackButton')
-  if (backBtn) backBtn.addEventListener('click', () => showPage(lastPageBeforeFavorites))
+  if (backBtn) backBtn.addEventListener('click', () => {
+    showPage(lastPageBeforeFavorites)
+    const titleElement = document.querySelector('title');
+    if (titleElement) {
+      titleElement.textContent = 'TunePal - Techno Generator';
+    }
+
+  })
 
   const selectionBtn = document.getElementById('favoritesOpenSelection')
   if (selectionBtn) selectionBtn.addEventListener('click', () => showPage('selection-page'))
 
   const studioBtn = document.getElementById('favoritesOpenStudio')
-  if (studioBtn) studioBtn.addEventListener('click', () => showPage('techno-generator-page'))
+  if (studioBtn) studioBtn.addEventListener('click', () => {
+    showPage('techno-generator-page')
+    const titleElement = document.querySelector('title');
+    if (titleElement) {
+      titleElement.textContent = 'TunePal - Techno Generator';
+    }
+  })
 }
 function setupNavigationListeners() {
   const loginBtn = document.getElementById('loginBtn')
