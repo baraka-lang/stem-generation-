@@ -1,7 +1,7 @@
 import { ZipReader, BlobReader, BlobWriter } from "jsr:@zip-js/zip-js";
 
 /**
- * Shared PostHog capture helper - Inlined for manual deployment.
+ * Shared PostHog capture helper - Inlined for Dashboard/GUI users.
  */
 async function posthogCapture(options: {
   host?: string;
@@ -13,8 +13,14 @@ async function posthogCapture(options: {
   try {
     const host = options.host || Deno.env.get("POSTHOG_HOST") || "https://us.i.posthog.com";
     const apiKey = options.apiKey || Deno.env.get("POSTHOG_PROJECT_API_KEY");
+    const tp_env = Deno.env.get("VITE_APP_ENV") || Deno.env.get("VITE_ENVIRONMENT") || "production";
 
-    if (!apiKey) return;
+    if (!apiKey) {
+      console.warn("PostHog: No API Key found (tried POSTHOG_PROJECT_API_KEY)");
+      return;
+    }
+
+    console.log(`PostHog: Event "${options.event}" | Host: ${host} | Key: ${apiKey.slice(0, 5)}... | Env: ${tp_env}`);
 
     const payload = {
       api_key: apiKey,
@@ -25,16 +31,26 @@ async function posthogCapture(options: {
         $lib: "deno-edge-function",
         tp_app: "tunepal",
         tp_platform: "server",
-        tp_env: Deno.env.get("VITE_APP_ENV") || "production",
+        tp_env: tp_env,
       },
       timestamp: new Date().toISOString(),
     };
 
-    fetch(`${host}/capture/`, {
+    const resp = await fetch(`${host}/capture/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }).catch(err => console.error("PostHog fetch error:", err));
+    }).catch(err => {
+      console.error("PostHog: fetch error:", err);
+      return null;
+    });
+
+    if (resp && !resp.ok) {
+      const errText = await resp.text().catch(() => 'unknown error');
+      console.warn(`PostHog: API rejection (${resp.status}): ${errText}`);
+    } else if (resp) {
+      console.log(`PostHog: Event "${options.event}" sent successfully`);
+    }
   } catch (err) {
     console.error("PostHog capture error (non-fatal):", err);
   }
@@ -381,13 +397,14 @@ Deno.serve(async (req: Request) => {
       );
 
       const latency_ms = Date.now() - startTime;
-      posthogCapture({
+      await posthogCapture({
         distinctId: userId,
         event: "server_stem_separate_succeeded",
         properties: {
           instrument: stemType,
           target_stem: targetStem,
           latency_ms,
+          provider: 'moises',
           tp_session_id: body?.tp_session_id || 'unknown'
         }
       });
@@ -400,12 +417,13 @@ Deno.serve(async (req: Request) => {
       let bodyJson: any = {};
       try { bodyJson = JSON.parse(bodyText); } catch (_) { }
 
-      posthogCapture({
+      await posthogCapture({
         distinctId: userId,
         event: "server_stem_separate_failed",
         properties: {
           instrument: bodyJson?.stemType || 'unknown',
           latency_ms,
+          provider: 'moises',
           error_message: (error as Error)?.message || String(error),
           tp_session_id: bodyJson?.tp_session_id || 'unknown'
         }

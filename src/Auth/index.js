@@ -199,6 +199,7 @@ export async function signOut(options = {}) {
   }
 
   try {
+    const user = await getCurrentUser()
     console.log('🚪 Calling supabase.auth.signOut()...')
     const { error } = await supabase.auth.signOut()
 
@@ -207,12 +208,23 @@ export async function signOut(options = {}) {
       return { error }
     }
 
-    console.log('✅ Sign out successful')
-
-    // Track successful signout
+    // 1) Capture successful signout BEFORE reset to associate with user
     if (typeof posthog !== 'undefined') {
       posthog.capture('auth_signed_out', {
-        surface: options.surface || 'unknown'
+        surface: options.surface || 'techno-generator-page',
+        email: user?.email || undefined
+      })
+
+      // 2) Reset identity (clears distinct_id + super properties)
+      posthog.reset()
+
+      // 3) Re-register required super properties
+      posthog.register({
+        tp_app: 'tunepal',
+        tp_env: import.meta.env.VITE_APP_ENV || 'development',
+        tp_platform: import.meta.env.VITE_APP_PLATFORM || 'web',
+        tp_genre: posthog.get_property('tp_genre') || 'techno',
+        tp_session_id: crypto.randomUUID(),
       })
     }
 

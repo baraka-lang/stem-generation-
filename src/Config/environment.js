@@ -10,7 +10,13 @@ const getEnvironment = () => {
     const hostname = window.location.hostname;
 
     // Production environment
-    if (hostname === 'stemflow.app' || hostname === 'www.stemflow.app' || hostname === 'tunepal.ai' || hostname === 'www.tunepal.ai') {
+    if (
+      hostname === 'stemflow.app' ||
+      hostname === 'www.stemflow.app' ||
+      hostname === 'tunepal.ai' ||
+      hostname === 'www.tunepal.ai' ||
+      hostname === 'beta.tunepal.ai'
+    ) {
       return 'production';
     }
 

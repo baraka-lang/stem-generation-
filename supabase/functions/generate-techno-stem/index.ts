@@ -12,7 +12,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
 /**
- * Shared PostHog capture helper - Inlined for manual deployment.
+ * Shared PostHog capture helper - Inlined for Dashboard/GUI users.
  */
 async function posthogCapture(options: {
   host?: string;
@@ -24,8 +24,14 @@ async function posthogCapture(options: {
   try {
     const host = options.host || Deno.env.get("POSTHOG_HOST") || "https://us.i.posthog.com";
     const apiKey = options.apiKey || Deno.env.get("POSTHOG_PROJECT_API_KEY");
+    const tp_env = Deno.env.get("VITE_APP_ENV") || Deno.env.get("VITE_ENVIRONMENT") || "production";
 
-    if (!apiKey) return;
+    if (!apiKey) {
+      console.warn("PostHog: No API Key found (tried POSTHOG_PROJECT_API_KEY)");
+      return;
+    }
+
+    console.log(`PostHog: Event "${options.event}" | Host: ${host} | Key: ${apiKey.slice(0, 5)}... | Env: ${tp_env}`);
 
     const payload = {
       api_key: apiKey,
@@ -36,16 +42,26 @@ async function posthogCapture(options: {
         $lib: "deno-edge-function",
         tp_app: "tunepal",
         tp_platform: "server",
-        tp_env: Deno.env.get("VITE_APP_ENV") || "production",
+        tp_env: tp_env,
       },
       timestamp: new Date().toISOString(),
     };
 
-    fetch(`${host}/capture/`, {
+    const resp = await fetch(`${host}/capture/`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-    }).catch(err => console.error("PostHog fetch error:", err));
+    }).catch(err => {
+      console.error("PostHog: fetch error:", err);
+      return null;
+    });
+
+    if (resp && !resp.ok) {
+      const errText = await resp.text().catch(() => 'unknown error');
+      console.warn(`PostHog: API rejection (${resp.status}): ${errText}`);
+    } else if (resp) {
+      console.log(`PostHog: Event "${options.event}" sent successfully`);
+    }
   } catch (err) {
     console.error("PostHog capture error (non-fatal):", err);
   }
@@ -760,7 +776,7 @@ function analyzeSpectrum(buf, stem) {
   let reason = 'ok';
 
   if (stem === 'kick') {
-    if (spectrum.subBass < 0.3 || spectrum.high > 0.15) {
+    if (spectrum.subBass < 0.3 || spectrum.high > 0.25) {
       valid = false;
       reason = 'kick_spectrum_invalid';
     }
@@ -770,7 +786,7 @@ function analyzeSpectrum(buf, stem) {
       reason = 'hihat_has_low_freq_bleed';
     }
   } else if (stem === 'perc') {
-    if (spectrum.subBass > 0.2 || (spectrum.midLow + spectrum.midHigh) < 0.3) {
+    if (spectrum.subBass > 0.3 || (spectrum.midLow + spectrum.midHigh) < 0.2) {
       valid = false;
       reason = 'snare_spectrum_invalid';
     }
@@ -805,7 +821,7 @@ function checkPhaseCoherence(chans, sr, xfadeN) {
   }
 
   const coherence = correlation / (Math.sqrt(startEnergy * endEnergy) + 1e-10);
-  const valid = coherence > 0.5;
+  const valid = coherence > 0.35;
 
   return { valid, reason: valid ? 'ok' : 'phase_mismatch', coherence };
 }
@@ -838,7 +854,7 @@ function validateSnare(buf, bpm, bars) {
   const fullRms = computeRms(x, 256);
   if (fullRms > 0) {
     const lowRms = computeLowBandRms(x, sr, 170);
-    if (lowRms / fullRms > 0.48) {
+    if (lowRms / fullRms > 0.6) {
       return false;
     }
   }
@@ -871,7 +887,7 @@ function validateSnare(buf, bpm, bars) {
     sumAll += v * v;
   }
   const rmsAll = Math.sqrt(sumAll / Math.max(1, Math.floor(x.length / 512)));
-  const globalThr = Math.max(0.02, rmsAll * 3.0);
+  const globalThr = Math.max(0.02, rmsAll * 5.0);
   const allowed = [];
   for (let bar = 0; bar < bars; bar++) {
     const barStart = Math.round(bar * barSec * sr);
@@ -1467,11 +1483,14 @@ Deno.serve(async (req) => {
       }
 
       const phaseResult = checkPhaseCoherence(pcm.data, sampleRate, Math.round(12 / 1000 * sampleRate));
-      if (!phaseResult.valid) {
+      const needsPhaseCheck = ['kick', 'perc', 'hihat', 'bass', 'perc2'].includes(stem);
+      if (!phaseResult.valid && needsPhaseCheck) {
         validationErrors.push(phaseResult.reason || 'phase discontinuity at loop boundary');
+      } else if (!phaseResult.valid) {
+        console.log(`Note: phase_mismatch detected for ${stem} but ignored (soft stem)`);
       }
 
-      validated = stemValidated && tempoDriftOk && spectrumResult.valid && phaseResult.valid;
+      validated = stemValidated && tempoDriftOk && spectrumResult.valid && (needsPhaseCheck ? phaseResult.valid : true);
 
       if (!validated && validationErrors.length > 0) {
         console.log(`Validation failed for ${stem} (attempt ${strictness}): ${validationErrors.join(', ')}`);
@@ -1583,12 +1602,13 @@ Deno.serve(async (req) => {
     });
 
     const latency_ms = Date.now() - startTime;
-    posthogCapture({
+    await posthogCapture({
       distinctId: userId,
       event: "server_stem_generate_succeeded",
       properties: {
         instrument: stem,
         latency_ms,
+        provider: 'elevenlabs',
         tier,
         validated,
         loop_method: loopMethod,
@@ -1600,12 +1620,13 @@ Deno.serve(async (req) => {
   } catch (err) {
     console.error('generate-techno-stem error', err);
     const latency_ms = Date.now() - startTime;
-    posthogCapture({
+    await posthogCapture({
       distinctId: userId,
       event: "server_stem_generate_failed",
       properties: {
         instrument: body?.stem || 'unknown',
         latency_ms,
+        provider: 'elevenlabs',
         error_message: err?.message || String(err),
         tp_session_id: body?.tp_session_id || 'unknown'
       }

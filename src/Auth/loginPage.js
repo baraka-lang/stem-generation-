@@ -396,6 +396,8 @@ export function setupLoginPage() {
     hideMessages()
 
     try {
+      // Flag for AuthGuard to track the correct event type
+      sessionStorage.setItem('tp_last_auth_action', 'signin')
       const { user, error } = await signIn(email, password)
 
       if (error) {
@@ -419,12 +421,6 @@ export function setupLoginPage() {
       if (user) {
         // Initialize user profile
         await initializeUserProfile(user)
-
-        // Track successful login
-        posthog.capture('auth_signin_succeeded', {
-          auth_method: 'email_password',
-          surface: 'login_modal'
-        })
 
         showSuccess('Login successful!')
         setTimeout(() => {
@@ -469,6 +465,8 @@ export function setupLoginPage() {
     hideSignupMessages()
 
     try {
+      // Flag for AuthGuard to track the correct event type
+      sessionStorage.setItem('tp_last_auth_action', 'signup')
       const { user, error, isNewUser } = await signUp(email, password, fullName)
 
       if (error) {
@@ -484,12 +482,6 @@ export function setupLoginPage() {
       if (user) {
         if (isNewUser) {
           showSignupSuccess('Account created! Please check your email to verify your account.')
-
-          // Track successful signup
-          posthog.capture('auth_signup_succeeded', {
-            auth_method: 'email_password',
-            surface: 'login_modal'
-          })
 
           // Clear form only on successful new user creation
           document.getElementById('signupEmail').value = ''

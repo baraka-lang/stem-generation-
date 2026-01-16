@@ -25,8 +25,8 @@ export async function posthogCapture(options: {
             timestamp: new Date().toISOString(),
         };
 
-        // Non-blocking fire-and-forget
-        fetch(`${host}/capture/`, {
+        // Await to ensure the event is sent before the function terminates
+        await fetch(`${host}/capture/`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
