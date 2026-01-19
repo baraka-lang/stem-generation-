@@ -44,6 +44,18 @@ class AuthGuard {
         this.handleAuthStateChange(event, session)
       })
 
+      // Ensure PostHog is synced after initial load (covers hard refresh)
+      this._syncPostHogIdentity()
+
+      // Track session restoration on hard refresh
+      if (this.isAuthenticated && typeof posthog !== 'undefined') {
+        posthog.capture('auth_signin_succeeded', {
+          auth_method: 'session_persistence',
+          surface: 'techno-generator-page',
+          email: this.currentUser?.email || undefined
+        })
+      }
+
       this.isInitialized = true
     } catch (error) {
       // Fallback to unauthenticated state
@@ -109,23 +121,30 @@ class AuthGuard {
       }
     })
 
-    // PostHog Identity Unification: Identify user and capture success events
-    if (this.currentUser?.id) {
-      posthog.identify(this.currentUser.id, {
-        email: this.currentUser.email || undefined,
-        full_name: this.currentUser.user_metadata?.full_name || undefined,
-      })
-    }
+    // PostHog Identity Unification: Ensure identity is always in sync
+    this._syncPostHogIdentity()
 
     if (event === 'SIGNED_IN') {
       const action = sessionStorage.getItem('tp_last_auth_action')
+      const metadata = {
+        auth_method: 'email_password',
+        surface: 'techno-generator-page',
+        email: this.currentUser?.email || undefined
+      }
+
       if (action) {
         sessionStorage.removeItem('tp_last_auth_action')
         const eventName = action === 'signup' ? 'auth_signup_succeeded' : 'auth_signin_succeeded'
 
         posthog.capture(eventName, {
-          auth_method: 'email_password',
-          surface: 'login_modal'
+          ...metadata,
+          surface: 'login_modal' // Specific surface for manual login
+        })
+      } else {
+        // Automatic login (background refresh or session restoration)
+        posthog.capture('auth_signin_succeeded', {
+          ...metadata,
+          auth_method: 'token_refresh'
         })
       }
     }
@@ -233,6 +252,19 @@ class AuthGuard {
     }
     this.authListeners = []
     this.isInitialized = false
+  }
+
+  /**
+   * Sync the current user's identity with PostHog
+   * @private
+   */
+  _syncPostHogIdentity() {
+    if (this.currentUser?.id && typeof posthog !== 'undefined') {
+      posthog.identify(this.currentUser.id, {
+        email: this.currentUser.email || undefined,
+        full_name: this.currentUser.user_metadata?.full_name || undefined,
+      })
+    }
   }
 }
 
