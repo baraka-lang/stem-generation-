@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Electron Detection Test</title>
+  <style>
+    body {
+      font-family: monospace;
+      padding: 20px;
+      background: #1a1a1a;
+      color: #fff;
+    }
+    .test {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #444;
+      border-radius: 8px;
+    }
+    .pass { background: #004400; border-color: #00ff00; }
+    .fail { background: #440000; border-color: #ff0000; }
+    .info { background: #004444; border-color: #00ffff; }
+    h1 { color: #00ff00; }
+    h2 { margin: 0 0 10px 0; }
+    code { background: #000; padding: 2px 6px; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <h1>🔍 Electron Detection Diagnostic</h1>
+
+  <div id="results"></div>
+
+  <script>
+    const results = document.getElementById('results');
+
+    function addTest(title, status, message) {
+      const div = document.createElement('div');
+      div.className = `test ${status}`;
+      div.innerHTML = `<h2>${title}</h2><p>${message}</p>`;
+      results.appendChild(div);
+    }
+
+    // Test 1: Check if window.electronAPI exists
+    const hasElectronAPI = typeof window !== 'undefined' && typeof window.electronAPI !== 'undefined';
+    addTest(
+      hasElectronAPI ? '✅ Test 1: window.electronAPI' : '❌ Test 1: window.electronAPI',
+      hasElectronAPI ? 'pass' : 'fail',
+      hasElectronAPI
+        ? '<strong>PASS:</strong> window.electronAPI is defined<br>You are running in Electron!'
+        : '<strong>FAIL:</strong> window.electronAPI is undefined<br>You are running in BROWSER MODE!'
+    );
+
+    // Test 2: List electronAPI methods if available
+    if (hasElectronAPI) {
+      const methods = Object.keys(window.electronAPI);
+      addTest(
+        '✅ Test 2: electronAPI Methods',
+        'pass',
+        `<strong>Available methods:</strong><br><code>${methods.join(', ')}</code>`
+      );
+    } else {
+      addTest(
+        '⚠️ Test 2: electronAPI Methods',
+        'info',
+        '<strong>SKIPPED:</strong> No electronAPI to inspect'
+      );
+    }
+
+    // Test 3: Check user agent
+    const userAgent = navigator.userAgent;
+    const hasElectronUA = userAgent.includes('Electron');
+    addTest(
+      hasElectronUA ? '✅ Test 3: User Agent' : '⚠️ Test 3: User Agent',
+      hasElectronUA ? 'pass' : 'info',
+      `<strong>User Agent:</strong><br><code>${userAgent}</code><br><br>${hasElectronUA ? 'Contains "Electron"' : 'Does NOT contain "Electron"'}`
+    );
+
+    // Test 4: Check process
+    const hasProcess = typeof process !== 'undefined';
+    addTest(
+      hasProcess ? '✅ Test 4: Node.js process' : '⚠️ Test 4: Node.js process',
+      hasProcess ? 'pass' : 'info',
+      hasProcess
+        ? `<strong>PASS:</strong> process object exists<br>Type: ${process.type || 'unknown'}`
+        : '<strong>INFO:</strong> process object not available (normal in browser)'
+    );
+
+    // Test 5: Final verdict
+    if (hasElectronAPI) {
+      addTest(
+        '🎉 VERDICT: Running in Electron',
+        'pass',
+        '<strong>Success!</strong> This app is running in the Electron desktop environment.<br>window.electronAPI is properly exposed by the preload script.'
+      );
+    } else {
+      addTest(
+        '🌐 VERDICT: Running in Browser',
+        'fail',
+        '<strong>You are in BROWSER MODE!</strong><br><br>' +
+        'This explains why you see "Browser can\'t drag to DAWs" messages.<br><br>' +
+        '<strong>To fix:</strong><br>' +
+        '1. Close this browser tab<br>' +
+        '2. Run: <code>npm run electron</code><br>' +
+        '3. The Electron desktop app should open<br>' +
+        '4. Test again in that window'
+      );
+    }
+
+    // Test 6: Current location
+    addTest(
+      '📍 Test 6: Location',
+      'info',
+      `<strong>Current URL:</strong><br><code>${window.location.href}</code><br><br>` +
+      `<strong>Protocol:</strong> ${window.location.protocol}<br>` +
+      `<strong>Host:</strong> ${window.location.host || '(none)'}`
+    );
+  </script>
+</body>
+</html>

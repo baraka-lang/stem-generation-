@@ -1,0 +1,218 @@
+<!-- Email Confirmation Page -->
+<div id="confirm-email-page" class="hidden min-h-screen flex flex-col">
+  <!-- Header -->
+  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <!-- Logo Section -->
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+          <i data-lucide="music" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            343 Labs
+          </h1>
+          <p class="text-xs text-white/60">AI Music Studio</p>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="hidden md:flex items-center space-x-8">
+        <a href="#features" class="text-white/70 hover:text-white transition">Features</a>
+        <a href="#how-it-works" class="text-white/70 hover:text-white transition">How It Works</a>
+        <a href="#pricing" class="text-white/70 hover:text-white transition">Pricing</a>
+        <a href="#contact" class="text-white/70 hover:text-white transition">Contact</a>
+      </nav>
+
+      <!-- Login Button -->
+      <button id="landingLoginBtn" class="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105">
+        Login
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <div class="flex-1 flex items-center justify-center p-4">
+    <div class="max-w-md w-full">
+      <!-- Confirmation Card -->
+      <div class="glass card-border rounded-2xl p-8 text-center">
+        <!-- Success Icon -->
+        <div class="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+          <i data-lucide="mail-check" class="w-8 h-8 text-white"></i>
+        </div>
+
+        <!-- Title -->
+        <h1 class="text-3xl font-bold text-white mb-4">
+          Check Your Email
+        </h1>
+
+        <!-- Description -->
+        <p class="text-white/70 mb-8 leading-relaxed">
+          We've sent a confirmation link to your email address. Please check your inbox and click the link to verify your account.
+        </p>
+
+        <!-- Email Display -->
+        <div class="bg-white/5 border border-white/10 rounded-lg p-4 mb-6">
+          <div class="flex items-center justify-center space-x-2">
+            <i data-lucide="mail" class="w-4 h-4 text-white/60"></i>
+            <span id="emailDisplay" class="text-white/80 font-medium">user@example.com</span>
+          </div>
+        </div>
+
+        <!-- Confirm Email Button -->
+        <button id="confirmEmailBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 mb-4">
+          Confirm Email
+        </button>
+
+        <!-- Resend Email -->
+        <button id="resendEmailBtn" class="w-full px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white/70 font-medium transition-all duration-300 mb-6">
+          Resend Confirmation Email
+        </button>
+
+        <!-- Help Text -->
+        <div class="text-sm text-white/50 space-y-2">
+          <p>Didn't receive the email? Check your spam folder.</p>
+          <p>Still having trouble? Contact our support team.</p>
+        </div>
+      </div>
+
+      <!-- Back to Login -->
+      <div class="text-center mt-6">
+        <a
+          href="#login"
+          class="text-sm text-purple-400 hover:text-purple-300 transition flex items-center justify-center space-x-2"
+        >
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          <span>Back to Login</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+document.addEventListener('DOMContentLoaded', async () => {
+  const page = document.getElementById('confirm-email-page')
+  if (page) page.classList.remove('hidden')
+  const emailDisplay = document.getElementById('emailDisplay')
+  const confirmEmailBtn = document.getElementById('confirmEmailBtn')
+  const resendEmailBtn = document.getElementById('resendEmailBtn')
+  const landingLoginBtn = document.getElementById('landingLoginBtn')
+
+  console.debug('[confirm-email] DOM ready', {
+    hasConfirmBtn: !!confirmEmailBtn,
+    hasResendBtn: !!resendEmailBtn,
+    hasLoginBtn: !!landingLoginBtn,
+    location: { href: window.location.href, hash: window.location.hash, search: window.location.search }
+  })
+
+  const search = new URLSearchParams(window.location.search)
+  const hash = window.location.hash || ''
+  const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+  const hashParams = new URLSearchParams(hashQuery)
+  const email = search.get('email') || hashParams.get('email') || localStorage.getItem('pendingEmail') || 'user@example.com'
+  if (emailDisplay) emailDisplay.textContent = email
+
+  const token = search.get('token') || search.get('token_hash') || search.get('access_token') || search.get('refresh_token') || hashParams.get('token') || hashParams.get('token_hash') || hashParams.get('access_token') || hashParams.get('refresh_token')
+  const type = search.get('type') || hashParams.get('type') || 'signup'
+
+  console.debug('[confirm-email] Parsed params', {
+    email,
+    tokenPresent: !!token,
+    type
+  })
+
+  const { supabase } = await import('../Auth/index.js')
+  let activeSupabase = supabase
+  if (!activeSupabase && window.supabase && typeof window.supabase.auth === 'object') {
+    console.debug('[confirm-email] Using window.supabase fallback')
+    activeSupabase = window.supabase
+  }
+  console.debug('[confirm-email] Supabase availability', { moduleClient: !!supabase, windowClient: !!window.supabase, active: !!activeSupabase })
+
+  async function verify() {
+    if (!activeSupabase) {
+      console.warn('[confirm-email] Supabase not available, aborting verify')
+      return
+    }
+    if (!token) {
+      console.warn('[confirm-email] No token found, aborting verify')
+      return
+    }
+    console.groupCollapsed('[confirm-email] Verify flow')
+    console.debug('[confirm-email] Inputs', { email, tokenPresent: !!token, type })
+    confirmEmailBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>Confirming...'
+    confirmEmailBtn.disabled = true
+    console.debug('[confirm-email] Calling verifyOtp', { token_hash: token, type })
+    const res = await activeSupabase.auth.verifyOtp({ token_hash: token, type })
+    if (res.error) {
+      const accessToken = search.get('access_token') || hashParams.get('access_token')
+      const refreshToken = search.get('refresh_token') || hashParams.get('refresh_token')
+      console.debug('[confirm-email] verifyOtp error, checking setSession fallback', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken, error: res.error?.message })
+      if (accessToken && refreshToken) {
+        const setRes = await activeSupabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+        if (setRes.error) {
+          confirmEmailBtn.innerHTML = '<i data-lucide="x" class="w-5 h-5 mr-2"></i>Confirmation Failed'
+          confirmEmailBtn.classList.remove('from-purple-500','to-pink-600','hover:from-purple-600','hover:to-pink-700')
+          confirmEmailBtn.classList.add('from-red-500','to-red-600','hover:from-red-600','hover:to-red-700')
+          confirmEmailBtn.disabled = false
+          console.groupEnd()
+          return
+        }
+      } else {
+        confirmEmailBtn.innerHTML = '<i data-lucide="x" class="w-5 h-5 mr-2"></i>Confirmation Failed'
+        confirmEmailBtn.classList.remove('from-purple-500','to-pink-600','hover:from-purple-600','hover:to-pink-700')
+        confirmEmailBtn.classList.add('from-red-500','to-red-600','hover:from-red-600','hover:to-red-700')
+        confirmEmailBtn.disabled = false
+        console.groupEnd()
+        return
+      }
+    }
+    confirmEmailBtn.innerHTML = '<i data-lucide="check" class="w-5 h-5 mr-2"></i>Email Confirmed!'
+    confirmEmailBtn.classList.remove('from-purple-500','to-pink-600','hover:from-purple-600','hover:to-pink-700')
+    confirmEmailBtn.classList.add('from-green-500','to-emerald-600','hover:from-green-600','hover:to-emerald-700')
+    try { localStorage.setItem('emailVerified','true'); localStorage.setItem('verifiedEmail',email); localStorage.removeItem('pendingEmail') } catch {}
+    console.debug('[confirm-email] LocalStorage updated', { emailVerified: localStorage.getItem('emailVerified'), verifiedEmail: localStorage.getItem('verifiedEmail') })
+    setTimeout(() => { window.location.href = '#login' }, 2000)
+    console.groupEnd()
+  }
+
+  if (confirmEmailBtn) {
+    console.debug('[confirm-email] Binding click listener to confirm button')
+    confirmEmailBtn.addEventListener('click', verify)
+  }
+  if (resendEmailBtn) {
+    resendEmailBtn.addEventListener('click', async () => {
+      const { supabase } = await import('../Auth/index.js')
+      let resendSupabase = supabase || (window.supabase && typeof window.supabase.auth === 'object' ? window.supabase : null)
+      if (!resendSupabase) {
+        console.warn('[confirm-email] Supabase not available, aborting resend')
+        return
+      }
+      resendEmailBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>Sending...'
+      resendEmailBtn.disabled = true
+      const confirmationUrl = `${window.location.origin}/#confirm-email`
+      const { error } = await resendSupabase.auth.resend({ type: 'signup', email, options: { emailRedirectTo: confirmationUrl } })
+      if (!error) {
+        resendEmailBtn.innerHTML = '<i data-lucide="check" class="w-5 h-5 mr-2"></i>Email Sent!'
+        resendEmailBtn.classList.remove('bg-white/5','hover:bg-white/10','border-white/10')
+        resendEmailBtn.classList.add('bg-green-500/20','border-green-500/30','text-green-400')
+        setTimeout(() => { resendEmailBtn.innerHTML='Resend Confirmation Email'; resendEmailBtn.classList.remove('bg-green-500/20','border-green-500/30','text-green-400'); resendEmailBtn.classList.add('bg-white/5','hover:bg-white/10','border-white/10','text-white/70'); resendEmailBtn.disabled=false }, 3000)
+      } else {
+        resendEmailBtn.innerHTML = '<i data-lucide="x" class="w-5 h-5 mr-2"></i>Failed to Send'
+        resendEmailBtn.classList.remove('bg-white/5','hover:bg-white/10','border-white/10')
+        resendEmailBtn.classList.add('bg-red-500/20','border-red-500/30','text-red-400')
+        setTimeout(() => { resendEmailBtn.innerHTML='Resend Confirmation Email'; resendEmailBtn.classList.remove('bg-red-500/20','border-red-500/30','text-red-400'); resendEmailBtn.classList.add('bg-white/5','hover:bg-white/10','border-white/10','text-white/70'); resendEmailBtn.disabled=false }, 3000)
+      }
+    })
+  }
+  if (landingLoginBtn) landingLoginBtn.addEventListener('click', () => { window.location.href = '#login' })
+  if (window.lucide) window.lucide.createIcons()
+  if (token) {
+    console.debug('[confirm-email] Auto-verify scheduled', { delayMs: 500 })
+    setTimeout(verify, 500)
+  } else {
+    console.debug('[confirm-email] No token found for auto-verify')
+  }
+})
+</script>

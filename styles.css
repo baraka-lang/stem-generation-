@@ -1,0 +1,68 @@
+/* Lucide Icons Base Styles - Clean stroke-based icons */
+.lucide {
+  display: inline-block;
+  vertical-align: middle;
+  fill: none !important;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  width: 1em;
+  height: 1em;
+}
+
+/* Ensure all icon elements are properly styled */
+[data-lucide] {
+  display: inline-block;
+  vertical-align: middle;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+/* Ensure SVG elements inside Lucide icons are properly styled */
+.lucide svg {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+  width: 100%;
+  height: 100%;
+}
+
+/* Force all Lucide icons to be stroke-based, not filled */
+[data-lucide] svg {
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 2 !important;
+  stroke-linecap: round !important;
+  stroke-linejoin: round !important;
+}
+
+/* Override any potential fill styles */
+.lucide * {
+  fill: none !important;
+  stroke: currentColor !important;
+}
+
+/* Loading animation for spinner icons */
+.loading-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Remove any emoji fallbacks - we want clean stroke icons only */
+.lucide::before {
+  display: none !important;
+}

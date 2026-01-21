@@ -1,0 +1,476 @@
+<!-- Profile Page -->
+<div id="profile-page" class="hidden min-h-screen flex flex-col">
+  <!-- Header -->
+  <header
+    class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10"
+  >
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <!-- Logo Section -->
+      <div class="flex items-center space-x-3">
+        <div
+          class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center"
+        >
+          <i data-lucide="music" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1
+            class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent"
+          >
+            TunePal AI Studio. (BETA Version)
+          </h1>
+          <p class="text-xs text-white/60">AI Stem Generator</p>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="flex items-center space-x-4">
+        <button
+          id="backHomeBtn"
+          class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 flex items-center space-x-2"
+        >
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          <span>Back to Studio</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <div class="flex-1 flex items-center justify-center p-4">
+    <div class="max-w-2xl w-full">
+      <!-- Page Header -->
+      <div class="text-center mb-8">
+        <h1
+          class="text-4xl font-bold mb-4 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent"
+        >
+          Profile Settings
+        </h1>
+        <p class="text-lg text-white/60">
+          Manage your account information and preferences
+        </p>
+      </div>
+
+      <!-- Profile Form -->
+      <div class="glass card-border rounded-2xl p-8">
+        <!-- Error Message -->
+        <div
+          id="profileErrorMessage"
+          class="hidden mb-6 p-4 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm"
+        >
+          <div class="flex items-center">
+            <i data-lucide="alert-circle" class="w-4 h-4 mr-2"></i>
+            <span id="profileErrorText">An error occurred</span>
+          </div>
+        </div>
+
+        <!-- Success Message -->
+        <div
+          id="profileSuccessMessage"
+          class="hidden mb-6 p-4 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-sm"
+        >
+          <div class="flex items-center">
+            <i data-lucide="check-circle" class="w-4 h-4 mr-2"></i>
+            <span id="profileSuccessText">Profile updated successfully!</span>
+          </div>
+        </div>
+
+        <form id="profileForm" class="space-y-6">
+          <!-- Profile Picture Section -->
+          <div class="flex flex-col items-center space-y-4">
+            <div class="relative">
+              <div
+                id="profileAvatar"
+                class="w-24 h-24 bg-gradient-to-br from-purple-500 to-pink-600 rounded-full flex items-center justify-center text-white text-2xl font-bold"
+              >
+                <i data-lucide="user" class="w-8 h-8"></i>
+              </div>
+              <button
+                type="button"
+                id="changeAvatarBtn"
+                class="absolute -bottom-2 -right-2 w-8 h-8 bg-purple-500 hover:bg-purple-600 rounded-full flex items-center justify-center text-white transition"
+              >
+                <i data-lucide="camera" class="w-4 h-4"></i>
+              </button>
+            </div>
+            <p class="text-sm text-white/60 text-center">
+              Click the camera icon to change your profile picture
+            </p>
+          </div>
+
+          <!-- Full Name Field -->
+          <div>
+            <label
+              for="profileFullName"
+              class="block text-sm font-medium text-white/70 mb-2"
+            >
+              Full Name
+            </label>
+            <input
+              id="profileFullName"
+              type="text"
+              required
+              class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+              placeholder="Enter your full name"
+            />
+          </div>
+
+          <!-- Email Field -->
+          <div>
+            <label
+              for="profileEmail"
+              class="block text-sm font-medium text-white/70 mb-2"
+            >
+              Email Address
+            </label>
+            <input
+              id="profileEmail"
+              type="email"
+              required
+              disabled
+              class="w-full px-4 py-3 bg-white/10 border border-white/10 rounded-lg text-white/70 placeholder-white/40 cursor-not-allowed"
+              placeholder="Your email address"
+            />
+            <p class="text-xs text-white/50 mt-1">
+              Email cannot be changed. Contact support if you need to update
+              your email.
+            </p>
+          </div>
+
+          <!-- Account Information Section -->
+          <div class="border-t border-white/10 pt-6">
+            <h3 class="text-lg font-medium text-white mb-4">
+              Account Information
+            </h3>
+
+            <!-- Member Since -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-white/70 mb-2">
+                  Member Since
+                </label>
+                <div
+                  class="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white/70"
+                >
+                  <span id="memberSince">Loading...</span>
+                </div>
+              </div>
+
+              <!-- Credits -->
+              <div>
+                <label class="block text-sm font-medium text-white/70 mb-2">
+                  Available Credits
+                </label>
+                <div
+                  class="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white/70"
+                >
+                  <span id="availableCredits">Loading...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Subscription Information (hidden for now) -->
+          <div class="border-t border-white/10 pt-6 hidden">
+            <h3 class="text-lg font-medium text-white mb-4">Subscription</h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- Subscription Tier -->
+              <div>
+                <label class="block text-sm font-medium text-white/70 mb-2">
+                  Current Plan
+                </label>
+                <div
+                  class="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white/70"
+                >
+                  <span id="subscriptionTier" class="capitalize"
+                    >Loading...</span
+                  >
+                </div>
+              </div>
+
+              <!-- Credit Balance -->
+              <div>
+                <label class="block text-sm font-medium text-white/70 mb-2">
+                  Credit Balance
+                </label>
+                <div
+                  class="px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white/70"
+                >
+                  <span id="creditBalance">Loading...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="border-t border-white/10 pt-6">
+            <div class="flex flex-col sm:flex-row gap-4">
+              <!-- Update Profile Button -->
+              <button
+                type="submit"
+                id="updateProfileBtn"
+                class="flex-1 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center justify-center space-x-2"
+              >
+                <span id="updateProfileBtnText">Update Profile</span>
+                <i
+                  id="updateProfileBtnSpinner"
+                  data-lucide="loader-2"
+                  class="hidden w-5 h-5 animate-spin"
+                ></i>
+              </button>
+
+              <!-- Change Password Button -->
+              <button
+                type="button"
+                id="changePasswordBtn"
+                class="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition"
+              >
+                Change Password
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <!-- Account Actions (hidden for now) -->
+      <div class="mt-8 glass card-border rounded-2xl p-6 hidden">
+        <h3 class="text-lg font-medium text-white mb-4">Account Actions</h3>
+
+        <div class="space-y-4">
+          <!-- Download Data -->
+          <div class="flex items-center justify-between">
+            <div>
+              <h4 class="text-white font-medium">Download Your Data</h4>
+              <p class="text-sm text-white/60">
+                Export all your generated stems and account data
+              </p>
+            </div>
+            <button
+              id="downloadDataBtn"
+              class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white text-sm transition"
+            >
+              Download
+            </button>
+          </div>
+
+          <!-- Delete Account -->
+          <div
+            class="flex items-center justify-between border-t border-white/10 pt-4"
+          >
+            <div>
+              <h4 class="text-white font-medium">Delete Account</h4>
+              <p class="text-sm text-white/60">
+                Permanently delete your account and all data
+              </p>
+            </div>
+            <button
+              id="deleteAccountBtn"
+              class="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-lg text-red-400 text-sm transition"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Change Password Modal -->
+<div
+  id="changePasswordModal"
+  class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out"
+>
+  <div
+    class="absolute inset-0 bg-black/60 backdrop-blur-sm"
+    id="changePasswordOverlay"
+  ></div>
+  <div
+    class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out"
+  >
+    <h2 class="text-xl font-medium text-white mb-4">Change Password</h2>
+
+    <!-- Error Message -->
+    <div
+      id="changePasswordErrorMessage"
+      class="hidden mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm"
+    >
+      <div class="flex items-center">
+        <i data-lucide="alert-circle" class="w-4 h-4 mr-2"></i>
+        <span id="changePasswordErrorText">An error occurred</span>
+      </div>
+    </div>
+
+    <!-- Success Message -->
+    <div
+      id="changePasswordSuccessMessage"
+      class="hidden mb-4 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-sm"
+    >
+      <div class="flex items-center">
+        <i data-lucide="check-circle" class="w-4 h-4 mr-2"></i>
+        <span id="changePasswordSuccessText"
+          >Password changed successfully!</span
+        >
+      </div>
+    </div>
+
+    <form id="changePasswordForm" class="space-y-4">
+      <!-- Current Password -->
+      <div>
+        <label
+          for="currentPassword"
+          class="block text-sm font-medium text-white/70 mb-2"
+        >
+          Current Password
+        </label>
+        <input
+          id="currentPassword"
+          type="password"
+          required
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+          placeholder="Enter current password"
+        />
+      </div>
+
+      <!-- New Password -->
+      <div>
+        <label
+          for="newPasswordProfile"
+          class="block text-sm font-medium text-white/70 mb-2"
+        >
+          New Password
+        </label>
+        <input
+          id="newPasswordProfile"
+          type="password"
+          required
+          minlength="6"
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+          placeholder="Enter new password"
+        />
+      </div>
+
+      <!-- Confirm New Password -->
+      <div>
+        <label
+          for="confirmNewPasswordProfile"
+          class="block text-sm font-medium text-white/70 mb-2"
+        >
+          Confirm New Password
+        </label>
+        <input
+          id="confirmNewPasswordProfile"
+          type="password"
+          required
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+          placeholder="Confirm new password"
+        />
+      </div>
+
+      <div class="flex justify-end gap-3">
+        <button
+          type="button"
+          id="changePasswordCancelBtn"
+          class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          id="changePasswordSubmitBtn"
+          class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium flex items-center gap-2"
+        >
+          <span id="changePasswordBtnText">Change Password</span>
+          <i
+            id="changePasswordBtnSpinner"
+            data-lucide="loader-2"
+            class="hidden w-4 h-4 animate-spin"
+          ></i>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Delete Account Confirmation Modal -->
+<div
+  id="deleteAccountModal"
+  class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out"
+>
+  <div
+    class="absolute inset-0 bg-black/60 backdrop-blur-sm"
+    id="deleteAccountOverlay"
+  ></div>
+  <div
+    class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out"
+  >
+    <div class="text-center mb-6">
+      <div
+        class="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4"
+      >
+        <i data-lucide="alert-triangle" class="w-8 h-8 text-red-400"></i>
+      </div>
+      <h2 class="text-xl font-medium text-white mb-2">Delete Account</h2>
+      <p class="text-sm text-white/80">
+        This action cannot be undone. All your data, including generated stems
+        and account information, will be permanently deleted.
+      </p>
+    </div>
+
+    <div class="space-y-4">
+      <div>
+        <label
+          for="deleteConfirmText"
+          class="block text-sm font-medium text-white/70 mb-2"
+        >
+          Type "DELETE" to confirm
+        </label>
+        <input
+          id="deleteConfirmText"
+          type="text"
+          required
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20 transition"
+          placeholder="Type DELETE to confirm"
+        />
+      </div>
+
+      <div>
+        <label
+          for="deletePassword"
+          class="block text-sm font-medium text-white/70 mb-2"
+        >
+          Enter your password
+        </label>
+        <input
+          id="deletePassword"
+          type="password"
+          required
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20 transition"
+          placeholder="Enter your password"
+        />
+      </div>
+    </div>
+
+    <div class="flex gap-3 mt-6">
+      <button
+        type="button"
+        id="deleteAccountCancelBtn"
+        class="flex-1 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        id="deleteAccountConfirmBtn"
+        class="flex-1 px-4 py-2 bg-red-500/80 hover:bg-red-500 border border-red-500 rounded-lg transition text-sm font-medium flex items-center justify-center gap-2"
+      >
+        <span id="deleteAccountBtnText">Delete Account</span>
+        <i
+          id="deleteAccountBtnSpinner"
+          data-lucide="loader-2"
+          class="hidden w-4 h-4 animate-spin"
+        ></i>
+      </button>
+    </div>
+  </div>
+</div>

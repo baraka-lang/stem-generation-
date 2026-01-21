@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script src="https://code.jquery.com/jquery-3.7.1.js" integrity="sha256-eKhayi8LEQwp4NKxN+CfCh+3qOVUtJn3QNZ0TciWLP4=" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <style>
+    /* helper to hide horizontal scrollbar for take tray */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    .card-border { border: 1px solid rgba(255,255,255,0.08); }
+
+    /* Non-blur player surface shared by player bar, mixer tray, and generate cards */
+    .player-surface {
+      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+    }
+
+    /* Keep content clear of player bar */
+    #techno-generator-page { padding-bottom: 7.5rem; }
+
+    /* Enlarge the navigation arrows inside waveform/take selectors */
+    [data-action="prev-take"] i,
+    [data-action="next-take"] i {
+      width: 1.5rem;
+      height: 1.5rem;
+    }
+
+    /* Red border when muted */
+    .sg-muted-border { border-color: rgb(239, 68, 68) !important; }
+
+    /* On small screens, reduce the height of waveforms and general font sizes to keep cards compact */
+    @media (max-width: 640px) {
+      .waveform-canvas {
+        height: 2.5rem !important;
+      }
+      /* Reduce default font sizes inside the stem cards */
+      .stem-index {
+        font-size: 0.6rem !important;
+      }
+      #stem-container h3 {
+        font-size: 0.75rem !important;
+      }
+      /* Shrink the create button label and icon on mobile.  The base font size
+         is reduced to approximately 70% and the icon is scaled down to
+         0.75rem (12px).  These classes are assigned dynamically in JS. */
+      .create-label {
+        /* On mobile, shrink the create button text to roughly 70% of the default size. */
+        font-size: 0.7rem !important;
+      }
+      .create-icon {
+        /* On mobile, shrink the create button icon proportionally. */
+        width: 0.7rem !important;
+        height: 0.7rem !important;
+      }
+    }
+
+    /* ------------------------------------------------------------------
+       Custom styles for waveform editing controls
+
+       The waveform canvases need a fixed transform origin so that
+       vertical scaling (used to visualise volume changes) scales
+       around the centre rather than from the top.  A transition makes
+       the scaling animation smooth.  The sg-slider-range class defines
+       a horizontal dial style for the volume and endpoint sliders
+       displayed when clicking on a waveform.  It is responsive for
+       both pointer and touch devices.
+    ------------------------------------------------------------------ */
+
+    /* Ensure waveform vertical scaling happens around its centre */
+    .waveform-canvas {
+      transform-origin: center center;
+      transition: transform 0.2s ease;
+    }
+
+    /* Base styles for horizontal dial sliders used in the waveform overlay */
+    .sg-slider-range {
+      -webkit-appearance: none;
+      width: 100%;
+      height: 1rem;
+      background: transparent;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .sg-slider-range:focus {
+      outline: none;
+    }
+    /* Track styling for WebKit browsers */
+    .sg-slider-range::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 0.5rem;
+      background: rgba(255, 255, 255, 0.25);
+      border-radius: 9999px;
+    }
+    /* Thumb styling for WebKit browsers */
+    .sg-slider-range::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 1.25rem;
+      width: 1.25rem;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      border: 2px solid rgba(0, 0, 0, 0.4);
+      margin-top: -0.375rem; /* vertically center thumb on track */
+    }
+    /* Track styling for Firefox */
+    .sg-slider-range::-moz-range-track {
+      width: 100%;
+      height: 0.5rem;
+      background: rgba(255, 255, 255, 0.25);
+      border-radius: 9999px;
+    }
+    /* Thumb styling for Firefox */
+    .sg-slider-range::-moz-range-thumb {
+      height: 1.25rem;
+      width: 1.25rem;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.85);
+      border: 2px solid rgba(0, 0, 0, 0.4);
+    }
+
+    /* Highlight solo buttons when active: red border and subtle red background.
+       Because many solo toggle buttons lack an explicit border by default,
+       we apply a solid 1px border when the active class is present so
+       the red outline is visible. */
+    .sg-toggle-active[data-action="mix-solo"],
+    .sg-toggle-active[data-action="solo-stem"] {
+      border: 1px solid rgb(239, 68, 68) !important;
+      background-color: rgba(239, 68, 68, 0.2) !important;
+      color: rgb(239, 68, 68) !important;
+    }
+
+    /*
+      Infinite horizontal dial used for volume and endpoint controls.
+      It displays repeating tick marks that scroll horizontally when the user
+      drags or scrolls the dial.  A central marker indicates the neutral
+      position.  The dial uses background-position to achieve an
+      infinite scrolling effect.
+    */
+    .infinite-dial {
+      position: relative;
+      height: 1.25rem;
+      width: 100%;
+      background-image: repeating-linear-gradient(
+        to right,
+        rgba(255, 255, 255, 0.4) 0px,
+        rgba(255, 255, 255, 0.4) 1px,
+        transparent 1px,
+        transparent 8px
+      );
+      background-repeat: repeat-x;
+      background-size: 8px 100%;
+      background-position: 0 50%;
+      cursor: ew-resize;
+    }
+    .infinite-dial::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      background-color: rgba(255, 255, 255, 0.5);
+      transform: translateX(-50%);
+    }
+
+    /* Rotary knob styles for edit modal controls */
+    .rotary-knob-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 0.5rem;
+    }
+
+    .rotary-knob {
+      position: relative;
+      width: 4rem;
+      height: 4rem;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(255,255,255,0.15), rgba(255,255,255,0.05));
+      border: 2px solid rgba(255,255,255,0.3);
+      cursor: ns-resize;
+      user-select: none;
+      touch-action: none;
+      transition: border-color 0.2s ease;
+    }
+
+    .rotary-knob::before {
+      content: '';
+      position: absolute;
+      top: 10%;
+      left: 50%;
+      width: 5px;
+      height: 38%;
+      background: rgba(255, 255, 255, 1.0);
+      box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+      transform-origin: bottom center;
+      transform: translateX(-50%) rotate(var(--knob-angle, 0deg));
+      border-radius: 2px;
+      transition: transform 0.05s linear;
+    }
+
+    .rotary-knob::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 8px;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.6);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .rotary-knob:hover {
+      border-color: rgba(139, 92, 246, 0.5);
+      cursor: ns-resize;
+    }
+
+    .rotary-knob.active {
+      border-color: rgba(139, 92, 246, 0.8);
+      box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+      cursor: ns-resize;
+    }
+
+    .rotary-knob-label {
+      font-size: 0.75rem;
+      color: rgba(255, 255, 255, 0.7);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      width: 100%;
+      text-align: center;
+    }
+
+    .rotary-knob-value {
+      font-size: 0.875rem;
+      color: rgba(255, 255, 255, 0.9);
+      font-weight: 500;
+      width: 100%;
+      text-align: center;
+    }
+
+    /* Mobile-specific adjustments */
+    @media (max-width: 640px) {
+      /* Prevent bottom player controls from wrapping so play and volume stay on the same row */
+      #playerBar .flex-wrap {
+        flex-wrap: nowrap !important;
+      }
+      #playerBar .flex-wrap > * {
+        flex-shrink: 0;
+      }
+      /* Reduce vertical padding on the Create and Clean buttons to make them less tall */
+      [data-action="open-create-settings"],
+      [data-action="clean-stem"] {
+        padding-top: 0.4rem !important;
+        padding-bottom: 0.4rem !important;
+      }
+      /* Smaller rotary knobs on mobile */
+      .rotary-knob {
+        width: 3rem;
+        height: 3rem;
+      }
+      .rotary-knob-label {
+        font-size: 0.65rem;
+      }
+      .rotary-knob-value {
+        font-size: 0.75rem;
+        min-width: 3rem;
+      }
+    }
+    /* Comment */
+  </style>
+</head>
+<body class="bg-zinc-900 text-white font-geist overflow-x-hidden">
+  <!-- App root container where templates will be injected -->
+  <div id="app-root"></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

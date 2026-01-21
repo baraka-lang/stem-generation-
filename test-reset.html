@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Reset Password Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="url"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .info {
+            background: #e7f3ff;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .reset-frame {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Test Reset Password Page</h1>
+        
+        <div class="info">
+            <strong>Instructions:</strong> Enter your Supabase configuration below and click "Load Reset Page" to test the password reset functionality.
+        </div>
+        
+        <form id="configForm">
+            <div class="form-group">
+                <label for="supabaseUrl">Supabase URL:</label>
+                <input type="url" id="supabaseUrl" placeholder="https://your-project.supabase.co" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="supabaseKey">Supabase Anon Key:</label>
+                <input type="text" id="supabaseKey" placeholder="your-anon-key" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="redirectUrl">Redirect URL (optional):</label>
+                <input type="text" id="redirectUrl" placeholder="/" value="/">
+            </div>
+            
+            <button type="submit">Load Reset Page</button>
+            <button type="button" onclick="loadFromEnv()">Load from .env</button>
+        </form>
+        
+        <div id="resetContainer" style="display: none;">
+            <h3>Reset Password Page Preview:</h3>
+            <iframe id="resetFrame" class="reset-frame" src=""></iframe>
+        </div>
+    </div>
+
+    <script>
+        // Load configuration from form
+        document.getElementById('configForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const supabaseUrl = document.getElementById('supabaseUrl').value;
+            const supabaseKey = document.getElementById('supabaseKey').value;
+            const redirectUrl = document.getElementById('redirectUrl').value || '/';
+            
+            if (!supabaseUrl || !supabaseKey) {
+                alert('Please enter both Supabase URL and Anon Key');
+                return;
+            }
+            
+            // Create URL with parameters
+            const resetUrl = `reset-password.html?supabase_url=${encodeURIComponent(supabaseUrl)}&supabase_key=${encodeURIComponent(supabaseKey)}&redirect_url=${encodeURIComponent(redirectUrl)}`;
+            
+            // Load the reset page in iframe
+            document.getElementById('resetFrame').src = resetUrl;
+            document.getElementById('resetContainer').style.display = 'block';
+            
+            console.log('Loading reset page with config:', { supabaseUrl, supabaseKey, redirectUrl });
+        });
+        
+        // Try to load from environment variables (if available)
+        function loadFromEnv() {
+            // This would work if running in a Node.js environment with access to process.env
+            // For browser testing, we'll use default values
+            document.getElementById('supabaseUrl').value = 'https://your-project.supabase.co';
+            document.getElementById('supabaseKey').value = 'your-anon-key';
+            document.getElementById('redirectUrl').value = '/';
+            
+            alert('Please update the values with your actual Supabase configuration');
+        }
+        
+        // Auto-fill with common test values
+        document.addEventListener('DOMContentLoaded', function() {
+            // You can set default values here for testing
+            // document.getElementById('supabaseUrl').value = 'your-actual-url';
+            // document.getElementById('supabaseKey').value = 'your-actual-key';
+        });
+    </script>
+</body>
+</html>

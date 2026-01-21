@@ -1,0 +1,306 @@
+<canvas id="aurora-canvas"></canvas>
+
+<!-- Studio Header - Only visible on studio pages -->
+<header id="studioHeader" class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10 hidden">
+  <div class="max-w-5xl mx-auto px-4 py-2 flex items-center justify-between">
+    <div class="text-sm text-white/70">AI Studio</div>
+    <nav class="flex items-center gap-2 relative">
+      <!-- Help button to open usage info -->
+      <button id="helpBtn" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
+        <i data-lucide="help-circle" class="w-4 h-4"></i>
+      </button>
+      <button data-likes-menu-toggle data-anchor-id="studio-menu" class="w-9 h-9 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10 transition" title="Likes &amp; Sets">
+        <i data-lucide="user" class="w-4 h-4"></i>
+      </button>
+      <!-- User menu button: circular avatar icon triggers dropdown (shown when authenticated) -->
+      <button id="userMenuBtn" class="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10" aria-haspopup="true" aria-expanded="false" title="User menu">
+        <i data-lucide="user" class="w-4 h-4"></i>
+      </button>
+      
+      <!-- Login button (shown when not authenticated) -->
+      <button id="loginBtn" class="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white text-sm font-medium transition-all duration-300 hover:scale-105 hidden" title="Sign in">
+        <i data-lucide="log-in" class="w-4 h-4 mr-2"></i>
+        Sign In
+      </button>
+      <!-- Dropdown menu for user actions.  Position it below the avatar and
+           give it a solid dark background instead of the semi-transparent
+           player surface.  Using top-full ensures the menu appears just
+           beneath the button and does not overlap the icons. -->
+      <div id="userMenu"
+           class="absolute right-0 top-full mt-2 w-40 bg-zinc-800 border border-white/10 rounded-md shadow-lg hidden z-40">
+        <div class="px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center">
+          <span>Credits</span>
+          <span id="headerCreditsValue" class="font-medium">100</span>
+        </div>
+        <button id="userMenuLibrary" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Library</button>
+        <button id="userMenuAccount" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Account</button>
+        <button id="userMenuLogout" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Log out</button>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<!-- Login Page - loaded separately from src/pages/login-page.html -->
+<div id="login-page-placeholder"></div>
+
+<!-- Reset Password Page - loaded separately from src/pages/reset-password.html -->
+<div id="reset-password-page-placeholder"></div>
+
+<!-- Generator Selection Page - loaded separately from src/pages/selection-page.html -->
+<div id="selection-page-placeholder"></div>
+
+<!-- Favorites Page - loaded separately from src/pages/favorites-page.html -->
+<div id="favorites-page-placeholder"></div>
+
+<!-- Techno Generator Page - loaded separately from src/pages/techno-generator-page.html -->
+<div id="techno-generator-page-placeholder"></div>
+
+<!-- Instructions Modal (unchanged structure) -->
+<div id="instructionModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="modalOverlay"></div>
+  <div class="relative w-full max-w-2xl max-h-[80vh] glass card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <div class="flex items-center justify-between mb-6">
+      <h2 class="text-2xl font-medium text-white">Instructions</h2>
+      <button id="modalCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <div class="mb-6">
+      <label class="block text-sm text-white/60 mb-3">Describe the sound you want to generate:</label>
+      <textarea id="instructionTextarea" class="w-full h-40 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white/90 leading-relaxed resize-none focus:border-white/20 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition" placeholder="Enter detailed instructions for the AI music generation..."></textarea>
+    </div>
+    <div class="flex gap-3 justify-end">
+      <button id="modalCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+      <button id="modalSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Save Instructions</button>
+    </div>
+  </div>
+</div>
+
+<!-- Help & Tips Modal -->
+<div id="helpModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="helpModalOverlay"></div>
+  <div class="relative w-full max-w-md max-h-[80vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-medium text-white">Help &amp; Tips</h2>
+      <button id="helpModalCloseBtn" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <div class="text-sm text-white/80 space-y-3 overflow-y-auto max-h-[60vh]">
+      <!-- Warning about silent mode appears first in the help modal -->
+      <p class="text-red-500 font-bold">Please disable silent mode on your mobile device for audio playback.</p>
+      <p>Press the spacebar to play or pause the loop.</p>
+      <p>Use number keys 1–9 to mute or unmute the corresponding instruments.</p>
+      <p>If the number circles are red, it means either the stem has not been generated yet or the channel is muted.</p>
+      <p>A red border around a card indicates that the instrument or channel is muted.</p>
+      <p>Generations are not 100% predictable due to the nature of AI – experiment and generate multiple versions to find your favorite take.</p>
+    </div>
+  </div>
+</div>
+
+  <!-- Load Saved Set Confirmation Modal -->
+  <!-- This modal appears when the user selects a saved set from the dropdown.  It confirms
+       whether the user wants to load the chosen set and optionally shows a loading spinner
+       while the player state is being restored.  -->
+  <div id="loadSetModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+    <!-- Backdrop for load set modal -->
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="loadSetOverlay"></div>
+    <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+      <h2 class="text-xl font-medium text-white mb-4">Load Saved Set</h2>
+      <!-- Dynamic description updated via JS to reflect which set is being loaded -->
+      <p id="loadSetDescription" class="text-sm text-white/80 mb-6">Are you sure you want to load this saved set?</p>
+      <div class="flex justify-end gap-3">
+        <button id="loadSetCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+        <!-- Confirm button shows loading spinner when state restoration is in progress -->
+        <button id="loadSetConfirmBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium flex items-center gap-2">
+          <span id="loadSetConfirmLabel">Load</span>
+          <i id="loadSetSpinner" data-lucide="loader-2" class="hidden w-4 h-4 animate-spin"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Current Set Confirmation Modal -->
+  <!-- This modal appears when the user presses the save button.  It asks the user to
+       confirm saving the current state to a new set and optionally displays a loading
+       spinner while the save completes. -->
+  <div id="saveSetModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="saveSetOverlay"></div>
+    <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+      <h2 class="text-xl font-medium text-white mb-4">Save Set</h2>
+      <p id="saveSetDescription" class="text-sm text-white/80 mb-6">Save current state as Set ?</p>
+      <div class="flex justify-end gap-3">
+        <button id="saveSetCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+        <button id="saveSetConfirmBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium flex items-center gap-2">
+          <span id="saveSetConfirmLabel">Save</span>
+          <i id="saveSetSpinner" data-lucide="loader-2" class="hidden w-4 h-4 animate-spin"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Download All Confirmation Modal -->
+  <!-- This modal appears when the user presses the download button.  It asks the user
+       to confirm downloading all stems.  A spinner is shown while downloads are
+       being prepared. -->
+  <div id="downloadConfirmModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="downloadConfirmOverlay"></div>
+    <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+      <h2 class="text-xl font-medium text-white mb-4">Download All</h2>
+      <p class="text-sm text-white/80 mb-4">Choose which version to download:</p>
+
+      <!-- Download mode selection -->
+      <div class="mb-6 space-y-2">
+        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+          <input type="radio" name="downloadMode" value="raw" id="downloadModeRaw" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2">
+          <div class="flex-1">
+            <div class="text-sm font-medium text-white">Full Raw Audio (16 bars)</div>
+            <div class="text-xs text-white/60">Complete generated audio for loop fixing</div>
+          </div>
+        </label>
+        <label class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+          <input type="radio" name="downloadMode" value="loop" id="downloadModeLoop" class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2" checked>
+          <div class="flex-1">
+            <div class="text-sm font-medium text-white">Edited Loop (4 bars)</div>
+            <div class="text-xs text-white/60">Current playback version with edits</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="flex justify-end gap-3">
+        <button id="downloadConfirmCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+        <button id="downloadConfirmBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium flex items-center gap-2">
+          <span id="downloadConfirmLabel">Download</span>
+          <i id="downloadConfirmSpinner" data-lucide="loader-2" class="hidden w-4 h-4 animate-spin"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+<!-- Waveform Edit Modal: allows adjusting volume and endpoint for a take -->
+<div id="waveformEditModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <!-- Darkened overlay captures pointer events to prevent interaction with the background while editing -->
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto" id="waveformEditOverlay"></div>
+  <div class="relative w-full max-w-md max-h-[85vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <!-- The Edit Take heading scales down on small screens (20% smaller) but remains visible on all devices -->
+    <h2 class="text-lg sm:text-xl font-medium text-white mb-4">Edit Take - <span id="waveformEditStemName"></span></h2>
+    <!-- Waveform preview with bar grid overlay; bars will be drawn dynamically based on session bar count -->
+    <div class="relative mb-4">
+      <canvas id="waveformEditCanvas" class="w-full h-20 bg-white/5 rounded-md border border-white/10"></canvas>
+      <div id="waveformEditGrid" class="absolute inset-0 pointer-events-none flex"></div>
+    </div>
+    <!-- Three rotary knobs for offset, stretch, and volume -->
+    <div class="mb-4 grid grid-cols-3 gap-4">
+      <!-- Knob 1: Start Offset -->
+      <div class="rotary-knob-container">
+        <div class="rotary-knob"
+             id="waveformEditOffsetKnob"
+             data-knob-type="offset"
+             data-stem=""
+             style="--knob-angle: -135deg"></div>
+        <div class="rotary-knob-label">Offset</div>
+        <div class="rotary-knob-value" id="waveformEditOffsetValue">0%</div>
+      </div>
+
+      <!-- Knob 2: Endpoint Stretch -->
+      <div class="rotary-knob-container">
+        <div class="rotary-knob"
+             id="waveformEditEndpointKnob"
+             data-knob-type="endpoint"
+             data-stem=""
+             style="--knob-angle: -4deg"></div>
+        <div class="rotary-knob-label">Stretch</div>
+        <div class="rotary-knob-value" id="waveformEditEndpointValue">1.00x</div>
+      </div>
+
+      <!-- Knob 3: Volume -->
+      <div class="rotary-knob-container">
+        <div class="rotary-knob"
+             id="waveformEditVolumeKnob"
+             data-knob-type="volume"
+             data-stem=""
+             style="--knob-angle: 81deg"></div>
+        <div class="rotary-knob-label">Volume</div>
+        <div class="rotary-knob-value" id="waveformEditVolumeValue">80</div>
+      </div>
+    </div>
+    <!-- Stem Separation Section -->
+    <div class="mb-4 border-t border-white/10 pt-4">
+      <button id="editSeparateBtn" class="w-full py-2.5 bg-white/5 hover:bg-white/10 border border-white/20 rounded-md text-sm font-medium flex items-center justify-center gap-2 transition">
+        <i data-lucide="scissors" class="w-4 h-4"></i>
+        <span id="editSeparateLabel">Separate Stem</span>
+        <i id="editSeparateSpinner" data-lucide="loader-2" class="hidden w-4 h-4 animate-spin"></i>
+      </button>
+      <p id="editSeparateHint" class="text-xs text-white/50 mt-2 text-center">Automatically extract and select this instrument from the mix</p>
+    </div>
+    <!-- Action buttons -->
+    <div class="flex justify-end gap-3 mt-2">
+      <button id="editDefaultBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-sm">Default</button>
+      <button id="editDiscardBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-sm">Discard</button>
+      <button id="editSaveBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-md text-sm font-medium">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Floating bottom player bar with mixer toggle -->
+<div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 select-none cursor-default hidden">
+  <div class="mx-auto max-w-5xl px-4 py-3">
+    <!-- Use a vertical stack on mobile and a horizontal layout on larger screens -->
+      <div class="flex items-center justify-between gap-3 w-full flex-wrap sm:flex-nowrap">
+        <!-- Play/Pause button -->
+        <button id="playBtn" class="flex items-center justify-center w-24 h-10 rounded-lg hover:bg-white/10 transition"
+                data-action="play-pause" title="Play / Pause">
+          <i data-lucide="play" class="stroke-current w-5 h-5"></i>
+        </button>
+        <!-- Mixer toggle button: icon only -->
+        <button id="mixerToggleBtn"
+                aria-label="Toggle mixer" aria-pressed="false"
+                class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
+          <i data-lucide="sliders" class="w-5 h-5"></i>
+        </button>
+        <!-- Save button paired with dropdown: treat as one group -->
+        <div id="saveGroup" class="flex items-center gap-2">
+          <button id="saveStateBtn" aria-label="Save current state" class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition" title="Save current set">
+            <i data-lucide="save" class="w-5 h-5"></i>
+          </button>
+          <select id="savedSetsDropdown" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs sm:text-sm text-white/80">
+            <option value="">------</option>
+          </select>
+        </div>
+        <!-- Download All button: icon only, consistent across mobile and desktop -->
+        <button id="downloadAllBtn" aria-label="Download all" class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
+          <i data-lucide="download" class="w-5 h-5"></i>
+        </button>
+        <!-- Volume slider (desktop only) -->
+        <div class="hidden sm:flex items-center gap-2">
+          <span class="text-xs text-white/60">Vol</span>
+          <input id="masterVolumeSlider" type="range" min="0" max="100" value="90"
+                 class="w-40 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
+          <span id="masterVolumeValue" class="text-sm w-12 text-right">90%</span>
+        </div>
+        <!-- Session info card (desktop only) -->
+        <div id="sessionInfoCard" class="hidden sm:flex items-center gap-2 px-2 py-1 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-xs text-white/80 whitespace-nowrap">
+          <span id="sessionInfoText" class="whitespace-nowrap">--</span>
+        </div>
+      </div>
+  </div>
+
+  <!-- Docked Mixer Tray (expands upward) — same surface -->
+  <div id="mixerTray" class="player-surface max-h-0 overflow-hidden transition-[max-height] duration-200 ease-out border-t border-white/10">
+    <!-- The inner container scrolls only vertically when the mixer is open.  We hide horizontal overflow to prevent accidental sideways scrolling on mobile. Use full width on all screens to avoid zoom issues. -->
+    <div class="mixer-inner max-w-full mx-auto px-4 py-3 overflow-y-auto overflow-x-hidden relative">
+      <!-- Header with title and close button -->
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-xs text-white/70">Mixer</div>
+        <button id="mixerCloseBtn" class="hidden w-6 h-6 flex items-center justify-center rounded-md hover:bg-white/10" data-action="close-mixer" title="Close mixer">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <!-- Mixer grid is built dynamically in app.js.  The initial element is empty so the script can set the correct classes depending on screen size. -->
+      <div id="mixerGrid"><!-- filled by app.js --></div>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay to blur and block interaction with the page when the mixer is open -->
+<div id="mixerOverlay" class="fixed inset-0 z-30 bg-black/50 backdrop-blur-sm hidden"></div>

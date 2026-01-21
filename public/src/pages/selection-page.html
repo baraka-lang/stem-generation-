@@ -1,0 +1,145 @@
+<!-- Generator Selection Page -->
+<div id="selection-page" class="hidden min-h-screen flex flex-col">
+  <!-- Header -->
+  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <!-- Logo Section -->
+      <div class="flex items-center space-x-3">
+        <div
+          class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+          <i data-lucide="music" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            343 Labs
+          </h1>
+          <p class="text-xs text-white/60">AI Music Studio</p>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav style="display: none;" class="hidden md:flex items-center space-x-8">
+        <a href="#features" class="text-white/70 hover:text-white transition">Features</a>
+        <a href="#how-it-works" class="text-white/70 hover:text-white transition">How It Works</a>
+        <a href="#pricing" class="text-white/70 hover:text-white transition">Pricing</a>
+        <a href="#contact" class="text-white/70 hover:text-white transition">Contact</a>
+      </nav>
+
+      <div class="flex items-center gap-3">
+        <button data-likes-menu-toggle data-anchor-id="selection-menu" class="w-10 h-10 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10 transition" title="Likes &amp; Sets">
+          <i data-lucide="user" class="w-5 h-5"></i>
+        </button>
+        <!-- User Status Container - Dynamically populated by JavaScript -->
+        <div id="userStatusContainer"></div>
+
+        <!-- User Menu Container - Dynamically populated by JavaScript -->
+        <div id="logedInUserMenu" class="hidden"></div>
+      </div>
+    </div>
+  </header>
+
+
+
+  <!-- Main Content -->
+  <div class="flex-1 flex items-center justify-center p-4">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-12">
+        <h1 class="text-4xl font-bold mb-4">Choose Your Genre</h1>
+        <p class="text-xl text-white/60">Select a music generator to start creating</p>
+        <div id="guestModeNotice"
+          class="mt-4 p-3 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm max-w-md mx-auto">
+          <div class="flex items-center justify-center">
+            <i data-lucide="info" class="w-4 h-4 mr-2"></i>
+            <span>You're in guest mode. Login to save your work!</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-3 gap-8">
+        <!-- Techno Generator Card -->
+        <div class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div
+            class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-red-500 to-red-600 rounded-full flex items-center justify-center">
+            <i data-lucide="zap" class="w-10 h-10"></i>
+          </div>
+          <h3 class="text-2xl font-bold mb-4">Techno Generator</h3>
+          <p class="text-white/60 mb-6">Create deep, driving techno stems with industrial precision</p>
+          <ul class="text-sm text-white/40 mb-8 space-y-1">
+            <li>• 110-140 BPM range</li>
+            <li>• Industrial sounds</li>
+            <li>• Hypnotic loops</li>
+          </ul>
+          <button id="launchTechno"
+            class="w-full px-6 py-3 bg-red-500/80 hover:bg-red-500 border border-red-500 rounded-lg transition text-sm font-medium">
+            Launch Techno Studio
+          </button>
+        </div>
+
+        <!-- Hip-Hop Generator Card -->
+        <div
+          class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300 opacity-50">
+          <div
+            class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-yellow-500 to-orange-600 rounded-full flex items-center justify-center">
+            <i data-lucide="mic" class="w-10 h-10"></i>
+          </div>
+          <h3 class="text-2xl font-bold mb-4">Hip-Hop Generator</h3>
+          <p class="text-white/60 mb-6">Generate boom-bap beats and modern trap elements</p>
+          <ul class="text-sm text-white/40 mb-8 space-y-1">
+            <li>• 80-100 BPM range</li>
+            <li>• 808 drums & bass</li>
+            <li>• Classic samples</li>
+          </ul>
+          <button id="launchHipHop"
+            class="w-full px-6 py-3 bg-yellow-500/30 border border-yellow-500/30 rounded-lg text-sm font-medium cursor-not-allowed"
+            disabled>
+            Coming Soon
+          </button>
+        </div>
+
+        <!-- House Generator Card -->
+        <div
+          class="glass card-border rounded-2xl p-8 text-center hover:scale-105 transition-all duration-300 opacity-50">
+          <div
+            class="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center">
+            <i data-lucide="home" class="w-10 h-10"></i>
+          </div>
+          <h3 class="text-2xl font-bold mb-4">House Generator</h3>
+          <p class="text-white/60 mb-6">Create groovy four-on-the-floor house music</p>
+          <ul class="text-sm text-white/40 mb-8 space-y-1">
+            <li>• 118-130 BPM range</li>
+            <li>• Classic house groove</li>
+            <li>• Uplifting energy</li>
+          </ul>
+          <button id="launchHouse"
+            class="w-full px-6 py-3 bg-green-500/30 border border-green-500/30 rounded-lg text-sm font-medium cursor-not-allowed"
+            disabled>
+            Coming Soon
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Help & Tips Modal -->
+<div id="helpModalSel" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="helpModalOverlay"></div>
+  <div class="relative w-full max-w-md max-h-[80vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-medium text-white">Help &amp; Tips</h2>
+      <button id="helpModalCloseBtnSel" class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <div class="text-sm text-white/80 space-y-3 overflow-y-auto max-h-[60vh]">
+      <!-- Warning about silent mode appears first in the help modal -->
+      <p class="text-red-500 font-bold">Please disable silent mode on your mobile device for audio playback.</p>
+      <p>Press the spacebar to play or pause the loop.</p>
+      <p>Use number keys 1–9 to mute or unmute the corresponding instruments.</p>
+      <p>If the number circles are red, it means either the stem has not been generated yet or the channel is muted.</p>
+      <p>A red border around a card indicates that the instrument or channel is muted.</p>
+      <p>Generations are not 100% predictable due to the nature of AI – experiment and generate multiple versions to find your favorite take.</p>
+    </div>
+  </div>
+</div>
+</div>

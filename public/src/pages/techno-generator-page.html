@@ -1,0 +1,188 @@
+<!-- Techno Generator Page -->
+<div id="techno-generator-page" class="hidden min-h-screen flex flex-col">
+  <!-- Session setup modal; displayed once when the Techno page loads -->
+  <div id="sessionSetupModal"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="sessionSetupOverlay"></div>
+    <div
+      class="relative w-full max-w-md max-h-[85vh] player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+      <h2 class="text-xl font-medium text-white mb-4">Session settings</h2>
+      <!-- Mobile-only warning about silent mode -->
+      <p class="text-xs text-red-500 font-bold sm:hidden mb-2">Please disable silent mode on your mobile device for
+        audio playback.</p>
+
+      <p class="text-xs text-white/60 mb-4">Choose the tempo, number of bars and key before starting. These values
+        cannot be changed later in the session.</p>
+      <div class="space-y-4">
+        <!-- Session name -->
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-white/60 w-16">Name</span>
+          <input id="setupSessionName" type="text"
+            class="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-sm text-white placeholder-white/40"
+            placeholder="Session Setting (YYYY-MM-DD_HH:mm)" />
+        </div>
+        <!-- Tempo selection -->
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-white/60 w-16">Tempo</span>
+          <input id="setupTempoSlider" type="range" min="110" max="140" value="130"
+            class="flex-1 h-1 bg-white/10 rounded-lg appearance-none cursor-pointer">
+          <span id="setupTempoValue" class="text-sm w-10 text-right">130</span>
+        </div>
+        <!-- Bars selection -->
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-white/60 w-16">Bars</span>
+          <select id="setupBarsSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
+            <option value="4">2 bars</option>
+            <option value="8" selected>4 bars</option>
+          </select>
+        </div>
+        <!-- Key selection -->
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-white/60 w-16">Key</span>
+          <select id="setupRootSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm w-14">
+            <option value="C">C</option>
+            <option value="C#">C♯</option>
+            <option value="D">D</option>
+            <option value="D#">D♯</option>
+            <option value="E">E</option>
+            <option value="F">F</option>
+            <option value="F#">F♯</option>
+            <option value="G">G</option>
+            <option value="G#">G♯</option>
+            <option value="A" selected>A</option>
+            <option value="A#">A♯</option>
+            <option value="B">B</option>
+          </select>
+          <select id="setupAccidentalSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
+            <option value="natural">♮</option>
+            <option value="sharp">♯</option>
+            <option value="flat">♭</option>
+          </select>
+          <select id="setupModeSelector" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-sm">
+            <option value="Minor" selected>Minor</option>
+            <option value="Major">Major</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex justify-end gap-3 mt-6">
+        <button id="setupCancelBtn"
+          class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+        <button id="setupSaveBtn"
+          class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Start
+          Session</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Generate settings modal: appears when the user taps Generate on a stem card -->
+  <div id="generateSettingsModal"
+    class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+    <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="generateSettingsOverlay"></div>
+    <div
+      class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+      <h2 class="text-xl font-medium text-white mb-4">Stem Settings</h2>
+      <div id="generateSettingsContent" class="space-y-3 overflow-y-auto max-h-[60vh]"><!-- filled dynamically --></div>
+      <div class="flex justify-end gap-3 mt-6">
+        <button id="generateSettingsCancelBtn"
+          class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+        <button id="generateSettingsStartBtn"
+          class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">Start</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <div class="flex-1 flex flex-col">
+    <!-- Guest Mode Notice -->
+    <div id="guestModeNotice"
+      class="hidden mx-4 mb-4 p-3 bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-400 text-sm">
+      <div class="flex items-center justify-center">
+        <i data-lucide="info" class="w-4 h-4 mr-2"></i>
+        <span>You're in guest mode - generate stems freely! Login to save your work.</span>
+      </div>
+    </div>
+
+    <!-- Stem Cards -->
+    <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
+    <!-- Stem container: always 3 columns, with smaller gaps on mobile to reduce overall width. -->
+    <main id="stem-container"
+      class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-4 select-none cursor-default">
+      <!-- Cards injected by app.js -->
+    </main>
+  </div>
+</div>
+
+<!-- Clean Stem Confirmation Modal -->
+<div id="cleanStemModal"
+  class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="cleanStemOverlay"></div>
+  <div
+    class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-xl font-medium text-white">Clean Sample</h2>
+      <button id="cleanModalCloseBtn"
+        class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+    </div>
+    <div class="mb-6">
+      <p class="text-sm text-white/80 mb-3">Remove unwanted instruments from this sample?</p>
+      <p class="text-xs text-white/60">This will isolate the <span id="cleanStemName"
+          class="font-semibold text-white/90"></span> and create a new take. Your original sample will remain available
+        in the take history.</p>
+    </div>
+    <div class="flex gap-3 justify-end">
+      <button id="cleanModalCancelBtn"
+        class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+      <button id="cleanModalConfirmBtn"
+        class="px-4 py-2 bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 border-0 rounded-lg transition text-sm font-medium">
+        <span class="inline-flex items-center gap-2">
+          <i data-lucide="sparkles" class="w-4 h-4"></i>
+          Clean Sample
+        </span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Download Single Stem Modal -->
+<div id="downloadStemModal"
+  class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="downloadStemOverlay"></div>
+  <div
+    class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <h2 class="text-xl font-medium text-white mb-4">Download <span id="downloadStemName"></span></h2>
+    <p class="text-sm text-white/80 mb-4">Choose which version to download:</p>
+
+    <!-- Download mode selection -->
+    <div class="mb-6 space-y-2">
+      <label
+        class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+        <input type="radio" name="downloadStemMode" value="raw" id="downloadStemModeRaw"
+          class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2">
+        <div class="flex-1">
+          <div class="text-sm font-medium text-white">Full Raw Audio (16 bars)</div>
+          <div class="text-xs text-white/60">Complete generated audio for loop fixing</div>
+        </div>
+      </label>
+      <label
+        class="flex items-center gap-3 p-3 rounded-lg bg-white/5 hover:bg-white/10 cursor-pointer transition border border-white/10">
+        <input type="radio" name="downloadStemMode" value="loop" id="downloadStemModeLoop"
+          class="w-4 h-4 text-purple-500 focus:ring-purple-500 focus:ring-2" checked>
+        <div class="flex-1">
+          <div class="text-sm font-medium text-white">Edited Loop (4 bars)</div>
+          <div class="text-xs text-white/60">Current playback version with edits</div>
+        </div>
+      </label>
+    </div>
+
+    <div class="flex justify-end gap-3">
+      <button id="downloadStemCancelBtn"
+        class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">Cancel</button>
+      <button id="downloadStemConfirmBtn"
+        class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium">
+        Download
+      </button>
+    </div>
+  </div>
+</div>

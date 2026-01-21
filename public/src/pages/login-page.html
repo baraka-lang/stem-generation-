@@ -1,0 +1,332 @@
+<!-- Login Modal -->
+<div id="loginModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="loginModalOverlay"></div>
+  <div class="relative w-full max-w-md max-h-[90vh] overflow-y-auto">
+    <div class="player-surface card-border rounded-2xl p-8 transform scale-95 transition-all duration-300 ease-out">
+      <!-- Close Button -->
+      <button id="loginModalCloseBtn" class="absolute top-4 right-4 text-white/60 hover:text-white transition-colors" aria-label="Close">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+
+      <!-- Page Header -->
+      <div class="text-center mb-6">
+        <h1 class="text-3xl font-bold mb-2 bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+          TunePal AI Studio. (BETA Version)
+        </h1>
+        <p class="text-sm text-white/60">
+          Create professional-quality stems with AI-powered music generation
+        </p>
+      </div>
+
+    <!-- Login Form -->
+    <div id="loginFormContainer" class="glass card-border rounded-2xl p-8">
+      <h2 class="text-2xl font-bold mb-6 text-center">Welcome Back</h2>
+      
+      <!-- Error Message -->
+      <div id="loginErrorMessage" class="hidden mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm">
+        <div class="flex items-center">
+          <i data-lucide="alert-circle" class="w-4 h-4 mr-2"></i>
+          <span id="loginErrorText">An error occurred</span>
+        </div>
+      </div>
+
+      <!-- Success Message -->
+      <div id="loginSuccessMessage" class="hidden mb-4 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-sm">
+        <div class="flex items-center">
+          <i data-lucide="check-circle" class="w-4 h-4 mr-2"></i>
+          <span id="loginSuccessText">Success!</span>
+        </div>
+      </div>
+
+      <form id="loginForm" class="space-y-6">
+        <!-- Email Field -->
+        <div>
+          <label for="loginEmail" class="block text-sm font-medium text-white/70 mb-2">
+            Email Address
+          </label>
+          <input
+            id="loginEmail"
+            type="email"
+            required
+            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+            placeholder="Enter your email"
+            autocomplete="email"
+          />
+        </div>
+
+        <!-- Password Field -->
+        <div>
+          <label for="loginPassword" class="block text-sm font-medium text-white/70 mb-2">
+            Password
+          </label>
+          <div class="relative">
+            <input
+              id="loginPassword"
+              type="password"
+              required
+              class="loginPasswordss w-full px-4 py-3 pr-12 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+              placeholder="Enter your password"
+              autocomplete="current-password"
+            />
+            <button
+              type="button"
+              id="toggleLoginPasswordss"
+              class="absolute right-3 top-1/2 transform -translate-y-1/2 text-white/60 hover:text-white/80 transition-colors"
+              aria-label="Toggle password visibility"
+            >
+              <i data-lucide="eye" class="w-5 h-5"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Forgot Password Link -->
+        <div class="text-right">
+          <button type="button" id="forgotPasswordBtn" class="text-sm text-purple-400 hover:text-purple-300 transition">
+            Forgot your password?
+          </button>
+        </div>
+
+        <!-- Login Button -->
+        <button
+          type="submit"
+          id="loginBtn"
+          class="w-full px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+        >
+          <span id="loginBtnText">Enter Studio</span>
+          <i id="loginBtnSpinner" data-lucide="loader-2" class="hidden w-5 h-5 animate-spin"></i>
+        </button>
+      </form>
+
+      <!-- Divider -->
+      <div class="flex items-center my-6">
+        <div class="flex-1 border-t border-white/10"></div>
+        <span class="px-4 text-sm text-white/40">or</span>
+        <div class="flex-1 border-t border-white/10"></div>
+      </div>
+
+      <!-- Sign Up Link -->
+      <div class="text-center">
+        <p class="text-white/60 mb-4">
+          Don't have an account?
+        </p>
+        <button
+          type="button"
+          id="signUpBtn"
+          class="w-full px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition"
+        >
+          Create Account
+        </button>
+      </div>
+    </div>
+
+    <!-- Sign Up Form -->
+    <div id="signupFormContainer" class="glass card-border rounded-2xl p-8 hidden">
+      <h2 class="text-2xl font-bold mb-6 text-center">Create Your Account</h2>
+      
+      <!-- Error Message -->
+      <div id="signupErrorMessage" class="hidden mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm">
+        <div class="flex items-center">
+          <i data-lucide="alert-circle" class="w-4 h-4 mr-2"></i>
+          <span id="signupErrorText">An error occurred</span>
+        </div>
+      </div>
+
+      <!-- Success Message -->
+      <div id="signupSuccessMessage" class="hidden mb-4 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-sm">
+        <div class="flex items-center">
+          <i data-lucide="check-circle" class="w-4 h-4 mr-2"></i>
+          <span id="signupSuccessText">Success!</span>
+        </div>
+      </div>
+
+      <form id="signupForm" class="space-y-6">
+        <!-- Email Field -->
+        <div>
+          <label for="fullName" class="block text-sm font-medium text-white/70 mb-2">
+            Full Name
+          </label>
+          <input
+            id="fullName"
+            type="text"
+            required
+            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+            placeholder="Enter your Full Name"
+            autocomplete="fullName"
+          />
+        </div>
+
+        <!-- Email Field -->
+        <div>
+          <label for="signupEmail" class="block text-sm font-medium text-white/70 mb-2">
+            Email Address
+          </label>
+          <input
+            id="signupEmail"
+            type="email"
+            required
+            class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+            placeholder="Enter your email"
+            autocomplete="email"
+          />
+        </div>
+
+        <!-- Password Field -->
+        <div>
+          <label for="signupPassword" class="block text-sm font-medium text-white/70 mb-2">
+            Password
+          </label>
+          <div class="relative">
+            <input
+              id="signupPassword"
+              type="password"
+              required
+              minlength="6"
+              class="w-full px-4 py-3 pr-12 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+              placeholder="Create a password"
+              autocomplete="new-password"
+            />
+            
+          </div>
+          
+          <!-- Password Requirements -->
+          <div class="mt-2 space-y-1">
+            <div class="text-xs text-white/60">Password must contain:</div>
+            <div class="space-y-1">
+              <div id="login-password-length-requirement" class="flex items-center text-xs text-red-400">
+                <i data-lucide="x" class="w-3 h-3 mr-2"></i>
+                <span>At least 6 characters</span>
+              </div>
+              <div id="login-password-lowercase-requirement" class="flex items-center text-xs text-red-400">
+                <i data-lucide="x" class="w-3 h-3 mr-2"></i>
+                <span>At least one lowercase letter (a-z)</span>
+              </div>
+              <div id="login-password-uppercase-requirement" class="flex items-center text-xs text-red-400">
+                <i data-lucide="x" class="w-3 h-3 mr-2"></i>
+                <span>At least one uppercase letter (A-Z)</span>
+              </div>
+              <div id="login-password-number-requirement" class="flex items-center text-xs text-red-400">
+                <i data-lucide="x" class="w-3 h-3 mr-2"></i>
+                <span>At least one number (0-9)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Confirm Password Field -->
+        <div>
+          <label for="signupConfirmPassword" class="block text-sm font-medium text-white/70 mb-2">
+            Confirm Password
+          </label>
+          <div class="relative">
+            <input
+              id="signupConfirmPassword"
+              type="password"
+              required
+              class="w-full px-4 py-3 pr-12 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+              placeholder="Confirm your password"
+              autocomplete="new-password"
+            />
+           
+          </div>
+          
+          <!-- Password Match Indicator -->
+          <div class="mt-2">
+            <div id="login-password-match-requirement" class="flex items-center text-xs text-red-400">
+              <i data-lucide="x" class="w-3 h-3 mr-2"></i>
+              <span>Passwords must match</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sign Up Button -->
+        <button
+          type="submit"
+          id="signupSubmitBtn"
+          class="w-full px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+        >
+          <span id="signupSubmitBtnText">Create Account</span>
+          <i id="signupSubmitBtnSpinner" data-lucide="loader-2" class="hidden w-5 h-5 animate-spin"></i>
+        </button>
+      </form>
+
+      <!-- Back to Login -->
+      <div class="text-center mt-6">
+        <button
+          type="button"
+          id="backToLoginBtn"
+          class="text-sm text-purple-400 hover:text-purple-300 transition"
+        >
+          ← Back to Login
+        </button>
+      </div>
+    </div>
+
+    <!-- Demo Mode Notice -->
+    <div class="mt-6 text-center">
+      <p class="text-xs text-white/40">
+        By continuing, you agree to our Terms of Service and Privacy Policy
+      </p>
+      <div id="demoModeNotice" class="hidden mt-4 p-3 bg-yellow-500/20 border border-yellow-500/30 rounded-lg text-yellow-400 text-sm">
+        <div class="flex items-center justify-center">
+          <i data-lucide="alert-triangle" class="w-4 h-4 mr-2"></i>
+          <span>Demo Mode: Supabase not configured. Authentication features are disabled.</span>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+</div>
+
+<!-- Forgot Password Modal -->
+<div id="forgotPasswordModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 hidden opacity-0 transition-all duration-300 ease-out">
+  <div class="absolute inset-0 bg-black/60 backdrop-blur-sm" id="forgotPasswordOverlay"></div>
+  <div class="relative w-full max-w-md player-surface card-border rounded-2xl p-6 transform scale-95 transition-all duration-300 ease-out">
+    <h2 class="text-xl font-medium text-white mb-4">Reset Password</h2>
+    <p class="text-sm text-white/80 mb-6">
+      Enter your email address and we'll send you a link to reset your password.
+    </p>
+    
+    <!-- Error Message -->
+    <div id="resetErrorMessage" class="hidden mb-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm">
+      <div class="flex items-center">
+        <i data-lucide="alert-circle" class="w-4 h-4 mr-2"></i>
+        <span id="resetErrorText">An error occurred</span>
+      </div>
+    </div>
+
+    <!-- Success Message -->
+    <div id="resetSuccessMessage" class="hidden mb-4 p-3 bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 text-sm">
+      <div class="flex items-center">
+        <i data-lucide="check-circle" class="w-4 h-4 mr-2"></i>
+        <span id="resetSuccessText">Check your email for reset instructions</span>
+      </div>
+    </div>
+
+    <form id="forgotPasswordForm" class="space-y-4">
+      <div>
+        <label for="resetEmail" class="block text-sm font-medium text-white/70 mb-2">
+          Email Address
+        </label>
+        <input
+          id="resetEmail"
+          type="email"
+          required
+          class="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-white placeholder-white/40 focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20 transition"
+          placeholder="Enter your email"
+        />
+      </div>
+      
+      <div class="flex justify-end gap-3">
+        <button type="button" id="resetCancelBtn" class="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition text-sm">
+          Cancel
+        </button>
+        <button type="submit" id="forgotPasswordSubmitBtn" class="px-4 py-2 bg-purple-500/80 hover:bg-purple-500 border border-purple-500 rounded-lg transition text-sm font-medium flex items-center gap-2">
+          <span id="resetBtnText">Send Reset Link</span>
+          <i id="resetBtnSpinner" data-lucide="loader-2" class="hidden w-4 h-4 animate-spin"></i>
+        </button>
+      </div>
+    </form>
+  </div>
+  </div>
+  </div>
+</div>

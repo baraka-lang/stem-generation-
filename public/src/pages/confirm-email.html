@@ -1,0 +1,365 @@
+<!-- Email Confirmation Page -->
+<div id="confirm-email-page" class="hidden min-h-screen flex flex-col">
+  <!-- Header -->
+  <header class="w-full sticky top-0 z-30 player-surface card-border border-b border-white/10">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <!-- Logo Section -->
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 bg-gradient-to-br from-purple-500 to-pink-600 rounded-xl flex items-center justify-center">
+          <i data-lucide="music" class="w-6 h-6 text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+            TunePal AI Studio. (BETA Version)
+          </h1>
+          <p class="text-xs text-white/60">AI Stem Generator</p>
+        </div>
+      </div>
+
+      <!-- Navigation -->
+      <nav class="hidden md:flex items-center space-x-8">
+        <a href="#features" class="text-white/70 hover:text-white transition">Features</a>
+        <a href="#how-it-works" class="text-white/70 hover:text-white transition">How It Works</a>
+        <a href="#pricing" class="text-white/70 hover:text-white transition">Pricing</a>
+        <a href="#contact" class="text-white/70 hover:text-white transition">Contact</a>
+      </nav>
+
+      <!-- Login Button -->
+      <button id="landingLoginBtn" class="px-6 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105">
+        Login
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <div class="flex-1 flex items-center justify-center p-4">
+    <div class="max-w-md w-full">
+      <!-- Confirmation Card -->
+      <div class="glass card-border rounded-2xl p-8 text-center">
+        <!-- Success Icon -->
+        <div class="w-16 h-16 bg-gradient-to-br from-green-500 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+          <i data-lucide="mail-check" class="w-8 h-8 text-white"></i>
+        </div>
+
+        <!-- Title -->
+        <h1 class="text-3xl font-bold text-white mb-4">
+          Check Your Email
+        </h1>
+
+        <!-- Description -->
+        <p class="text-white/70 mb-8 leading-relaxed">
+          We've sent a confirmation link to your email address. Please check your inbox and click the link to verify your account.
+        </p>
+
+        <!-- Email Display -->
+        <div class="bg-white/5 border border-white/10 rounded-lg p-4 mb-6 hidden" id="emailDisplayContainer">
+          <div class="flex items-center justify-center space-x-2">
+            <i data-lucide="mail" class="w-4 h-4 text-white/60"></i>
+            <span id="emailDisplay" class="text-white/80 font-medium">user@example.com</span>
+          </div>
+        </div>
+
+        <!-- Confirm Email Button -->
+        <button id="confirmEmailBtn" class="w-full px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 mb-4 flex items-center justify-center">
+          Confirm Email
+        </button>
+
+
+        <!-- Help Text -->
+        <div class="text-sm text-white/50 space-y-2">
+          <p>Didn't receive the email? Check your spam folder.</p>
+          <p>Still having trouble? Contact our support team.</p>
+        </div>
+      </div>
+
+      <!-- Back to Login -->
+      <div class="text-center mt-6">
+        <a
+          href="#login"
+          class="text-sm text-purple-400 hover:text-purple-300 transition flex items-center justify-center space-x-2"
+        >
+          <i data-lucide="arrow-left" class="w-4 h-4"></i>
+          <span>Back to Login</span>
+        </a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.56.0/dist/supabase.min.js"></script>
+<script>
+  (function initSupabase() {
+    try {
+      if (window.supabase && typeof window.supabase.auth === 'object') {
+        console.debug('[confirm-email] Supabase client already initialized')
+        return
+      }
+      var url = window.SUPABASE_URL || 'https://wfloobttzjbfapzyclun.supabase.co'
+      var key = window.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndmbG9vYnR0empiZmFwenljbHVuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA2Mjc1NDMsImV4cCI6MjA3NjIwMzU0M30.d3vlMSDHJUdWoS_hjfncdytD3MfQMsN2szQOQtyq2bE'
+      if (!url || !key || typeof window.supabase !== 'undefined') {
+      } else {
+        window.supabase = window.supabase || supabase.createClient(url, key, {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: true,
+            detectSessionInUrl: false
+          }
+        })
+        console.debug('[confirm-email] Supabase client created', {
+          urlPresent: !!url,
+          keyPresent: !!key,
+          authOpts: { autoRefreshToken: false, persistSession: true, detectSessionInUrl: false }
+        })
+      }
+    } catch (e) {
+      console.error('[confirm-email] Failed to initialize Supabase client:', e)
+    }
+  })()
+</script>
+<script>
+// Email Confirmation Logic - Inline version for reliability
+document.addEventListener('DOMContentLoaded', function() {
+  var root = document.getElementById('confirm-email-page')
+  if (root) root.classList.remove('hidden')
+  console.log('Confirm email page loaded')
+  console.debug('[confirm-email] DOM ready, initializing components')
+  
+  const confirmEmailBtn = document.getElementById('confirmEmailBtn')
+  const landingLoginBtn = document.getElementById('landingLoginBtn')
+  const emailDisplay = document.getElementById('emailDisplay')
+
+  console.log('Elements found:', {
+    confirmBtn: !!confirmEmailBtn,
+    loginBtn: !!landingLoginBtn,
+    emailDisplay: !!emailDisplay
+  })
+  console.debug('[confirm-email] Initial state', {
+    hasSupabase: typeof window.supabase !== 'undefined',
+    location: { href: window.location.href, search: window.location.search, hash: window.location.hash }
+  })
+
+  function getEmailFromParams() {
+    const urlParams = new URLSearchParams(window.location.search)
+    const hash = window.location.hash || ''
+    const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+    const hashParams = new URLSearchParams(hashQuery)
+    const email = urlParams.get('email') || hashParams.get('email') || localStorage.getItem('pendingEmail')
+    console.debug('[confirm-email] Parsed email', {
+      urlParams: Object.fromEntries(urlParams || []),
+      hashParams: Object.fromEntries(hashParams || []),
+      pendingEmail: localStorage.getItem('pendingEmail'),
+      resolved: email
+    })
+    return email || 'user@example.com'
+  }
+
+  function getTokenFromParams() {
+    const urlParams = new URLSearchParams(window.location.search)
+    const hash = window.location.hash || ''
+    const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+    const hashParams = new URLSearchParams(hashQuery)
+    let token = urlParams.get('token') || urlParams.get('token_hash') || urlParams.get('access_token') || urlParams.get('refresh_token')
+    if (!token) {
+      token = hashParams.get('token') || hashParams.get('token_hash') || hashParams.get('access_token') || hashParams.get('refresh_token')
+    }
+    console.log('Extracted token:', token)
+    console.debug('[confirm-email] Token sources', {
+      url: {
+        token: urlParams.get('token'),
+        token_hash: urlParams.get('token_hash'),
+        access_token: urlParams.get('access_token'),
+        refresh_token: urlParams.get('refresh_token')
+      },
+      hash: {
+        token: hashParams.get('token'),
+        token_hash: hashParams.get('token_hash'),
+        access_token: hashParams.get('access_token'),
+        refresh_token: hashParams.get('refresh_token')
+      },
+      resolved: token
+    })
+    return token
+  }
+
+  function getTypeFromParams() {
+    const urlParams = new URLSearchParams(window.location.search)
+    const hash = window.location.hash || ''
+    const hashQuery = hash.includes('?') ? hash.split('?')[1] : ''
+    const hashParams = new URLSearchParams(hashQuery)
+    const type = urlParams.get('type') || hashParams.get('type') || 'signup'
+    console.debug('[confirm-email] Parsed type', { type })
+    return type
+  }
+
+  // Update email display
+  function updateEmailDisplay() {
+    const email = getEmailFromParams()
+    if (emailDisplay) {
+      emailDisplay.textContent = email
+      console.debug('[confirm-email] Updated email display', { email })
+    }
+  }
+
+  // Handle confirm email button click
+  async function handleConfirmEmail() {
+    console.log('Confirm email button clicked')
+    const email = getEmailFromParams()
+    const token = getTokenFromParams()
+    const type = getTypeFromParams()
+    console.groupCollapsed('[confirm-email] Confirm flow')
+    console.debug('[confirm-email] Inputs', { email, tokenPresent: !!token, type })
+    
+    // Show loading state
+    confirmEmailBtn.innerHTML = `
+      <i data-lucide="loader-2" class="w-5 h-5 animate-spin mr-2"></i>
+      Confirming...
+    `
+    confirmEmailBtn.disabled = true
+
+    try {
+      // Check if we have Supabase available
+      if (typeof window.supabase === 'undefined') {
+        throw new Error('Supabase not available. Please refresh the page.')
+      }
+
+      if (!token) {
+        throw new Error('No confirmation token found. Please check your email and click the confirmation link.')
+      }
+
+      console.log('Verifying token:', token)
+
+      // Verify the token using Supabase's verifyOtp function
+      // Based on the URL format, this is a token hash for email confirmation
+      console.log('Attempting to verify token with verifyOtp...')
+      console.debug('[confirm-email] verifyOtp input', { token_hash: token, type })
+      
+      const { data, error } = await window.supabase.auth.verifyOtp({ token_hash: token, type })
+      
+      console.log('verifyOtp result:', { data, error })
+      console.debug('[confirm-email] verifyOtp data snapshot', {
+        user: data && data.user ? { id: data.user.id, email: data.user.email } : null
+      })
+
+      if (error) {
+        const accessToken = new URLSearchParams(window.location.search).get('access_token') || new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('access_token')
+        const refreshToken = new URLSearchParams(window.location.search).get('refresh_token') || new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('refresh_token')
+        console.debug('[confirm-email] Falling back to setSession', { hasAccessToken: !!accessToken, hasRefreshToken: !!refreshToken })
+        if (accessToken && refreshToken) {
+          const setRes = await window.supabase.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+          console.debug('[confirm-email] setSession result', { error: setRes && setRes.error ? { message: setRes.error.message, status: setRes.error.status, name: setRes.error.name } : null })
+          if (setRes?.error) {
+            throw new Error(setRes.error.message)
+          }
+        } else {
+          throw new Error(error.message)
+        }
+      }
+
+      console.log('Email confirmed successfully:', data)
+      console.debug('[confirm-email] Success state rendering')
+
+      // Show success state
+      confirmEmailBtn.innerHTML = `
+        <i data-lucide="check" class="w-5 h-5 mr-2"></i>
+        Email Confirmed!
+      `
+      confirmEmailBtn.classList.remove('from-purple-500', 'to-pink-600', 'hover:from-purple-600', 'hover:to-pink-700')
+      confirmEmailBtn.classList.add('from-green-500', 'to-emerald-600', 'hover:from-green-600', 'hover:to-emerald-700')
+      
+      // Clear pending email from localStorage
+      localStorage.removeItem('pendingEmail')
+      const before = { emailVerified: localStorage.getItem('emailVerified'), verifiedEmail: localStorage.getItem('verifiedEmail') }
+      try {
+        localStorage.setItem('emailVerified', 'true')
+        localStorage.setItem('verifiedEmail', email)
+      } catch {}
+      const after = { emailVerified: localStorage.getItem('emailVerified'), verifiedEmail: localStorage.getItem('verifiedEmail') }
+      console.debug('[confirm-email] LocalStorage update', { before, after })
+      
+      // Redirect to login after 2 seconds
+      console.debug('[confirm-email] Scheduling redirect to login', { delayMs: 2000 })
+      setTimeout(() => {
+        console.debug('[confirm-email] Redirecting to login')
+        window.location.href = '#login'
+      }, 2000)
+
+    } catch (error) {
+      console.error('Email confirmation error:', error)
+      console.debug('[confirm-email] Error details', { name: error && error.name, message: error && error.message, status: error && error.status, code: error && error.code })
+      
+      // Show error state
+      confirmEmailBtn.innerHTML = `
+        <i data-lucide="x" class="w-5 h-5 mr-2"></i>
+        Confirmation Failed
+      `
+      confirmEmailBtn.classList.remove('from-purple-500', 'to-pink-600', 'hover:from-purple-600', 'hover:to-pink-700')
+      confirmEmailBtn.classList.add('from-red-500', 'to-red-600', 'hover:from-red-600', 'hover:to-red-700')
+      
+      // Show error message
+      const errorMessage = document.createElement('div')
+      errorMessage.className = 'mt-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 text-sm'
+      errorMessage.textContent = error.message || 'Failed to confirm email. Please try again.'
+      console.debug('[confirm-email] Showing error message', { displayedMessage: errorMessage.textContent })
+      
+      // Insert error message after the button
+      confirmEmailBtn.parentNode.insertBefore(errorMessage, confirmEmailBtn.nextSibling)
+      
+      // Reset button after 5 seconds
+      setTimeout(() => {
+        console.debug('[confirm-email] Resetting button state after error')
+        confirmEmailBtn.innerHTML = 'Confirm Email'
+        confirmEmailBtn.classList.remove('from-red-500', 'to-red-600', 'hover:from-red-600', 'hover:to-red-700')
+        confirmEmailBtn.classList.add('from-purple-500', 'to-pink-600', 'hover:from-purple-600', 'hover:to-pink-700')
+        confirmEmailBtn.disabled = false
+        
+        // Remove error message
+        if (errorMessage.parentNode) {
+          errorMessage.parentNode.removeChild(errorMessage)
+        }
+      }, 5000)
+    }
+    console.groupEnd()
+  }
+
+  // Event listeners
+  if (confirmEmailBtn) {
+    console.log('Adding click listener to confirm button')
+    confirmEmailBtn.addEventListener('click', handleConfirmEmail)
+  } else {
+    console.error('Confirm email button not found!')
+  }
+
+  if (landingLoginBtn) {
+    console.log('Adding click listener to login button')
+    landingLoginBtn.addEventListener('click', () => {
+      window.location.href = '#login'
+    })
+  } else {
+    console.error('Login button not found!')
+  }
+
+  // Initialize email display
+  updateEmailDisplay()
+
+  // Initialize Lucide icons
+  if (window.lucide) {
+    console.debug('[confirm-email] Lucide present, creating icons')
+    window.lucide.createIcons()
+  } else {
+    console.debug('[confirm-email] Lucide not found')
+  }
+
+  // Check if we have a token in the URL and auto-confirm
+  const token = getTokenFromParams()
+  if (token) {
+    console.log('Token found in URL, auto-confirming email...')
+    // Auto-confirm if token is present
+    setTimeout(() => {
+      console.debug('[confirm-email] Auto-confirm scheduled', { delayMs: 1000 })
+      handleConfirmEmail()
+    }, 1000)
+  } else {
+    console.log('No token found in URL')
+  }
+})
+</script>
