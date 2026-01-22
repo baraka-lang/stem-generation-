@@ -246,27 +246,13 @@
 <div id="playerBar" class="fixed inset-x-0 bottom-0 z-40 player-surface card-border border-t border-white/10 select-none cursor-default hidden">
   <div class="mx-auto max-w-5xl px-4 py-3">
     <!-- Use a vertical stack on mobile and a horizontal layout on larger screens -->
-      <div class="flex items-center justify-between gap-3 w-full flex-wrap sm:flex-nowrap">
+      <div class="flex items-center justify-between gap-3 w-full flex-nowrap">
         <!-- Play/Pause button -->
         <button id="playBtn" class="flex items-center justify-center w-24 h-10 rounded-lg hover:bg-white/10 transition"
                 data-action="play-pause" title="Play / Pause">
           <i data-lucide="play" class="stroke-current w-5 h-5"></i>
         </button>
-        <!-- Mixer toggle button: icon only -->
-        <button id="mixerToggleBtn"
-                aria-label="Toggle mixer" aria-pressed="false"
-                class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
-          <i data-lucide="sliders" class="w-5 h-5"></i>
-        </button>
-        <!-- Save button paired with dropdown: treat as one group -->
-        <div id="saveGroup" class="flex items-center gap-2">
-          <button id="saveStateBtn" aria-label="Save current state" class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition" title="Save current set">
-            <i data-lucide="save" class="w-5 h-5"></i>
-          </button>
-          <select id="savedSetsDropdown" class="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs sm:text-sm text-white/80">
-            <option value="">------</option>
-          </select>
-        </div>
+        <!-- Save button and dropdown moved to stem card headers -->
         <!-- Download All button: icon only, consistent across mobile and desktop -->
         <button id="downloadAllBtn" aria-label="Download all" class="flex items-center justify-center w-10 h-10 sm:w-10 sm:h-10 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition">
           <i data-lucide="download" class="w-5 h-5"></i>

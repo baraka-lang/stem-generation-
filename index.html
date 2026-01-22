@@ -33,29 +33,25 @@
     /* Red border when muted */
     .sg-muted-border { border-color: rgb(239, 68, 68) !important; }
 
-    /* On small screens, reduce the height of waveforms and general font sizes to keep cards compact */
+    /* Responsive adjustments for better UX on small screens */
     @media (max-width: 640px) {
       .waveform-canvas {
-        height: 2.5rem !important;
+        height: 3rem !important;
       }
-      /* Reduce default font sizes inside the stem cards */
+      /* Slightly reduce font sizes but keep them readable */
       .stem-index {
-        font-size: 0.6rem !important;
-      }
-      #stem-container h3 {
-        font-size: 0.75rem !important;
-      }
-      /* Shrink the create button label and icon on mobile.  The base font size
-         is reduced to approximately 70% and the icon is scaled down to
-         0.75rem (12px).  These classes are assigned dynamically in JS. */
-      .create-label {
-        /* On mobile, shrink the create button text to roughly 70% of the default size. */
         font-size: 0.7rem !important;
       }
+      #stem-container h3 {
+        font-size: 0.875rem !important;
+      }
+      /* Create button label and icon - less aggressive scaling for better UX */
+      .create-label {
+        font-size: 0.8rem !important;
+      }
       .create-icon {
-        /* On mobile, shrink the create button icon proportionally. */
-        width: 0.7rem !important;
-        height: 0.7rem !important;
+        width: 0.875rem !important;
+        height: 0.875rem !important;
       }
     }
 

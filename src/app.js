@@ -5633,8 +5633,8 @@ function headerActionButtonsMobileHTML(st) {
 
 function createBuilderStemCard(st, cfg) {
   const card = document.createElement('div')
-  // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
-  card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
+  // Increased padding for better breathing room and improved UX
+  card.className = `glass card-border rounded-2xl p-4 sm:p-6 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
   card.setAttribute('data-stem', st)
 
   // Use position in visibleInstruments for sequential numbering (1, 2, 3, etc.)
@@ -5644,7 +5644,8 @@ function createBuilderStemCard(st, cfg) {
   // the title and number.  On sm and above, the action buttons appear inline to the right of
   // the title.  We wrap the desktop actions in a hidden container on mobile and include a
   // separate mobile action row using headerActionButtonsMobileHTML.
-  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-1 sm:mb-2">\n          <!-- First row on mobile: name and number indicator are aligned horizontally. -->\n          <div class="flex items-center justify-between w-full sm:w-auto gap-2">\n            <div class="flex items-center gap-2">\n              <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            </div>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n          </div>\n          <!-- Action icons centered on desktop -->\n          <div class="hidden sm:flex flex-1 items-center justify-center gap-1.5">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-3 sm:mb-4">\n          <!-- First row on mobile: name and number indicator are aligned horizontally. -->\n          <div class="flex items-center justify-between w-full sm:w-auto gap-3">\n            <div class="flex items-center gap-2 sm:gap-3">\n              <h3 class="text-base sm:text-lg font-medium text-white">${cfg.name}</h3>\n            </div>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 text-xs sm:text-sm font-semibold rounded-full border border-white/30">${idx}</span>\n          </div>\n          <!-- Action icons centered on desktop -->\n          <div class="hidden sm:flex flex-1 items-center justify-center gap-2">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
+  
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -5657,7 +5658,27 @@ function createBuilderStemCard(st, cfg) {
   // rather than being drawn over the waveform.  Therefore, we no longer
   // include the overlay markup here.  Clicking on the waveform will open
   // the dedicated edit modal defined in index.html.
-  const waveformHTML = `\n        <div class="mb-2">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit take button: centered rectangular button with consistent styling -->\n            <div class="hidden sm:flex absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-20 sm:w-24 h-8 sm:h-10 bg-black/50 hover:bg-white/20 items-center justify-center rounded-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Edit take"\n                 data-action="edit-take" data-stem="${st}"\n                 title="Click to edit this take">\n              <span class="text-white text-[10px] sm:text-xs uppercase tracking-wide font-medium">edit take</span>\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each.  Entire zone is clickable. Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Previous take"\n                 data-action="prev-take" data-stem="${st}" title="Previous take">\n              <i data-lucide="chevron-left" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Next take"\n                 data-action="next-take" data-stem="${st}" title="Next take">\n              <i data-lucide="chevron-right" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  // Saved Items button - show in all cards, but use ID only on first card to avoid duplicate IDs
+  // Positioned between left and right arrow zones on the waveform
+  // Event listeners use data-likes-menu-toggle attribute, so all buttons will work
+  const isFirstCard = visibleInstruments.indexOf(st) === 0
+  const saveGroupId = isFirstCard ? 'id="saveGroup"' : ''
+  const savedItemsButtonHTML = `
+            <!-- Saved Items button: positioned between left and right arrow zones -->
+            <div ${saveGroupId}
+                 title="Open saved items"
+                 style="cursor: pointer"
+                 class="save-group-btn absolute inset-y-0 left-1/4 right-1/4 flex items-center justify-center pointer-events-auto cursor-pointer transition"
+                 data-likes-menu-toggle
+                 data-anchor-id="selection-menu">
+              <div class="flex items-center justify-center gap-2 sm:gap-2.5 px-4 sm:px-5 py-2.5 sm:py-3 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-sm sm:text-base text-white/80 whitespace-nowrap hover:bg-white/10">
+                <span class="hidden sm:inline">Saved Items</span>
+                <i data-lucide="memory-stick" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+              </div>
+            </div>
+      `
+  
+  const waveformHTML = `\n        <div class="mb-4">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-20 sm:h-24 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit take button moved to header action buttons -->\n            <!-- Left and right arrow zones: occupy 25% width each.  Entire zone is clickable. Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Previous take"\n                 data-action="prev-take" data-stem="${st}" title="Previous take">\n              <i data-lucide="chevron-left" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n            ${savedItemsButtonHTML}\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Next take"\n                 data-action="next-take" data-stem="${st}" title="Next take">\n              <i data-lucide="chevron-right" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Volume dial: an infinite horizontal dial positioned between the
   // waveform and the create button.  A minus sign on the left and a plus
@@ -5679,10 +5700,8 @@ function createBuilderStemCard(st, cfg) {
   // Define a generate button fragment.  The sliders and toggles are shown in a popup instead of on the card.
   const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
 
-  // Define a drag button for desktop browsers (Chromium only).  This button appears above
-  // the Create button and allows users to drag the active sample to folders or desktop.
-  // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-2 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <div class="flex gap-2">\n            <button class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                    data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to folders or desktop">\n              <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm relative w-full">\n                <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n                Drag & Drop (folder)\n                <span class="absolute right-0 text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n              </span>\n            </button>\n            <button class="px-3 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/80 to-pink-500/80 hover:from-purple-500 hover:to-pink-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] hidden"\n                    data-action="show-in-folder" data-stem="${st}" title="Reveal file in Explorer/Finder">\n              <i data-lucide="folder-open" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n            </button>\n          </div>\n        </div>\n      `;
+  // Drag button moved to header action buttons - keeping container for data-drag-container attribute
+  const dragButtonHTML = `\n        <div class="hidden" data-drag-container="${st}"></div>\n      `;
 
   // Edit Take button for mobile - REMOVED (editing is desktop-only feature)
   // Mobile users can still navigate between takes using left/right arrows on waveform
@@ -5693,10 +5712,38 @@ function createBuilderStemCard(st, cfg) {
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
-  const genCreateButtonHTML = `\n        <div class="mt-2 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
-  // Use our custom create button HTML with drag, clean, and create buttons.  Update status line text accordingly.
-  // On mobile, show Clean and Create buttons (Edit Take removed for simplicity)
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + dragButtonHTML + cleanButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  const genCreateButtonHTML = `\n        <div class="mt-4 sm:mt-5 rounded-xl player-surface text-white shadow-sm p-3 sm:p-4 relative">\n          <button class="w-full py-3 sm:py-3.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center justify-center gap-2 text-sm sm:text-base">\n              <i data-lucide="wand-2" class="w-4 h-4 sm:w-5 sm:h-5"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
+  // Clean, Edit Take, and Drag & Drop buttons row - positioned below waveform
+  const actionButtonsRowHTML = `\n        <div class="flex gap-4 sm:gap-6 items-center flex-nowrap mt-3 sm:mt-4">
+          <button class="px-4 sm:px-5 py-2.5 sm:py-3 rounded-lg bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 text-white text-sm sm:text-base font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                  data-action="clean-stem" data-stem="${st}" title="Remove unwanted instruments from this sample">
+            <span class="inline-flex items-center justify-center gap-2 sm:gap-2.5">
+              <i data-lucide="sparkles" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+              <span data-clean-label="${st}" class="hidden sm:inline">Clean</span>
+              <span data-clean-label-mobile="${st}" class="sm:hidden">C</span>
+            </span>
+          </button>
+          <button class="px-4 sm:px-5 py-2.5 sm:py-3 rounded-lg bg-black/50 hover:bg-white/20 text-white text-xs sm:text-sm uppercase tracking-wide font-medium transition whitespace-nowrap"
+                  data-action="edit-take" data-stem="${st}" title="Click to edit this take"
+                  role="button" tabindex="0" aria-label="Edit take">
+            <span class="hidden sm:inline">EDIT TAKE</span>
+            <span class="sm:hidden">EDIT</span>
+          </button>
+          <button class="px-4 sm:px-5 py-2.5 sm:py-3 rounded-lg bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white text-sm sm:text-base font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to folders or desktop">
+            <span class="inline-flex items-center justify-center gap-2 sm:gap-2.5">
+              <i data-lucide="grip-vertical" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+              <span class="hidden sm:inline">Drag & Drop</span>
+              <span class="sm:hidden">Drag</span>
+              <span class="text-xs sm:text-sm opacity-60 hidden sm:inline" data-auto-download-status="${st}"></span>
+            </span>
+          </button>
+        </div>
+      `
+  
+  // Keep data-clean-container and data-drag-container for functionality
+  const cleanContainerHTML = `\n        <div class="hidden" data-clean-container="${st}"></div>\n      `
+  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + actionButtonsRowHTML + dragButtonHTML + cleanContainerHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
   // The span within the create button becomes the label, and the icon gets a special class so
   // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
@@ -5942,16 +5989,11 @@ function setMixerOpen(open) {
   // Expand the mixer to full viewport height when open; collapse to zero when closed
   tray.style.maxHeight = open ? '100vh' : '0px'
   tray.dataset.open = open ? '1' : '0'
-  // Update player toggle button label + ARIA
-  const toggleBtn = document.getElementById('mixerToggleBtn')
-  if (toggleBtn) {
-    // Update the desktop label only.  The mobile label remains 'mixer' regardless of state.
-    const desktopSpan = toggleBtn.querySelector('span.hidden.sm\\:inline')
-    const mobileSpan = toggleBtn.querySelector('span.inline.sm\\:hidden')
-    if (desktopSpan) desktopSpan.textContent = open ? 'close mixer' : 'open mixer'
-    // Do not modify the mobile label (mobileSpan) so it stays 'mixer'
+  // Update all mixer toggle buttons (in player bar and stem cards) - ARIA state
+  const toggleBtns = document.querySelectorAll('.mixer-toggle-btn, #mixerToggleBtn')
+  toggleBtns.forEach(toggleBtn => {
     toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
-  }
+  })
 
   // When the mixer is open on mobile, prevent the page from scrolling or panning.
   // Disable body overflow so touch interactions are confined to the mixer.
@@ -6416,9 +6458,23 @@ function setupEventListeners() {
     }
   })
 
-  // Mixer toggle inside player
-  const mixerToggleBtn = document.getElementById('mixerToggleBtn')
-  if (mixerToggleBtn) mixerToggleBtn.addEventListener('click', () => toggleMixerOpen())
+  // Remove mixer toggle button from player bar if it exists (should only be in stem cards)
+  const playerBar = document.getElementById('playerBar')
+  if (playerBar) {
+    const playerBarMixerBtn = playerBar.querySelector('#mixerToggleBtn')
+    if (playerBarMixerBtn) {
+      playerBarMixerBtn.remove()
+    }
+  }
+
+  // Mixer toggle buttons - attach listeners to all mixer toggle buttons (in stem cards only)
+  const mixerToggleBtns = document.querySelectorAll('.mixer-toggle-btn, #mixerToggleBtn')
+  mixerToggleBtns.forEach(btn => {
+    // Only attach if button is not in player bar
+    if (!playerBar || !playerBar.contains(btn)) {
+      btn.addEventListener('click', () => toggleMixerOpen())
+    }
+  })
 
   // Mixer close (X) button: close the mixer when clicked
   const mixerCloseBtn = document.getElementById('mixerCloseBtn')
@@ -8359,23 +8415,34 @@ async function handleHashChange() {
 //    and the solo button uses 'S'.
 
 function customHeaderActionButtonsHTML(st) {
+  // Include mixer toggle button in all cards. Use ID only on first card (kick) for backwards compatibility
+  const isFirstCard = visibleInstruments.indexOf(st) === 0
+  const mixerButtonId = isFirstCard ? 'id="mixerToggleBtn"' : ''
+  
   return `
-        <div class="flex items-center gap-1.5">
-          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+        <div class="flex items-center gap-2 sm:gap-2.5 flex-nowrap">
+          <button class="sg-toggle w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
-            <i data-lucide="volume-2" class="w-4 h-4"></i>
+            <i data-lucide="volume-2" class="w-4 h-4 sm:w-5 sm:h-5"></i>
           </button>
-          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="sg-toggle w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
-            <span class="font-bold text-sm">S</span>
+            <span class="font-bold text-sm sm:text-base">S</span>
           </button>
-          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
-            <i data-lucide="heart" class="w-4 h-4"></i>
+            <i data-lucide="heart" class="w-4 h-4 sm:w-5 sm:h-5"></i>
           </button>
-          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                  data-action="download-stem" data-stem="${st}" title="Download">
-            <i data-lucide="download" class="w-4 h-4"></i>
+            <i data-lucide="download" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+          </button>
+          <button ${mixerButtonId}
+                  class="mixer-toggle-btn flex items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
+                  title="Toggle mixer"
+                  aria-label="Toggle mixer" 
+                  aria-pressed="false">
+            <i data-lucide="sliders" class="w-5 h-5 sm:w-6 sm:h-6"></i>
           </button>
         </div>
       `
@@ -8383,22 +8450,22 @@ function customHeaderActionButtonsHTML(st) {
 
 function customHeaderActionButtonsMobileHTML(st) {
   return `
-        <div class="flex w-full items-center gap-1 sm:hidden mt-1">
-          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+        <div class="flex w-full items-center gap-2 sm:hidden mt-2">
+          <button class="sg-toggle flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
-            <i data-lucide="volume-2" class="w-3 h-3"></i>
+            <i data-lucide="volume-2" class="w-4 h-4"></i>
           </button>
-          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="sg-toggle flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
-            <span class="font-bold text-[10px]">S</span>
+            <span class="font-bold text-xs">S</span>
           </button>
-          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
-            <i data-lucide="heart" class="w-3 h-3"></i>
+            <i data-lucide="heart" class="w-4 h-4"></i>
           </button>
-          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
-                  data-action="download-stem" data-stem="${st}" title="Download">
-            <i data-lucide="download" class="w-3 h-3"></i>
+          <button class="flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                 data-action="download-stem" data-stem="${st}" title="Download">
+            <i data-lucide="download" class="w-4 h-4"></i>
           </button>
         </div>
       `
