@@ -3,7 +3,6 @@ import { getStemStates, getAllStemStates, deleteStemState, updateStemState, getU
 import { supabase } from '../Auth/index.js'
 import { encodeWAVSync } from '../audioEncoder.js'
 import { bufferToWavAndDownload } from '../DownloadAudio/index.js'
-import posthog from '../Config/posthog.js'
 
 const KEY_OPTIONS = [
   'Any Key',
@@ -101,6 +100,7 @@ async function loadLikeAudio(item) {
             }
             arrayBuffer = u8.buffer
           } catch (b64Err) {
+            console.warn('loadLikeAudio: Failed to parse as base64', b64Err)
           }
         }
       } else if (item.audio_data instanceof ArrayBuffer || item.audio_data.buffer instanceof ArrayBuffer) {
@@ -161,6 +161,7 @@ async function loadLikeAudio(item) {
       if (cleanPath.startsWith(b + '/')) cleanPath = cleanPath.replace(b + '/', '')
     })
 
+    console.log(`loadLikeAudio: Attempting download from [${bucketName}]:`, cleanPath)
     const { data, error } = await supabase.storage.from(bucketName).download(cleanPath)
     if (error) throw error
 
@@ -173,6 +174,7 @@ async function loadLikeAudio(item) {
     item.audioBuffer = decoded
     return decoded
   } catch (primaryErr) {
+    console.warn(`loadLikeAudio: Failed primary bucket [${primaryBucket}], trying [${secondaryBucket}]...`, primaryErr.message)
     try {
       const decoded = await tryDownload(secondaryBucket)
       item.audioBuffer = decoded
@@ -312,6 +314,7 @@ export function removeLikesContainer(el) {
 }
 
 export async function toggleLikeForStem(stemId, track) {
+  console.log('toggleLikeForStem called', { stemId, track })
   if (!stemId || !track) return false
   const takeIndex = track.takeIndex ?? -1
   const audioKey = track.audioKey || null
@@ -324,6 +327,7 @@ export async function toggleLikeForStem(stemId, track) {
 
   if (existingIndex >= 0) {
     // UNLIKE
+    console.log('Unliking stem', stemId)
     const removedItem = likedTracks.splice(existingIndex, 1)[0]
     renderLikes()
     notifyLikeChange(stemId)
@@ -337,6 +341,7 @@ export async function toggleLikeForStem(stemId, track) {
   }
 
   // LIKE
+  console.log('Liking stem', stemId)
   const newLike = {
     id: audioKey ? `like-${audioKey}` : `${stemId}-${takeIndex}-${Date.now()}`,
     stemId,
@@ -364,10 +369,12 @@ export async function toggleLikeForStem(stemId, track) {
     const hasBuffer = !!newLike.audioBuffer
     const needsUpload = !audioKey || audioKey.includes('unsaved')
 
+    console.log('Upload check:', { hasBuffer, audioKey, })
 
     // User requested strictly extracting/recording audio from memory then uploading
     // without fetching from unsaved-audio bucket.
     if (hasBuffer) {
+      console.log('Encoding and uploading from RAM buffer...')
       let blob
       try {
         // Use the robust WAV encoder (same as processStemsInBackground/saveCurrentStems)
@@ -380,6 +387,7 @@ export async function toggleLikeForStem(stemId, track) {
       const filename = `liked_${stemId}_${takeIndex}_${Date.now()}.wav`
       const bucket = (import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios').trim()
 
+      console.log('Uploading to bucket:', bucket, 'filename:', filename)
 
       const { data, error } = await supabase.storage
         .from(bucket)
@@ -391,6 +399,7 @@ export async function toggleLikeForStem(stemId, track) {
         // No, usually we want consistency. But user might want at least the card.
         // For now, logging error is sufficient.
       } else {
+        console.log('Upload successful', data)
         audioKey = data.path
         newLike.audioKey = audioKey
 
@@ -403,6 +412,7 @@ export async function toggleLikeForStem(stemId, track) {
       }
     } else {
       // Fallback removed as per user request
+      console.warn('Cannot upload: No audio buffer available in memory (Active Version must be loaded).')
     }
 
     const res = await upsertUserLike({
@@ -413,6 +423,7 @@ export async function toggleLikeForStem(stemId, track) {
     if (!res.success) {
       console.error('Failed to save like to DB:', res.error)
     } else {
+      console.log('Like saved to DB', res)
     }
   } catch (err) {
     console.error('Error uploading/saving like:', err)
@@ -437,6 +448,7 @@ export function updateLikeAudioKey(stemId, takeIndex, audioKey) {
     // Don't need to re-render immediately as audioKey is internal, 
     // but if we were showing it or using it for active state, we might.
     // However, ensure future syncs pick it up.
+    console.log(`Updated audioKey for liked track ${stemId} take ${takeIndex}`)
   }
 }
 
@@ -819,7 +831,7 @@ function buildDropdown() {
   dropdownEl.innerHTML = `
     <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
       <div class="inline-flex bg-white/5 border border-white/10 rounded-lg overflow-hidden text-sm">
-        <button data-tab="likes" class="tab-btn px-3 py-1.5 font-medium">Likes</button>
+        <button data-tab="likes" class="tab-btn px-3 py-1.5 font-medium">Stems</button>
         <button data-tab="sets" class="tab-btn px-3 py-1.5 text-white/70">Sets</button>
         <button data-tab="stems" class="tab-btn px-3 py-1.5 text-white/70">Stems</button>
       </div>
@@ -1145,19 +1157,10 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
 
   const currentStars = filters.stars || 0
 
-  // Scope Toggle HTML
-  const scopeHtml = `
-    <div class="flex bg-white/10 rounded-lg p-0.5 ml-auto mr-2">
-        <button data-scope="${prefix}" data-value="current" class="px-2 py-0.5 rounded-md text-[10px] transition-colors ${currentScope === 'current' ? 'bg-purple-500 text-white' : 'text-white/60 hover:text-white'}">Session</button>
-        <button data-scope="${prefix}" data-value="all" class="px-2 py-0.5 rounded-md text-[10px] transition-colors ${currentScope === 'all' ? 'bg-purple-500 text-white' : 'text-white/60 hover:text-white'}">All</button>
-    </div>
-  `
-
   container.innerHTML = `
     <div class="flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.2em] text-white/50">
       <div class="flex items-center flex-1">
           <span>${label}</span>
-          ${scopeHtml}
       </div>
       <button data-filter="clear" class="text-[11px] text-purple-300 hover:text-white">Reset</button>
     </div>
@@ -1373,7 +1376,9 @@ function renderLikeCard(item, variant = 'dropdown') {
         </div>
         <div class="text-[11px] text-white/70">${item.bpm} BPM · ${item.key}</div>
         <div class="mt-0.5">
-          ${renderStarRating(rating, item.id, 'sm', true)}
+          <button data-toggle-like-card="${item.stemId}|${item.takeIndex}" class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition text-red-400" aria-pressed="true" title="Unlike">
+            <i data-lucide="heart" class="w-4 h-4 fill-current"></i>
+          </button>
         </div>
       </div>
       <div class="flex items-center gap-2 flex-1 min-w-0 relative">
@@ -1411,6 +1416,16 @@ function attachLikeCardHandlers(container, variant, itemMap) {
     })
   })
 
+  container.querySelectorAll('[data-toggle-like-card]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const [stemId, takeIdx] = (btn.getAttribute('data-toggle-like-card') || '').split('|')
+      const idxNum = parseInt(takeIdx, 10)
+      removeLike(stemId, idxNum)
+    })
+  })
+
   container.querySelectorAll('[data-insert-like]').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.preventDefault()
@@ -1420,6 +1435,7 @@ function attachLikeCardHandlers(container, variant, itemMap) {
       if (item) {
         handleInsertLike(item, variant, btn)
       } else {
+        console.warn('attachLikeCardHandlers: Item not found for insert', id)
       }
     })
   })
@@ -1433,6 +1449,7 @@ function attachLikeCardHandlers(container, variant, itemMap) {
       if (item) {
         handlePlayRequest(item)
       } else {
+        console.warn('attachLikeCardHandlers: Item not found for play', id)
       }
     })
   })
@@ -1452,6 +1469,7 @@ function renderLikeWaveforms(container, itemMap) {
       const item = itemMap.get(id)
 
       if (!item) {
+        console.warn('renderLikeWaveforms: Item not found for ID', id)
         return
       }
 
@@ -1618,14 +1636,6 @@ function renderSets() {
       btn.addEventListener('click', () => {
         const index = parseInt(btn.getAttribute('data-load-set'), 10)
         if (Number.isInteger(index) && loadSetHandler) {
-          // Track Set Loaded (Local)
-          const set = savedSetsCache[index]
-          posthog.capture('set_loaded', {
-            set_id: `local-${index}`,
-            stems_count: set?.metadata?.activeStemCount || 0,
-            takes_count: set?.metadata?.totalTakes || 0
-          })
-
           loadSetHandler(index)
           closeMenu()
         }
@@ -1637,13 +1647,6 @@ function renderSets() {
         const id = parseInt(btn.getAttribute('data-load-cloud-set'), 10)
         const state = stemStatesCache.find(s => s.stem_state_id === id)
         if (state) {
-          // Track Set Loaded (Cloud)
-          posthog.capture('set_loaded', {
-            set_id: id,
-            stems_count: state.stems_snapshot?.metadata?.activeStemCount || 0,
-            takes_count: state.stems_snapshot?.metadata?.totalTakes || 0
-          })
-
           window.dispatchEvent(new CustomEvent('loadStemState', { detail: state }))
           closeMenu()
         }
@@ -1684,6 +1687,7 @@ async function syncStemStates() {
   try {
     if (setsScope === 'all') {
       const resAll = await getAllStemStates()
+      console.log('syncStemStates [All]: Got states', resAll.states?.length)
       if (resAll.success && Array.isArray(resAll.states)) {
         stemStatesCache = resAll.states
       } else {
@@ -1691,15 +1695,19 @@ async function syncStemStates() {
       }
     } else {
       const sessionSettingId = resolveSessionId()
+      console.log('syncStemStates [Current]: Resolved sessionSettingId', sessionSettingId)
 
       if (!sessionSettingId) {
+        console.log('syncStemStates [Current]: No session ID found, clearing list')
         stemStatesCache = []
         renderSets()
         stemStatesSyncInProgress = false
         return
       }
 
+      console.log('syncStemStates [Current]: Calling getAllStemStates with', sessionSettingId)
       const result = await getAllStemStates(sessionSettingId)
+      console.log('syncStemStates [Current]: result', result)
       if (result.success && Array.isArray(result.states)) {
         stemStatesCache = result.states
       } else {
@@ -1726,9 +1734,11 @@ async function syncSavedStems() {
     // Determine session ID if needed
     if (stemsScope === 'current') {
       sessionSettingId = resolveSessionId()
+      console.log('syncSavedStems [Current]: Resolved sessionSettingId', sessionSettingId)
 
       // If filtering by current but no session ID, clear list
       if (!sessionSettingId) {
+        console.log('syncSavedStems [Current]: No session ID found, clearing list')
         savedStemsCache = []
         renderSavedStems()
         savedStemsSyncInProgress = false
@@ -1738,16 +1748,22 @@ async function syncSavedStems() {
 
     // If scope is 'all', sessionSettingId remains null, which getUserStems interprets as "fetch all"
     // If scope is 'current', we pass the ID.
+    console.log('syncSavedStems: Calling getUserStems with scope:', stemsScope, 'ID:', sessionSettingId)
     const res = await getUserStems(stemsScope === 'all' ? null : sessionSettingId)
+    console.log('syncSavedStems: API Response', res)
 
     if (res.success && Array.isArray(res.stems)) {
+      console.log('syncSavedStems: Raw stems count:', res.stems.length)
       // Relaxed filter: include those with audio_url OR audio_data (bytea check might be implied if url missing)
       // For now, let's log how many have audio_url
       const withUrl = res.stems.filter(s => s.audio_url && s.audio_url.trim() !== '')
+      console.log('syncSavedStems: Stems with audio_url:', withUrl.length)
 
       // If user wants to see their generated stems, we should probably show them even if no url yet
       savedStemsCache = res.stems.filter(s => (s.audio_url && s.audio_url.trim() !== '') || (s.audio_data))
+      console.log('syncSavedStems: Cache updated, final count:', savedStemsCache.length)
     } else {
+      console.warn('syncSavedStems: Failed to get stems or empty', res)
       savedStemsCache = []
     }
   } catch (err) {
@@ -1928,6 +1944,11 @@ function renderSavedStems() {
   if (!containers.length) return
 
   const filtered = getFilteredSavedStems()
+  console.log('renderSavedStems: Rendering', {
+    total: savedStemsCache.length,
+    filtered: filtered.length,
+    containers: containers.length
+  })
 
   containers.forEach((container) => {
     if (savedStemsSyncInProgress) {
@@ -2073,12 +2094,14 @@ function renderSavedStemWaveforms(container, itemMap) {
   const canvases = Array.from(container.querySelectorAll('[data-saved-stem-waveform]'))
   if (!canvases.length) return
 
+  console.log('renderSavedStemWaveforms: Processing', canvases.length, 'canvases')
 
   requestAnimationFrame(() => {
     canvases.forEach(async (canvas) => {
       const id = canvas.getAttribute('data-saved-stem-waveform')
       const item = itemMap.get(id)
       if (!item) {
+        console.warn('renderSavedStemWaveforms: Item not found', id)
         return
       }
       const rect = canvas.getBoundingClientRect()
@@ -2094,6 +2117,7 @@ function renderSavedStemWaveforms(container, itemMap) {
       if (item.audioBuffer) {
         draw(item.audioBuffer)
       } else if (item.audioKey || item.audio_data) {
+        console.log('renderSavedStemWaveforms: Loading audio for', id)
         const ctx = canvas.getContext('2d')
         if (ctx) {
           ctx.fillStyle = 'rgba(255,255,255,0.08)'
@@ -2104,11 +2128,13 @@ function renderSavedStemWaveforms(container, itemMap) {
           if (decoded && canvas.isConnected) {
             draw(decoded)
           } else {
+            console.warn('renderSavedStemWaveforms: Failed to decode or canvas disconnected', id)
           }
         } catch (err) {
           console.error('renderSavedStemWaveforms: Error', err)
         }
       } else {
+        console.warn('renderSavedStemWaveforms: No audio data available for', id)
       }
     })
   })

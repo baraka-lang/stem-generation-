@@ -14,16 +14,6 @@ import { initFavoritesPageView, initLikesSetsMenu, isTrackLiked, refreshFavorite
 import { showSessionSetupModal as showSessionSetupModalImpl, applySessionSettingsToUI as applySessionSettingsToUIImpl, syncCurrentSessionWithCloud } from './TechnoGenerators/sessionSetup.js'
 import { hookIntoStemGeneration } from './Auth/stemGenerationIntegration.js'
 import { uploadStemAudio } from './Auth/stemApi.js'
-import posthog from './Config/posthog.js'
-
-// Track initial page view
-const pageData = {
-  path: window.location.pathname,
-  title: document.title,
-  surface: 'page'
-}
-posthog.capture('page_view', pageData)
-console.log('PostHog Capture: page_view', pageData)
 
 /* =========================================================
    Feature flags / Env toggles
@@ -56,18 +46,21 @@ function selectBestFormat(availableFormats = null) {
   // If no formats specified, try PRIMARY_OUTPUT_FORMAT first
   if (!availableFormats || !Array.isArray(availableFormats)) {
     const selected = FORMAT_LADDER[0]
+    console.log(`[FMT] ElevenLabs format selection: trying ${selected.format} (${selected.tier}: ${selected.label})`)
     return selected.format
   }
 
   // Find first format in ladder that's available
   for (const config of FORMAT_LADDER) {
     if (availableFormats.includes(config.format)) {
+      console.log(`[FMT] ElevenLabs -> ${config.format} chosen (${config.tier}: ${config.label}, ${config.sampleRate}Hz)`)
       return config.format
     }
   }
 
   // Fallback to last format if nothing matches
   const fallback = FORMAT_LADDER[FORMAT_LADDER.length - 1]
+  console.warn(`[FMT] No preferred format available, using fallback: ${fallback.format} (${fallback.label})`)
   return fallback.format
 }
 
@@ -515,13 +508,16 @@ async function ensureAudioPersistence(snapshot) {
       const isTemporary = !!(take.audioKey && (take.audioKey.includes('unsaved') || take.audioKey.includes('blob:')))
       const needsUpload = !isCloudPath || isTemporary
 
+      console.log(`[Persistence] Check ${st}:`, { audioKey: take.audioKey, isCloudPath, isTemporary, needsUpload })
 
       if (needsUpload && take.raw) {
+        console.log(`[Persistence] Persisting audio for ${st} (reason: ${!isCloudPath ? 'Invalid path' : 'Temporary path'})...`)
         try {
           const blob = encodeWAVSync(take.raw)
           const uploadRes = await uploadStemAudio(blob, null, st)
 
           if (uploadRes.success) {
+            console.log(`[Persistence] Successfully persisted ${st} to: ${uploadRes.path}`)
             take.audioKey = uploadRes.path
             saved.audioKey = uploadRes.path
           } else {
@@ -550,10 +546,12 @@ async function restoreAudioBuffer(st, audioKey, metadata = {}) {
   const history = stemHistory[st] || []
   const existingIdx = history.findIndex(t => t.audioKey === audioKey)
   if (existingIdx !== -1) {
+    console.log(`[Restoration] Audio for ${st} already in RAM at index ${existingIdx}`)
     return existingIdx
   }
 
   // 2. Otherwise, download and decode
+  console.log(`[Restoration] Attempting download for ${st}: ${audioKey}`)
   try {
     // Determine bucket (default to audio-files)
     // Some keys might be from liked-audios
@@ -562,6 +560,7 @@ async function restoreAudioBuffer(st, audioKey, metadata = {}) {
       (import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files')
 
     const cleanBucket = bucket.trim()
+    console.log(`[Restoration] Downloading from bucket: ${cleanBucket}, file: ${audioKey}`)
 
     const { data, error } = await supabase.storage
       .from(cleanBucket)
@@ -591,6 +590,7 @@ async function restoreAudioBuffer(st, audioKey, metadata = {}) {
     }
 
     const newIndex = stemHistory[st].push(newEntry) - 1
+    console.log(`[Restoration] Successfully restored ${st} to index ${newIndex}`)
     return newIndex
   } catch (err) {
     console.error(`[Restoration] FAILED for ${st}:`, err)
@@ -737,18 +737,8 @@ function initSavedStateFeature() {
       const canSave = await canUserSave()
 
       if (canSave) {
-        // Check if snapshot has stem
-        const snapshot = getCurrentPlayerState()
-        const activeStems = Object.values(snapshot.stems || {}).filter(s => s.activeIndex >= 0)
-
-        if (activeStems.length === 0) {
-          const { showErrorToast } = await import('./UI/toast.js')
-          showErrorToast('No stems found in the current state')
-          return
-        }
+        // User is authenticated, proceed with save
         openSaveSetModal()
-
-
       } else {
         const { showErrorToast } = await import('./UI/toast.js')
         showErrorToast('You must be logged in to save')
@@ -805,6 +795,7 @@ function initSavedStateFeature() {
           }
         }
       } catch (e) {
+        console.warn('Could not populate saved sets dropdown from cloud:', e)
       }
     })()
 
@@ -990,6 +981,7 @@ async function saveNewSet() {
     console.error('[SaveSet] Audio persistence failed:', err)
   }
 
+  console.log('snapshot', snapshot)
 
   const stemStateForDb = {
     state_name: snapshot?.metadata?.name || null,
@@ -1008,21 +1000,11 @@ async function saveNewSet() {
           : null)
     if (sessionSettingId) {
       const { saveStemStateToDb } = await import('./Auth/stemApi.js')
-      const dbResult = await saveStemStateToDb(sessionSettingId, stemStateForDb)
-
-      // Track set saved event
-      posthog.capture('set_saved', {
-        set_id: dbResult?.stem_state_id || snapshot?.metadata?.name || 'unknown',
-        stems_count: snapshot?.metadata?.activeStemCount || 0,
-        takes_count: snapshot?.metadata?.totalTakes || 0
-      })
+      console.log('[SaveSet] Calling saveStemStateToDb with session_setting_id:', sessionSettingId)
+      await saveStemStateToDb(sessionSettingId, stemStateForDb)
+      console.log('[SaveSet] Stem state saved to cloud')
     } else {
-      // If no session ID, still track but with local info
-      posthog.capture('set_saved', {
-        set_id: snapshot?.metadata?.name || 'unsaved_local',
-        stems_count: snapshot?.metadata?.activeStemCount || 0,
-        takes_count: snapshot?.metadata?.totalTakes || 0
-      })
+      console.log('[SaveSet] No session_setting_id in localStorage; skipping cloud save')
     }
   } catch { }
   // Also persist locally in savedSets for immediate UI feedback
@@ -1048,18 +1030,6 @@ async function saveNewSet() {
 // Expose saveNewSet globally for session setup
 if (typeof window !== 'undefined') {
   window.saveNewSet = saveNewSet
-  window.hasActiveStemsToSave = hasActiveStemsToSave
-}
-
-/**
- * Check if there are any active stems to save.
- * @returns {boolean}
- */
-function hasActiveStemsToSave() {
-  return visibleInstruments.some(st => {
-    const active = getActiveVersion(st)
-    return active && (active.raw || active.loop)
-  })
 }
 
 /**
@@ -1138,7 +1108,7 @@ function resetStemLikeButtonUI(st) {
   })
 }
 
-async function handleStemLikeToggle(st, options = {}) {
+async function handleStemLikeToggle(st) {
   const takeIndex = stemActiveIndex[st] ?? -1
   const activeTake = getActiveVersion(st)
   const sessionInfo = getSessionSummaryInfo()
@@ -1165,14 +1135,6 @@ async function handleStemLikeToggle(st, options = {}) {
     bars: activeTake?.bars,
     audioKey: activeTake?.audioKey || activeTake?.meta?.unsavedKey || null
   })
-
-  if (liked) {
-    posthog.capture('stem_liked', {
-      instrument: st,
-      like_location: options.like_location || 'stem_card'
-    })
-  }
-
   updateStemLikeButtons(st)
   return liked
 }
@@ -1204,6 +1166,7 @@ async function toggleLikePreview(item, currentId) {
     try {
       likePreviewSource.stop()
     } catch (err) {
+      console.warn('Failed to stop existing like preview:', err)
     }
     likePreviewSource = null
     likePreviewId = null
@@ -1218,6 +1181,7 @@ async function toggleLikePreview(item, currentId) {
 
   if (!item?.audioBuffer) {
     try {
+      console.log('toggleLikePreview: No buffer found, loading...', item.id)
 
       // Try to load using the robust loading logic (could be Hex, Base64, URL, or Storage)
       // Since toggleLikePreview is in app.js, we don't want to import likesSetsMenu.js here
@@ -1270,6 +1234,7 @@ async function toggleLikePreview(item, currentId) {
         if (storagePath.includes('/audio-files/')) storagePath = storagePath.split('/audio-files/')[1]
         else if (storagePath.includes('/unsaved-audios/')) storagePath = storagePath.split('/unsaved-audios/')[1]
 
+        console.log('toggleLikePreview: Fetching from storage', storagePath)
         let dl = await supabase.storage.from('unsaved-audios').download(storagePath)
         if (dl.error) {
           dl = await supabase.storage.from('audio-files').download(storagePath)
@@ -1328,6 +1293,7 @@ function stopLikePreview(item) {
   try {
     likePreviewSource.stop()
   } catch (err) {
+    console.warn('Failed to stop like preview:', err)
   }
   likePreviewSource = null
   likePreviewId = null
@@ -1404,6 +1370,7 @@ function closeDownloadConfirmModal() {
  * Open the single stem download modal.
  */
 async function openDownloadStemModal(st) {
+  console.log('[Download] Opening download modal for stem:', st)
 
   // Check authentication
   try {
@@ -1432,6 +1399,7 @@ async function openDownloadStemModal(st) {
   if (stemNameEl) {
     stemNameEl.textContent = stemConfigs[st]?.name || st
   } else {
+    console.warn('[Download] Stem name element not found')
   }
 
   // Store the stem ID for later use
@@ -1442,8 +1410,10 @@ async function openDownloadStemModal(st) {
   if (loopRadio) {
     loopRadio.checked = true
   } else {
+    console.warn('[Download] Loop radio button not found')
   }
 
+  console.log('[Download] Opening modal with opacity transition')
   modal.classList.remove('hidden')
   requestAnimationFrame(() => {
     modal.style.opacity = '1'
@@ -1471,6 +1441,7 @@ function closeDownloadStemModal() {
  * Execute the download of a single stem after user confirmation.
  */
 function confirmDownloadStem() {
+  console.log('[Download] Confirm download clicked')
   const modal = document.getElementById('downloadStemModal')
   if (!modal) {
     console.error('[Download] Modal not found in confirmDownloadStem')
@@ -1486,12 +1457,7 @@ function confirmDownloadStem() {
   // Get the selected download mode from the modal
   const rawRadio = document.getElementById('downloadStemModeRaw')
   const mode = rawRadio && rawRadio.checked ? 'raw' : 'loop'
-
-  // Track stem download click
-  posthog.capture('stem_download_clicked', {
-    instrument: st,
-    download_location: 'stem_card_modal'
-  })
+  console.log('[Download] Downloading stem:', st, 'mode:', mode)
 
   // Initiate download
   downloadStem(st, mode)
@@ -1657,6 +1623,7 @@ async function prepareStemmForDrag(st, audioBuffer) {
 
   try {
     stemDragReady[st] = false
+    console.log(`Preparing ${st} for drag...`)
 
     const wavBlob = await encodeWAVAsync(audioBuffer)
 
@@ -1672,6 +1639,7 @@ async function prepareStemmForDrag(st, audioBuffer) {
     stemDragReady[st] = true
     safeUpdateButtonStates(st)
 
+    console.log(`✓ ${st} ready for drag: ${(wavBlob.size / 1024).toFixed(1)}KB`)
   } catch (err) {
     console.error(`Failed to prepare ${st} for drag:`, err)
     stemDragReady[st] = false
@@ -1689,16 +1657,19 @@ async function prepareStemmForDrag(st, audioBuffer) {
 function invalidateStemCache(st) {
   if (stemWavCache[st]) {
     delete stemWavCache[st]
+    console.log(`Invalidated WAV cache for ${st}`)
   }
   if (stemWavDataUrlCache[st]) {
     delete stemWavDataUrlCache[st]
   }
   if (stemArrayBufferCache[st]) {
     delete stemArrayBufferCache[st]
+    console.log(`Cleared ArrayBuffer cache for ${st}`)
   }
   if (stemBlobUrls[st]) {
     URL.revokeObjectURL(stemBlobUrls[st])
     delete stemBlobUrls[st]
+    console.log(`Cleaned up blob URL for ${st}`)
   }
   stemDragReady[st] = false
 }
@@ -2275,6 +2246,7 @@ async function ensureAudioContext() {
         navigator.audioSession.type = 'playback'
       }
     } catch (err) {
+      console.warn('Failed to set navigator.audioSession.type:', err)
     }
 
     // ----------------------------------------------------------------------
@@ -2323,6 +2295,7 @@ async function ensureAudioContext() {
                   if (audio.parentNode) audio.parentNode.removeChild(audio)
                 }, 1000)
               } catch (inner) {
+                console.warn('silent mode fallback failed', inner)
               }
             })()
         }
@@ -2349,6 +2322,7 @@ async function ensureAudioContext() {
           // Some browsers may reject resume() if hardware is still
           // unavailable (e.g. during an ongoing call).  Log and
           // silently ignore; playback will resume on the next attempt.
+          console.warn('AudioContext resume failed:', err)
         }
       }
     }
@@ -3156,7 +3130,9 @@ function adjustEndpoint(st, factor, skipOffsetReapply = false) {
     const rawBuffer = stemRaw[st] || rebuilt
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
+    console.log(`[Endpoint] Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
   } catch (pcmErr) {
+    console.warn(`[Endpoint] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
 
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
@@ -3255,8 +3231,10 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
+    console.log(`${label} Extracted PCM for ${st} (${rawBuffer === stemRaw[st] ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
   } catch (pcmErr) {
     const label = hasStretch ? '[Offset+Stretch]' : '[Offset]'
+    console.warn(`${label} Failed to extract PCM for ${st}:`, pcmErr.message)
   }
 
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
@@ -3277,14 +3255,18 @@ function adjustStartOffset(st, offsetFactor, skipEndpointReapply = false, source
  * @param {string} st The stem identifier
  */
 function openWaveformEditModal(st) {
+  console.log('[Modal] openWaveformEditModal called with stem:', st)
   if (!st) {
+    console.warn('[Modal] No stem provided')
     return
   }
   const modal = document.getElementById('waveformEditModal')
+  console.log('[Modal] Modal element:', modal)
   if (!modal) {
     console.error('[Modal] waveformEditModal not found!')
     return
   }
+  console.log('[Modal] Opening modal for stem:', st)
   waveformEditState.isOpen = true
   waveformEditState.stem = st
   // Prevent background scrolling and interaction while the modal is open
@@ -3528,8 +3510,10 @@ function closeWaveformEditModal(save) {
  * @param {string} st The stem identifier
  */
 function showCleanStemModal(st) {
+  console.log(`[Clean] showCleanStemModal called for stem: ${st}`)
 
   if (!st) {
+    console.warn('[Clean] No stem provided to showCleanStemModal')
     return
   }
 
@@ -3541,12 +3525,14 @@ function showCleanStemModal(st) {
 
   // Store the stem being cleaned
   currentCleanStem = st
+  console.log(`[Clean] Set currentCleanStem to: ${currentCleanStem}`)
 
   // Update the stem name in the modal
   const stemNameSpan = document.getElementById('cleanStemName')
   if (stemNameSpan) {
     const cfg = stemConfigs[st]
     stemNameSpan.textContent = cfg?.label || st
+    console.log(`[Clean] Updated modal with stem name: ${cfg?.label || st}`)
   }
 
   // Show modal with animation
@@ -3558,6 +3544,7 @@ function showCleanStemModal(st) {
 
   // Prevent background scrolling
   document.body.style.overflow = 'hidden'
+  console.log('[Clean] Modal displayed')
 }
 
 /**
@@ -3592,9 +3579,11 @@ function hideCleanStemModal() {
  * @returns {Promise<{fixed: AudioBuffer, method: string, diagnostics: object}>}
  */
 async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, context = {}) {
+  console.log(`[LoopFix] Starting loop fix for separated ${st} - BPM: ${targetBpm}, Bars: ${bars}`)
 
   // Check if Gemini loop fix is enabled
   const useGemini = loopFixConfig?.isGeminiEnabled?.() || false
+  console.log(`[LoopFix] Gemini enabled: ${useGemini}`)
 
   let loopFixMethod = 'heuristic'
   let diagnostics = {}
@@ -3602,9 +3591,11 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
   if (useGemini) {
     try {
       // Convert AudioBuffer to WAV for Gemini API
+      console.log('[LoopFix] Converting audio to WAV for Gemini analysis...')
       const wavBuffer = audioBufferToWav(audioBuffer, audioBuffer.sampleRate)
       const audioBase64 = arrayBufferToBase64(wavBuffer)
 
+      console.log(`[LoopFix] Calling loop-fix-gemini function (${(wavBuffer.byteLength / 1024).toFixed(1)}KB)`)
 
       // Call the Gemini loop fix edge function
       const response = await supabase.functions.invoke('loop-fix-gemini', {
@@ -3624,10 +3615,12 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
       })
 
       if (response.error) {
+        console.warn('[LoopFix] Gemini API error, falling back to heuristic:', response.error)
         throw new Error('Gemini API failed')
       }
 
       if (response.data && response.data.fixed_audio_base64) {
+        console.log('[LoopFix] Gemini loop fix successful, decoding fixed audio...')
 
         // Decode the fixed audio
         const fixedAudioData = base64ToArrayBuffer(response.data.fixed_audio_base64)
@@ -3638,7 +3631,9 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
         if (diagnosticsHeader) {
           try {
             diagnostics = JSON.parse(diagnosticsHeader)
+            console.log('[LoopFix] Gemini diagnostics:', diagnostics)
           } catch (e) {
+            console.warn('[LoopFix] Failed to parse diagnostics:', e)
           }
         }
 
@@ -3651,14 +3646,17 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
         }
 
         loopFixMethod = 'gemini'
+        console.log(`[LoopFix] Gemini loop fix complete - detected BPM: ${diagnostics.detected_bpm?.toFixed(2) || 'N/A'}`)
 
         return { fixed: fixedBuffer, method: loopFixMethod, diagnostics }
       }
     } catch (geminiError) {
+      console.warn('[LoopFix] Gemini loop fix failed, using heuristic fallback:', geminiError.message)
     }
   }
 
   // Heuristic fallback: rebuild the loop using existing alignment logic
+  console.log('[LoopFix] Using heuristic loop fix method...')
 
   try {
     const master = stemControlValues.master || {}
@@ -3684,6 +3682,7 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
     )
 
     if (aligned && aligned.loop) {
+      console.log('[LoopFix] Heuristic loop fix successful')
       diagnostics = {
         method: 'heuristic',
         detectedHead: aligned.detectedHead,
@@ -3700,6 +3699,7 @@ async function applyLoopFixToSeparatedAudio(audioBuffer, st, targetBpm, bars, co
   }
 
   // If all methods fail, return original buffer
+  console.warn('[LoopFix] All loop fix methods failed, using original audio')
   return {
     fixed: audioBuffer,
     method: 'none',
@@ -3720,16 +3720,19 @@ async function separateCurrentStem(st) {
   // Get the current active take
   const activeIdx = stemActiveIndex[st]
   if (activeIdx == null || activeIdx < 0 || !stemHistory[st] || !stemHistory[st][activeIdx]) {
+    console.warn('No active take to separate for stem:', st)
     return
   }
 
   const currentTake = stemHistory[st][activeIdx]
   if (!currentTake || !currentTake.raw) {
+    console.warn('Current take has no audio data:', st)
     return
   }
 
   // Preserve current endpoint factor (Gemini loop fix state) to reapply after separation
   const preservedEndpointFactor = endpointFactors[st] || 1
+  console.log(`[stem-separation] Preserving endpoint factor for ${st}:`, preservedEndpointFactor)
 
   // Update UI to show processing state
   const separateBtn = document.getElementById('editSeparateBtn')
@@ -3749,6 +3752,7 @@ async function separateCurrentStem(st) {
   if (separateHint) separateHint.textContent = 'Processing audio (this may take 10-30 seconds)...'
 
   try {
+    console.log('[stem-separation] Starting separation for:', st);
 
     // Validate current take has valid audio data
     const rawBuffer = currentTake.raw
@@ -3761,6 +3765,7 @@ async function separateCurrentStem(st) {
       throw new Error(`Invalid sample rate: ${sampleRate}. Expected 8000-96000 Hz.`);
     }
 
+    console.log('[stem-separation] Converting audio to WAV - channels:', rawBuffer.numberOfChannels, 'length:', rawBuffer.length, 'sampleRate:', sampleRate, 'duration:', rawBuffer.duration, 's');
 
     // Validate audio duration
     if (rawBuffer.duration > 300) {
@@ -3777,6 +3782,7 @@ async function separateCurrentStem(st) {
     }
 
     const wavSizeMB = (wavBuffer.byteLength / 1024 / 1024).toFixed(2);
+    console.log('[stem-separation] WAV buffer size:', wavBuffer.byteLength, 'bytes', `(${wavSizeMB} MB)`);
 
     // Validate WAV buffer is not empty
     if (wavBuffer.byteLength === 0) {
@@ -3802,6 +3808,7 @@ async function separateCurrentStem(st) {
     }
 
     const base64SizeMB = (base64Audio.length / 1024 / 1024).toFixed(2);
+    console.log('[stem-separation] Base64 audio length:', base64Audio.length, 'characters', `(${base64SizeMB} MB)`);
 
     // Final size check on base64 data
     if (base64Audio.length > 35 * 1024 * 1024) {
@@ -3809,6 +3816,7 @@ async function separateCurrentStem(st) {
     }
 
     // Call the separation edge function with retry logic
+    console.log('[stem-separation] Calling edge function with stemType:', st);
 
     let retryCount = 0
     const { data, error } = await retryEdgeFunctionCall(
@@ -3816,8 +3824,7 @@ async function separateCurrentStem(st) {
         body: {
           audioData: base64Audio,
           stemType: st,
-          outputFormat: 'mp3_44100_128',
-          tp_session_id: posthog.get_property('tp_session_id') || 'unknown'
+          outputFormat: 'mp3_44100_128'
         }
       }),
       {
@@ -3834,6 +3841,7 @@ async function separateCurrentStem(st) {
       }
     )
 
+    console.log('[stem-separation] Edge function response - data:', !!data, 'error:', !!error, 'retries:', retryCount);
 
     // Validate error response
     if (error) {
@@ -3864,6 +3872,9 @@ async function separateCurrentStem(st) {
       throw new Error('No response data received from separation API');
     }
 
+    console.log('[stem-separation] Response data keys:', Object.keys(data));
+    console.log('[stem-separation] Response success:', data.success);
+    console.log('[stem-separation] Response has audioData:', !!data.audioData);
 
     // Check for API error in response
     if (data.error) {
@@ -3896,14 +3907,17 @@ async function separateCurrentStem(st) {
       throw new Error('Received empty audio data from separation API');
     }
 
+    console.log('[stem-separation] Received separated audio - stemType:', data.stemType, 'audioData length:', data.audioData.length);
 
     // Decode the separated audio data with validation
+    console.log('[stem-separation] Decoding base64 audio data...');
     let separatedAudioData;
     try {
       separatedAudioData = base64ToArrayBuffer(data.audioData);
       if (!separatedAudioData || separatedAudioData.byteLength === 0) {
         throw new Error('Decoded audio buffer is empty');
       }
+      console.log('[stem-separation] Decoded array buffer size:', separatedAudioData.byteLength, 'bytes');
     } catch (decodeError) {
       console.error('[stem-separation] Base64 decode failed:', decodeError);
       throw new Error('Failed to decode separated audio data. Response may be corrupted.');
@@ -3915,12 +3929,14 @@ async function separateCurrentStem(st) {
     }
 
     // Decode the audio file using Web Audio API
+    console.log('[stem-separation] Decoding audio with Web Audio API...');
     let decodedBuffer;
     try {
       decodedBuffer = await audioContext.decodeAudioData(separatedAudioData);
       if (!decodedBuffer) {
         throw new Error('Audio context returned null buffer');
       }
+      console.log('[stem-separation] Audio decoded successfully - duration:', decodedBuffer.duration, 'seconds, channels:', decodedBuffer.numberOfChannels, 'sampleRate:', decodedBuffer.sampleRate);
     } catch (audioDecodeError) {
       console.error('[stem-separation] Web Audio API decode failed:', audioDecodeError);
       throw new Error('Failed to decode separated audio. The file may be corrupted or in an unsupported format.');
@@ -3959,15 +3975,19 @@ async function separateCurrentStem(st) {
     }
 
     // Apply loop fix to ensure correct beat alignment
+    console.log('[stem-separation] Applying loop fix to separated audio...')
     let loopFixResult
     try {
       loopFixResult = await applyLoopFixToSeparatedAudio(decodedBuffer, st, tempo, bars, loopFixContext)
+      console.log(`[stem-separation] Loop fix complete - method: ${loopFixResult.method}`)
 
       // Use the fixed buffer for further processing
       if (loopFixResult.fixed && loopFixResult.method !== 'none') {
         decodedBuffer = loopFixResult.fixed
+        console.log('[stem-separation] Using loop-fixed audio buffer')
       }
     } catch (loopFixError) {
+      console.warn('[stem-separation] Loop fix failed, using original audio:', loopFixError.message)
     }
 
     // Restore hint styling
@@ -3995,7 +4015,9 @@ async function separateCurrentStem(st) {
       throw new Error('Failed to build loop from separated audio - audio may be too short or incompatible');
     }
 
+    console.log('[stem-separation] Loop buffer created - duration:', aligned.loop.duration, 'seconds');
     if (loopFixResult) {
+      console.log(`[stem-separation] Loop fix diagnostics:`, loopFixResult.diagnostics);
     }
 
     // Create a new history entry
@@ -4046,8 +4068,10 @@ async function separateCurrentStem(st) {
         clearStemPCM(st) // Clear any existing PCM data before storing new
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
+        console.log(`[Separation] Extracted PCM for ${st} (full raw): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         deferAutoDownload(st)
       } catch (pcmErr) {
+        console.warn(`[Separation] Failed to extract PCM for ${st}:`, pcmErr.message)
       }
     }
 
@@ -4067,6 +4091,7 @@ async function separateCurrentStem(st) {
 
     // Reapply the preserved endpoint factor (Gemini loop fix) to maintain loop quality
     if (preservedEndpointFactor !== 1) {
+      console.log(`[stem-separation] Reapplying endpoint factor ${preservedEndpointFactor} to maintain loop quality`)
       endpointFactors[st] = preservedEndpointFactor
       await adjustEndpoint(st, preservedEndpointFactor)
     }
@@ -4368,6 +4393,7 @@ async function composeOnce(payload, signal, statusEl = null) {
     const formatLabel = formatConfig ? `${formatConfig.tier}: ${formatConfig.label}` : 'Unknown'
 
     try {
+      console.log(`[FMT] Attempting ElevenLabs generation: ${fmt} (${formatLabel})`)
 
       const { data, error } = await retryEdgeFunctionCall(
         () => supabase.functions.invoke('eleven-music-compose', {
@@ -4380,6 +4406,7 @@ async function composeOnce(payload, signal, statusEl = null) {
           maxDelay: 8000,
           onRetry: (attempt, maxAttempts, delay) => {
             retryCount = attempt
+            console.log(`[composeOnce] Retry ${attempt}/${maxAttempts} for ${fmt} after ${delay}ms`)
             if (statusEl) {
               statusEl.textContent = `Connection issue, retrying (${attempt}/${maxAttempts})...`
             }
@@ -4387,6 +4414,7 @@ async function composeOnce(payload, signal, statusEl = null) {
         }
       )
 
+      console.log(`[composeOnce] Response:`, { hasData: !!data, hasError: !!error, dataType: typeof data, retries: retryCount })
 
       if (error) {
         const errMsg = error.message || error.toString()
@@ -4404,8 +4432,10 @@ async function composeOnce(payload, signal, statusEl = null) {
       }
 
       if (data instanceof ArrayBuffer) {
+        console.log(`[FMT] ✓ ElevenLabs generation successful: ${fmt} (${formatLabel}) - ${data.byteLength} bytes`)
         return data
       } else if (data instanceof Blob) {
+        console.log(`[FMT] ✓ ElevenLabs generation successful: ${fmt} (${formatLabel}) - ${data.size} bytes`)
         return await data.arrayBuffer()
       } else if (typeof data === 'object' && data.error) {
         const errMsg = data.error + (data.hint ? ` - ${data.hint}` : '')
@@ -4438,6 +4468,7 @@ async function composeWithRetries(st, tempo, bars, signal, statusEl) {
   const seconds = beats * (60 / tempo)
   let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
   music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
+  console.log(`[Generation] User requested: ${bars} bars, Generating: ${generationBars} bars (${music_length_ms}ms)`)
   const master = getMasterForPrompt()
   const controls = stemControlValues[st] || {}
   for (let tier = 0; tier < 3; tier++) {
@@ -4505,10 +4536,11 @@ function buildSessionGenerationContext(targetStemId) {
 
     return ctx
   } catch (err) {
+    console.warn('[SessionContext] Failed to build session context:', err)
     return null
   }
 }
-async function generateStem(st, options = {}) {
+async function generateStem(st) {
   const tNow = Date.now()
   const last = lastGenTimes[st] || 0
   if (tNow - last < 3000) return
@@ -4521,12 +4553,6 @@ async function generateStem(st, options = {}) {
   const button = document.querySelector(`[data-stem="${st}"] [data-action="open-create-settings"]`)
   const statusEl = document.querySelector(`[data-stem="${st}"] .status-line`)
   const card = document.querySelector(`[data-stem="${st}"]`)
-
-  // Track generation requested
-  posthog.capture('stem_generation_requested', {
-    instrument: st,
-    surface: options.surface || 'card_button'
-  })
 
   // Reset Like button visually when generation starts
   resetStemLikeButtonUI(st)
@@ -4564,8 +4590,7 @@ async function generateStem(st, options = {}) {
           mode: stemControlValues.master?.mode || 'Minor'
         },
         session_context: sessionContext || undefined,
-        use_grok: false,
-        tp_session_id: posthog.get_property('tp_session_id') || 'unknown'
+        use_grok: false
       }
       const { data, error } = await supabase.functions.invoke('generate-techno-stem', { body: payload, signal })
       if (error || !data) {
@@ -4586,6 +4611,8 @@ async function generateStem(st, options = {}) {
 
       // Log format details for diagnostics
       const audioBytes = audio_b64 ? Math.floor(audio_b64.length * 0.75) : 0
+      console.log(`[FMT] stemId=${st} fmt=${receivedFormat} sr=${receivedSampleRate} ch=${receivedChannels} bytes=${audioBytes}`)
+      console.log(`[Gen] Received ${st}: ${receivedFormat} (${receivedSampleRate}Hz, ${receivedChannels}ch)`)
 
       // Decode the base64 audio string for playback
       const commaIdx = (audio_b64 || '').indexOf(',')
@@ -4661,8 +4688,10 @@ async function generateStem(st, options = {}) {
         // Use normalizedRaw for auto-download to get full 16-bar audio
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
+        console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         deferAutoDownload(st)
       } catch (pcmErr) {
+        console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
     } catch (supErr) {
       // Supabase call failed or returned error; fallback to local generation
@@ -4683,6 +4712,7 @@ async function generateStem(st, options = {}) {
         const seconds = beats * (60 / tempo)
         let music_length_ms = Math.round(seconds * 1000) + GEN_TAIL_PAD_MS
         music_length_ms = Math.max(10000, Math.min(300000, music_length_ms))
+        console.log(`[Generation] User requested: ${bars} bars, Generating: ${generationBars} bars (${music_length_ms}ms)`)
         const body = USE_COMPOSITION_PLAN
           ? { composition_plan: buildCompositionPlan(getMasterForPrompt(), stemConfigs[st]?.basePrompt), prompt: null }
           : { prompt, music_length_ms }
@@ -4758,8 +4788,10 @@ async function generateStem(st, options = {}) {
         clearStemPCM(st) // Clear any existing PCM data before storing new
         const pcmData = extractPCMFromAudioBuffer(aligned.normalizedRaw)
         storeStemPCM(st, pcmData, aligned.normalizedRaw.sampleRate, aligned.normalizedRaw.numberOfChannels, `pcm_${aligned.normalizedRaw.sampleRate}`)
+        console.log(`[Gen] Extracted PCM from full raw audio for ${st}: ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
         deferAutoDownload(st)
       } catch (pcmErr) {
+        console.warn(`[Gen] Failed to extract PCM from full raw audio for ${st}:`, pcmErr.message)
       }
     }
 
@@ -4837,6 +4869,7 @@ async function generateStem(st, options = {}) {
           await ensureAudioContext()
           startTransport()
         } catch (err) {
+          console.warn('Failed to auto‑start transport:', err)
         }
       }
     }
@@ -4844,22 +4877,9 @@ async function generateStem(st, options = {}) {
     updateCardNumberColor(st)
     updateHistoryIndicator(st)
     safeUpdateButtonStates(st)
-
-    // Track generation success
-    posthog.capture('stem_generation_succeeded', {
-      instrument: st,
-      total_latency_ms: Date.now() - tNow,
-      take_id: newVersion.id
-    })
   } catch (err) {
     if (err.name !== 'AbortError') {
       console.error(`❌ Generation error (${st}):`, err)
-
-      // Track generation failure
-      posthog.capture('stem_generation_failed', {
-        instrument: st,
-        error_message: err.message
-      })
 
       // Provide user-friendly error messages based on error type
       let userMessage = err.message
@@ -5000,6 +5020,7 @@ function setDragImageForFilename(event, filename) {
 
     setTimeout(() => dragImg.remove(), 100)
   } catch (imgErr) {
+    console.warn('Failed to set custom drag image:', imgErr)
   }
 }
 
@@ -5026,8 +5047,10 @@ function tryAttachFileHandleDrag(e, st, btn) {
     if (btn) {
       btn.style.opacity = '0.7'
     }
+    console.log(`[Drag] Browser: Using FileSystemHandle for folder drop only: ${filename}`)
     return true
   } catch (handleErr) {
+    console.warn(`[Drag] File handle drag failed for ${st}, falling back:`, handleErr)
     return false
   }
 }
@@ -5044,6 +5067,7 @@ function scheduleAutoDownloadForStem(st) {
   if (isElectronMode() && isElectronSaveEnabled()) {
     saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename)
       .then(result => {
+        console.log(`[Electron] Saved ${st}: ${result.path}`)
         updateDragButtonState(st)
       })
       .catch(err => {
@@ -5057,6 +5081,7 @@ function scheduleAutoDownloadForStem(st) {
       filename,
       timestamp: pcmCache.timestamp
     }).catch(err => {
+      console.warn(`[AutoDownload] Failed to save ${st}:`, err?.message || err)
     })
   }
 }
@@ -5304,6 +5329,7 @@ function encodeWAVLegacy(audioBuffer) {
   }
 
   if (!hasAudio) {
+    console.warn('Audio buffer appears to contain only silence')
   }
 
   const bps = 2 // 16-bit
@@ -5364,6 +5390,7 @@ function encodeWAVLegacy(audioBuffer) {
     throw new Error('Failed to create WAV blob')
   }
 
+  console.log(`✓ Encoded WAV: ${(blob.size / 1024).toFixed(1)}KB, ${sr}Hz, ${srcCh}ch, ${len} samples`)
 
   return blob
 }
@@ -5384,6 +5411,7 @@ function downloadStem(st, mode = 'loop') {
 
       // Fallback to loop if raw is not available
       if (!buf) {
+        console.warn(`No raw audio for ${st}, falling back to loop`)
         buf = stemLoop[st]
         modeLabel = 'Edited Loop (fallback)'
         mode = 'loop'
@@ -5407,6 +5435,7 @@ function downloadStem(st, mode = 'loop') {
       return
     }
 
+    console.log(`Downloading stem ${st} (${modeLabel}): ${buf.length} samples, ${buf.duration.toFixed(2)}s`)
 
     // Encode to WAV with error handling
     let wav
@@ -5425,6 +5454,7 @@ function downloadStem(st, mode = 'loop') {
       return
     }
 
+    console.log(`WAV blob created: ${(wav.size / 1024).toFixed(1)}KB`)
 
     // Use proper filename with session info and mode (loop or raw)
     const filename = generateWavFilename(st, mode)
@@ -5446,6 +5476,7 @@ function downloadStem(st, mode = 'loop') {
       URL.revokeObjectURL(url)
     }, 100)
 
+    console.log(`✓ Download initiated: ${filename}`)
   } catch (err) {
     console.error('Download failed:', err)
     alert(`Download failed: ${err.message}`)
@@ -5602,8 +5633,8 @@ function headerActionButtonsMobileHTML(st) {
 
 function createBuilderStemCard(st, cfg) {
   const card = document.createElement('div')
-  // Use tighter padding on mobile and moderate padding on larger screens to make cards more compact on small devices.
-  card.className = `glass card-border rounded-2xl p-3 sm:p-5 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
+  // Increased padding for better breathing room and improved UX
+  card.className = `glass card-border rounded-2xl p-4 sm:p-6 transition-all duration-300 hover:scale-[1.02] border-l-4 border-l-${cfg.color}-500 select-none cursor-default`
   card.setAttribute('data-stem', st)
 
   // Use position in visibleInstruments for sequential numbering (1, 2, 3, etc.)
@@ -5613,7 +5644,8 @@ function createBuilderStemCard(st, cfg) {
   // the title and number.  On sm and above, the action buttons appear inline to the right of
   // the title.  We wrap the desktop actions in a hidden container on mobile and include a
   // separate mobile action row using headerActionButtonsMobileHTML.
-  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-1 sm:mb-2">\n          <!-- First row on mobile: name and number indicator are aligned horizontally. -->\n          <div class="flex items-center justify-between w-full sm:w-auto gap-2">\n            <div class="flex items-center gap-2">\n              <h3 class="text-sm sm:text-base font-medium text-white">${cfg.name}</h3>\n            </div>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-5 h-5 sm:w-5 sm:h-5 text-xs sm:text-xs font-semibold rounded-full border border-white/30">${idx}</span>\n          </div>\n          <!-- Action icons centered on desktop -->\n          <div class="hidden sm:flex flex-1 items-center justify-center gap-1.5">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-3 sm:mb-4">\n          <!-- First row on mobile: name and number indicator are aligned horizontally. -->\n          <div class="flex items-center justify-between w-full sm:w-auto gap-3">\n            <div class="flex items-center gap-2 sm:gap-3">\n              <h3 class="text-base sm:text-lg font-medium text-white">${cfg.name}</h3>\n            </div>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 text-xs sm:text-sm font-semibold rounded-full border border-white/30">${idx}</span>\n          </div>\n        </div>\n      `
+  
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
   const eqFilterHTML = ''
@@ -5626,7 +5658,27 @@ function createBuilderStemCard(st, cfg) {
   // rather than being drawn over the waveform.  Therefore, we no longer
   // include the overlay markup here.  Clicking on the waveform will open
   // the dedicated edit modal defined in index.html.
-  const waveformHTML = `\n        <div class="mb-2">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-16 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit take button: centered rectangular button with consistent styling -->\n            <div class="hidden sm:flex absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 w-20 sm:w-24 h-8 sm:h-10 bg-black/50 hover:bg-white/20 items-center justify-center rounded-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Edit take"\n                 data-action="edit-take" data-stem="${st}"\n                 title="Click to edit this take">\n              <span class="text-white text-[10px] sm:text-xs uppercase tracking-wide font-medium">edit take</span>\n            </div>\n            <!-- Left and right arrow zones: occupy 25% width each.  Entire zone is clickable. Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Previous take"\n                 data-action="prev-take" data-stem="${st}" title="Previous take">\n              <i data-lucide="chevron-left" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Next take"\n                 data-action="next-take" data-stem="${st}" title="Next take">\n              <i data-lucide="chevron-right" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
+  // Saved Items button - show in all cards, but use ID only on first card to avoid duplicate IDs
+  // Positioned between left and right arrow zones on the waveform
+  // Event listeners use data-likes-menu-toggle attribute, so all buttons will work
+  const isFirstCard = visibleInstruments.indexOf(st) === 0
+  const saveGroupId = isFirstCard ? 'id="saveGroup"' : ''
+  const savedItemsButtonHTML = `
+            <!-- Saved Items button: positioned between left and right arrow zones -->
+            <div ${saveGroupId}
+                 title="Open saved items"
+                 style="cursor: pointer"
+                 class="save-group-btn absolute inset-y-0 left-1/4 right-1/4 flex items-center justify-center pointer-events-auto cursor-pointer transition"
+                 data-likes-menu-toggle
+                 data-anchor-id="selection-menu">
+              <div class="flex items-center justify-center gap-2 sm:gap-2.5 px-4 sm:px-5 py-2.5 sm:py-3 bg-white/5 backdrop-blur-lg border border-white/10 rounded-lg text-sm sm:text-base text-white/80 whitespace-nowrap hover:bg-white/10">
+                <span class="hidden sm:inline">Saved Items</span>
+                <i data-lucide="memory-stick" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+              </div>
+            </div>
+      `
+  
+  const waveformHTML = `\n        <div class="mb-4">\n          <!-- Waveform container: relative so overlays can be positioned absolutely -->\n          <div class="relative group">\n            <canvas class="waveform-canvas w-full h-20 sm:h-24 bg-white/5 rounded-md border border-white/10 cursor-pointer"\n                    width="400" height="64" data-stem="${st}" title="Click to edit this take"></canvas>\n            <!-- Indicator showing current playback position -->\n            <div class="absolute inset-y-0 w-0.5 bg-purple-400 shadow-glow pointer-events-none opacity-0"\n                 data-stem-indicator="${st}"></div>\n            <!-- Edit take button moved to header action buttons -->\n            <!-- Left and right arrow zones: occupy 25% width each.  Entire zone is clickable. Rounded corners match the waveform box on the edges. -->\n            <div class="absolute inset-y-0 left-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-l-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Previous take"\n                 data-action="prev-take" data-stem="${st}" title="Previous take">\n              <i data-lucide="chevron-left" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n            ${savedItemsButtonHTML}\n            <div class="absolute inset-y-0 right-0 w-1/4 bg-black/50 hover:bg-white/20 flex items-center justify-center rounded-r-md overflow-hidden pointer-events-auto cursor-pointer transition"\n                 role="button" tabindex="0" aria-label="Next take"\n                 data-action="next-take" data-stem="${st}" title="Next take">\n              <i data-lucide="chevron-right" class="w-5 h-5 text-white pointer-events-none"></i>\n            </div>\n          </div>\n        </div>\n        <div class="overflow-hidden transition-all duration-200 ease-out max-h-0" data-history-drawer="${st}">\n          <div class="flex items-center justify-between text-xs text-white/60 mt-1 mb-2">\n            <span>Previous takes</span>\n            <button class="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-md text-[11px]"\n                    data-action="close-history" data-stem="${st}">Close</button>\n          </div>\n          <div class="flex gap-2 overflow-x-auto pb-2 no-scrollbar" data-history-list="${st}"></div>\n        </div>\n      `
 
   // Volume dial: an infinite horizontal dial positioned between the
   // waveform and the create button.  A minus sign on the left and a plus
@@ -5648,10 +5700,8 @@ function createBuilderStemCard(st, cfg) {
   // Define a generate button fragment.  The sliders and toggles are shown in a popup instead of on the card.
   const genButtonHTML = `\n        <div class="mt-3 rounded-xl player-surface text-white border-2 border-white/80 shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold border border-white/30 shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-generate-settings" data-stem="${st}" title="Generate new take">\n            <span class="inline-flex items-center gap-2">\n              <i data-lucide="wand-2" class="w-4 h-4"></i>\n              Generate\n            </span>\n          </button>\n        </div>\n      `;
 
-  // Define a drag button for desktop browsers (Chromium only).  This button appears above
-  // the Create button and allows users to drag the active sample to folders or desktop.
-  // Hidden on mobile and non-Chromium browsers.
-  const dragButtonHTML = `\n        <div class="mt-2 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative hidden sm:block" data-drag-container="${st}">\n          <div class="flex gap-2">\n            <button class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed"\n                    data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to folders or desktop">\n              <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm relative w-full">\n                <i data-lucide="grip-vertical" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n                Drag & Drop (folder)\n                <span class="absolute right-0 text-[10px] opacity-60" data-auto-download-status="${st}"></span>\n              </span>\n            </button>\n            <button class="px-3 py-2.5 rounded-xl bg-gradient-to-r from-purple-500/80 to-pink-500/80 hover:from-purple-500 hover:to-pink-500 text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] hidden"\n                    data-action="show-in-folder" data-stem="${st}" title="Reveal file in Explorer/Finder">\n              <i data-lucide="folder-open" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n            </button>\n          </div>\n        </div>\n      `;
+  // Drag button moved to header action buttons - keeping container for data-drag-container attribute
+  const dragButtonHTML = `\n        <div class="hidden" data-drag-container="${st}"></div>\n      `;
 
   // Edit Take button for mobile - REMOVED (editing is desktop-only feature)
   // Mobile users can still navigate between takes using left/right arrows on waveform
@@ -5662,10 +5712,38 @@ function createBuilderStemCard(st, cfg) {
 
   // Define a create button fragment.  This version removes borders and uses "Create" for the label.  It opens
   // a modal for configuring generation settings when clicked.
-  const genCreateButtonHTML = `\n        <div class="mt-2 rounded-xl player-surface text-white shadow-sm p-2 sm:p-3 relative">\n          <button class="w-full py-2.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center justify-center gap-2 text-xs sm:text-sm">\n              <i data-lucide="wand-2" class="w-3 h-3 sm:w-4 sm:h-4"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
-  // Use our custom create button HTML with drag, clean, and create buttons.  Update status line text accordingly.
-  // On mobile, show Clean and Create buttons (Edit Take removed for simplicity)
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + dragButtonHTML + cleanButtonHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  const genCreateButtonHTML = `\n        <div class="mt-4 sm:mt-5 rounded-xl player-surface text-white shadow-sm p-3 sm:p-4 relative">\n          <button class="w-full py-3 sm:py-3.5 rounded-xl bg-black text-white font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px]"\n                  data-action="open-create-settings" data-stem="${st}" title="Create new take">\n            <span class="inline-flex items-center justify-center gap-2 text-sm sm:text-base">\n              <i data-lucide="wand-2" class="w-4 h-4 sm:w-5 sm:h-5"></i>\n              Create\n            </span>\n          </button>\n        </div>\n      `;
+  // Clean, Edit Take, and Drag & Drop buttons row - positioned below waveform
+  const actionButtonsRowHTML = `\n        <div class="flex gap-4 sm:gap-6 items-center flex-nowrap mt-3 sm:mt-4">
+          <button class="px-4 sm:px-5 py-2.5 sm:py-3 rounded-lg bg-gradient-to-r from-emerald-500/80 to-teal-500/80 hover:from-emerald-500 hover:to-teal-500 text-white text-sm sm:text-base font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                  data-action="clean-stem" data-stem="${st}" title="Remove unwanted instruments from this sample">
+            <span class="inline-flex items-center justify-center gap-2 sm:gap-2.5">
+              <i data-lucide="sparkles" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+              <span data-clean-label="${st}" class="hidden sm:inline">Clean</span>
+              <span data-clean-label-mobile="${st}" class="sm:hidden">C</span>
+            </span>
+          </button>
+          <button class="px-4 sm:px-5 py-2.5 sm:py-3 rounded-lg bg-black/50 hover:bg-white/20 text-white text-xs sm:text-sm uppercase tracking-wide font-medium transition whitespace-nowrap"
+                  data-action="edit-take" data-stem="${st}" title="Click to edit this take"
+                  role="button" tabindex="0" aria-label="Edit take">
+            <span class="hidden sm:inline">EDIT TAKE</span>
+            <span class="sm:hidden">EDIT</span>
+          </button>
+          <button class="px-4 sm:px-5 py-2.5 sm:py-3 rounded-lg bg-gradient-to-r from-blue-500/80 to-cyan-500/80 hover:from-blue-500 hover:to-cyan-500 text-white text-sm sm:text-base font-semibold shadow-sm hover:shadow transition will-change-transform hover:-translate-y-0.5 active:translate-y-[1px] cursor-move disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+                  data-action="drag-stem" data-stem="${st}" draggable="true" title="Drag to folders or desktop">
+            <span class="inline-flex items-center justify-center gap-2 sm:gap-2.5">
+              <i data-lucide="grip-vertical" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+              <span class="hidden sm:inline">Drag & Drop</span>
+              <span class="sm:hidden">Drag</span>
+              <span class="text-xs sm:text-sm opacity-60 hidden sm:inline" data-auto-download-status="${st}"></span>
+            </span>
+          </button>
+        </div>
+      `
+  
+  // Keep data-clean-container and data-drag-container for functionality
+  const cleanContainerHTML = `\n        <div class="hidden" data-clean-container="${st}"></div>\n      `
+  card.innerHTML = headerHTML + `<div class="hidden sm:flex flex-1 items-center justify-center gap-1.5 mb-3 sm:mb-4">${customHeaderActionButtonsHTML(st)}</div>` + customHeaderActionButtonsMobileHTML(st) + eqFilterHTML + volumeHTML + waveformHTML + actionButtonsRowHTML + dragButtonHTML + cleanContainerHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
   // The span within the create button becomes the label, and the icon gets a special class so
   // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
@@ -5911,16 +5989,11 @@ function setMixerOpen(open) {
   // Expand the mixer to full viewport height when open; collapse to zero when closed
   tray.style.maxHeight = open ? '100vh' : '0px'
   tray.dataset.open = open ? '1' : '0'
-  // Update player toggle button label + ARIA
-  const toggleBtn = document.getElementById('mixerToggleBtn')
-  if (toggleBtn) {
-    // Update the desktop label only.  The mobile label remains 'mixer' regardless of state.
-    const desktopSpan = toggleBtn.querySelector('span.hidden.sm\\:inline')
-    const mobileSpan = toggleBtn.querySelector('span.inline.sm\\:hidden')
-    if (desktopSpan) desktopSpan.textContent = open ? 'close mixer' : 'open mixer'
-    // Do not modify the mobile label (mobileSpan) so it stays 'mixer'
+  // Update all mixer toggle buttons (in player bar and stem cards) - ARIA state
+  const toggleBtns = document.querySelectorAll('.mixer-toggle-btn, #mixerToggleBtn')
+  toggleBtns.forEach(toggleBtn => {
     toggleBtn.setAttribute('aria-pressed', open ? 'true' : 'false')
-  }
+  })
 
   // When the mixer is open on mobile, prevent the page from scrolling or panning.
   // Disable body overflow so touch interactions are confined to the mixer.
@@ -6004,10 +6077,12 @@ function safeUpdateButtonStates(st) {
   try {
     updateDragButtonState(st)
   } catch (err) {
+    console.warn(`[UI] Failed to update drag button for ${st}:`, err.message)
   }
   try {
     updateCleanButtonState(st)
   } catch (err) {
+    console.warn(`[UI] Failed to update clean button for ${st}:`, err.message)
   }
 }
 
@@ -6066,7 +6141,9 @@ function updateDragButtonState(st) {
   dragBtn.disabled = !hasValidData || !isChromium || !dragPayloadReady
 
   // Log PCM cache status for debugging
+  console.log(`[DragButton] ${st} - hasValidData: ${hasValidData}, isPCMReady: ${isPCMReady}, fileHandleReady: ${fileHandleReady}, isChromium: ${isChromium}, pcmCache: ${pcmCache ? 'exists' : 'missing'}`)
   if (hasValidData && !isPCMReady && !fileHandleReady) {
+    console.warn(`[DragButton] ${st} has audio buffer but PCM not ready. PCM cache:`, pcmCache)
   }
 
   // Update tooltip with detailed information
@@ -6364,6 +6441,7 @@ function setupEventListeners() {
     Object.keys(stemBlobUrls).forEach(st => {
       if (stemBlobUrls[st]) {
         URL.revokeObjectURL(stemBlobUrls[st])
+        console.log(`Cleaned up blob URL for ${st} on page unload`)
       }
     })
   })
@@ -6371,11 +6449,6 @@ function setupEventListeners() {
   // Player Play/Pause
   const playBtn = document.getElementById('playBtn')
   if (playBtn) playBtn.addEventListener('click', async () => {
-    // Track play button click
-    if (typeof posthog !== 'undefined') {
-      posthog.capture('play_button_toggled', { is_playing: !isPlaying })
-    }
-
     await ensureAudioContext()
     if (isPlaying) stopTransport()
     else {
@@ -6385,9 +6458,23 @@ function setupEventListeners() {
     }
   })
 
-  // Mixer toggle inside player
-  const mixerToggleBtn = document.getElementById('mixerToggleBtn')
-  if (mixerToggleBtn) mixerToggleBtn.addEventListener('click', () => toggleMixerOpen())
+  // Remove mixer toggle button from player bar if it exists (should only be in stem cards)
+  const playerBar = document.getElementById('playerBar')
+  if (playerBar) {
+    const playerBarMixerBtn = playerBar.querySelector('#mixerToggleBtn')
+    if (playerBarMixerBtn) {
+      playerBarMixerBtn.remove()
+    }
+  }
+
+  // Mixer toggle buttons - attach listeners to all mixer toggle buttons (in stem cards only)
+  const mixerToggleBtns = document.querySelectorAll('.mixer-toggle-btn, #mixerToggleBtn')
+  mixerToggleBtns.forEach(btn => {
+    // Only attach if button is not in player bar
+    if (!playerBar || !playerBar.contains(btn)) {
+      btn.addEventListener('click', () => toggleMixerOpen())
+    }
+  })
 
   // Mixer close (X) button: close the mixer when clicked
   const mixerCloseBtn = document.getElementById('mixerCloseBtn')
@@ -6410,12 +6497,6 @@ function setupEventListeners() {
         console.error('Auth check failed', e)
         return
       }
-
-      // Track Download All click
-      posthog.capture('download_all_clicked', {
-        download_location: 'bottom_player_download_all'
-      })
-
       openDownloadConfirmModal()
     })
   }
@@ -6434,20 +6515,29 @@ function setupEventListeners() {
   const cleanCloseBtn = document.getElementById('cleanModalCloseBtn')
   const cleanOverlay = document.getElementById('cleanStemOverlay')
 
-
+  console.log('[Setup] Clean modal buttons found:', {
+    cancel: !!cleanCancelBtn,
+    confirm: !!cleanConfirmBtn,
+    close: !!cleanCloseBtn,
+    overlay: !!cleanOverlay
+  })
 
   if (cleanCancelBtn) cleanCancelBtn.addEventListener('click', () => hideCleanStemModal())
   if (cleanCloseBtn) cleanCloseBtn.addEventListener('click', () => hideCleanStemModal())
   if (cleanOverlay) cleanOverlay.addEventListener('click', () => hideCleanStemModal())
   if (cleanConfirmBtn) {
     cleanConfirmBtn.addEventListener('click', async () => {
+      console.log('[Clean] Confirm button clicked, currentCleanStem:', currentCleanStem)
       const st = currentCleanStem
       if (st) {
+        console.log(`[Clean] Starting separation for ${st}`)
         hideCleanStemModal()
         await separateCurrentStem(st)
       } else {
+        console.warn('[Clean] No stem selected for cleaning')
       }
     })
+    console.log('[Setup] Clean confirm button event listener attached')
   } else {
     console.error('[Setup] Clean confirm button NOT found! Modal may not have loaded.')
   }
@@ -6905,10 +6995,12 @@ function setupEventListeners() {
     const pcmCache = getStemPCM(st)
 
     if (!savedRecord && pcmCache?.pcmData) {
+      console.log(`[PreWarm] Initiating save for ${st} before drag`)
       const filename = generateWavFilename(st)
 
       saveWavFileElectron(st, pcmCache.pcmData, pcmCache.sampleRate, pcmCache.numChannels, filename)
         .then(result => {
+          console.log(`[PreWarm] ✓ File ready: ${result.path}`)
           updateDragButtonState(st)
         })
         .catch(err => {
@@ -6933,6 +7025,7 @@ function setupEventListeners() {
     try {
       // Check if PCM data is ready for drag
       if (!isPCMReadyForDrag(st)) {
+        console.warn(`[Drag] PCM data not ready for ${st}`)
         e.preventDefault()
         alert('Audio is still being prepared. Please wait a moment and try again.')
         return
@@ -6948,6 +7041,7 @@ function setupEventListeners() {
       }
 
       const { pcmData, sampleRate, numChannels, format } = pcmCache
+      console.log(`[Drag] Initiating drag for ${st}: ${format} (${sampleRate}Hz, ${numChannels}ch, ${(pcmData.byteLength / 1024).toFixed(1)}KB)`)
 
       const filename = generateWavFilename(st)
 
@@ -6957,19 +7051,27 @@ function setupEventListeners() {
       const autoRecord = getStemAutoDownloadRecord(st)
 
       if (isElectron) {
+        console.log(`[Drag] Electron mode detected`)
 
         const savedPath = getSavedFilePath(st)
         const savedRecord = getSavedFileRecord(st)
         const saveDir = getElectronSaveDirectory()
         const saveEnabled = isElectronSaveEnabled()
 
+        console.log(`[Drag] Debug state:`)
+        console.log(`  - savedPath:`, savedPath)
+        console.log(`  - savedRecord:`, savedRecord)
+        console.log(`  - saveDir:`, saveDir)
+        console.log(`  - auto-save enabled:`, saveEnabled)
 
         if (savedPath && savedRecord?.status === 'saved') {
+          console.log(`[Drag] Using saved file: ${savedPath}`)
 
           try {
             const result = window.electronAPI.startNativeDragWithPath(st, savedPath, filename)
 
             if (result.success) {
+              console.log(`[Drag] ✓ Native drag started: ${result.method} (${result.elapsed}ms)`)
               e.preventDefault()
               if (btn) btn.style.opacity = '0.7'
               return
@@ -7010,6 +7112,10 @@ function setupEventListeners() {
       }
 
       // Browser-based drag for folders and desktop
+      console.warn(`[DRAG] sender=browser event=dragstart stemId=${st}`)
+      console.warn(`[DRAG] ⚠️  BROWSER MODE: Drag to folders or desktop`)
+      console.warn(`[DRAG] Files are automatically saved to your download folder`)
+      console.warn(`[DRAG] You can also drag files from your file manager`)
 
       // Wrap PCM to WAV for browser drag
       const wavBlob = pcm16leToWavBlob(pcmData, sampleRate, numChannels)
@@ -7018,6 +7124,7 @@ function setupEventListeners() {
         lastModified: Date.now()
       })
 
+      console.log(`[Drag] Created WAV file: ${filename} (${(wavFile.size / 1024).toFixed(1)}KB)`)
 
       // Clean up any existing blob URL for this stem
       if (stemBlobUrls[st]) {
@@ -7035,7 +7142,9 @@ function setupEventListeners() {
         try {
           e.dataTransfer.items.add(wavFile)
           addedViaItems = true
+          console.log(`[Drag] ✓ Added file via DataTransferItem API`)
         } catch (itemErr) {
+          console.warn('[Drag] DataTransferItem.add() failed:', itemErr)
         }
       }
 
@@ -7044,7 +7153,9 @@ function setupEventListeners() {
       try {
         const downloadURL = `audio/wav:${filename}:${url}`
         e.dataTransfer.setData('DownloadURL', downloadURL)
+        console.log(`[Drag] Set DownloadURL format`)
       } catch (dlErr) {
+        console.warn('[Drag] DownloadURL not supported:', dlErr)
       }
 
       // Standard formats
@@ -7056,11 +7167,13 @@ function setupEventListeners() {
         e.dataTransfer.setData('audio/wav', url)
         e.dataTransfer.setData('audio/x-wav', url)
       } catch (mimeErr) {
+        console.warn('[Drag] MIME type data not supported:', mimeErr)
       }
 
       e.dataTransfer.effectAllowed = 'copy'
       e.dataTransfer.dropEffect = 'copy'
 
+      console.log(`[Drag] Browser drag prepared: ${addedViaItems ? 'File+URL+DownloadURL' : 'URL+DownloadURL'}`)
 
       // Create custom drag image with filename display
       setDragImageForFilename(e, filename)
@@ -7093,9 +7206,11 @@ function setupEventListeners() {
       if (stemBlobUrls[st]) {
         URL.revokeObjectURL(stemBlobUrls[st])
         delete stemBlobUrls[st]
+        console.log(`Cleaned up blob URL for ${st}`)
       }
     }, 1000) // 1 second - enough time for the drag operation to complete
 
+    console.log(`Drag operation completed for ${st}`)
   })
 
   // Click actions (Generate / Download / Filter mode / options overlay / history / waveform navigation)
@@ -7148,11 +7263,13 @@ function setupEventListeners() {
     if (btn) {
       const action = btn.dataset.action
       const st = btn.dataset.stem
+      console.log('[Click] Button action clicked:', action, 'stem:', st)
       if (action === 'auto-download-configure') {
         try {
           if (isElectronMode()) {
             const result = await chooseElectronSaveDirectory()
             if (!result.canceled) {
+              console.log(`[Electron] Save directory selected: ${result.path}`)
               updateAutoDownloadPanel()
               queueAutoDownloadsForAvailableStems()
             }
@@ -7176,21 +7293,25 @@ function setupEventListeners() {
           }
           updateAutoDownloadPanel()
         } catch (err) {
+          console.warn('Failed to disable auto-save:', err)
         }
         return
       }
 
-      if (action === 'generate' && st) { await generateStem(st, { surface: 'card_button' }); return }
+      if (action === 'generate' && st) { await generateStem(st); return }
       // When clicking the new generate button, open the settings modal instead of generating immediately
       if (action === 'open-create-settings' && st) { showGenerateSettingsModal(st); return }
       // Handle clean button: directly separate stem (no modal)
       if (action === 'clean-stem' && st) {
+        console.log(`[Clean] Clean button clicked for stem: ${st}`)
         await separateCurrentStem(st)
 
         // Verify PCM data is ready for drag-and-drop
         const pcmReady = isPCMReadyForDrag(st)
+        console.log(`[Clean] Separation complete. PCM ready for drag: ${pcmReady}`)
         if (pcmReady) {
           const pcmCache = getStemPCM(st)
+          console.log(`[Clean] PCM cache: ${pcmCache.format} (${(pcmCache.pcmData.byteLength / 1024).toFixed(1)}KB)`)
         }
 
         // Seamlessly swap in the new audio if playing, or start playback if stopped
@@ -7202,7 +7323,7 @@ function setupEventListeners() {
         }
         return
       }
-      if (action === 'toggle-like' && st) { handleStemLikeToggle(st, { like_location: 'stem_card' }); return }
+      if (action === 'toggle-like' && st) { handleStemLikeToggle(st); return }
       if (action === 'download-stem' && st) { openDownloadStemModal(st); return }
       if (action === 'toggle-filter-mode' && st) { toggleFilterMode(st); return }
       if (action === 'show-in-folder' && st) {
@@ -7217,10 +7338,12 @@ function setupEventListeners() {
             return
           }
 
+          console.log(`[ShowInFolder] Revealing: ${savedPath}`)
 
           window.electronAPI.showItemInFolder(savedPath)
             .then(result => {
               if (result.success) {
+                console.log(`[ShowInFolder] ✓ Revealed: ${result.path}`)
               } else {
                 console.error('[ShowInFolder] Failed:', result.error)
                 alert(`Could not reveal file: ${result.error}`)
@@ -7364,11 +7487,14 @@ function setupEventListeners() {
         return
       }
     } else {
+      console.log('[Click] Not a button action, checking for waveform click')
       const cw = e.target.closest('.waveform-canvas')
+      console.log('[Click] Waveform canvas found:', cw, 'stem:', cw?.dataset.stem)
       if (cw?.dataset.stem) {
         // Open the waveform edit modal instead of toggling an overlay or
         // opening the history drawer.  This modal allows the user to
         // adjust volume and endpoint with full controls and save/discard.
+        console.log('[Click] Opening waveform edit modal for:', cw.dataset.stem)
         openWaveformEditModal(cw.dataset.stem)
         return
       }
@@ -7539,7 +7665,9 @@ function selectStemVersion(st, index) {
     const rawBuffer = take.raw || playbackLoop
     const pcmData = extractPCMFromAudioBuffer(rawBuffer)
     storeStemPCM(st, pcmData, rawBuffer.sampleRate, rawBuffer.numberOfChannels, `pcm_${rawBuffer.sampleRate}`)
+    console.log(`[Version] Extracted PCM for ${st} v${index + 1} (${rawBuffer === take.raw ? 'full raw' : 'edited'}): ${(pcmData.byteLength / 1024).toFixed(1)}KB`)
   } catch (pcmErr) {
+    console.warn(`[Version] Failed to extract PCM for ${st}:`, pcmErr.message)
   }
   const canvas = document.querySelector(`[data-stem="${st}"] .waveform-canvas`)
   if (canvas) {
@@ -7573,7 +7701,7 @@ function selectStemVersion(st, index) {
    App init + navigation
    ========================================================= */
 function showPage(pageId) {
-  const pages = ['selection-page', 'techno-generator-page', 'favorites-page', 'profile-page', 'reset-password-page']
+  const pages = ['selection-page', 'techno-generator-page', 'favorites-page']
   pages.forEach(id => { const page = document.getElementById(id); if (page) page.classList.add('hidden') })
   const targetPage = document.getElementById(pageId); if (targetPage) targetPage.classList.remove('hidden')
   currentPageId = pageId
@@ -7604,12 +7732,6 @@ if (typeof window !== 'undefined') {
 
 function openFavoritesPage() {
   showPage('favorites-page')
-  const titleElement = document.querySelector('title');
-  if (titleElement) {
-    titleElement.textContent = 'Favorites';
-  }
-
-
   refreshFavoritesUI()
   window.lucide?.createIcons()
   window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -7617,26 +7739,13 @@ function openFavoritesPage() {
 
 function setupFavoritesPageNavigation() {
   const backBtn = document.getElementById('favoritesBackButton')
-  if (backBtn) backBtn.addEventListener('click', () => {
-    showPage(lastPageBeforeFavorites)
-    const titleElement = document.querySelector('title');
-    if (titleElement) {
-      titleElement.textContent = 'TunePal - Techno Generator';
-    }
-
-  })
+  if (backBtn) backBtn.addEventListener('click', () => showPage(lastPageBeforeFavorites))
 
   const selectionBtn = document.getElementById('favoritesOpenSelection')
   if (selectionBtn) selectionBtn.addEventListener('click', () => showPage('selection-page'))
 
   const studioBtn = document.getElementById('favoritesOpenStudio')
-  if (studioBtn) studioBtn.addEventListener('click', () => {
-    showPage('techno-generator-page')
-    const titleElement = document.querySelector('title');
-    if (titleElement) {
-      titleElement.textContent = 'TunePal - Techno Generator';
-    }
-  })
+  if (studioBtn) studioBtn.addEventListener('click', () => showPage('techno-generator-page'))
 }
 function setupNavigationListeners() {
   const loginBtn = document.getElementById('loginBtn')
@@ -7813,6 +7922,7 @@ function addInstrument(stemId) {
   // Reinitialize lucide icons for the newly shown card
   window.lucide?.createIcons()
 
+  console.log(`✅ Added instrument: ${stemId}`)
 }
 
 function updateAllCardNumbers() {
@@ -7850,9 +7960,11 @@ function updatePlusButtonVisibility() {
 function initTechnoGenerator() {
   // Prevent duplicate initialization
   if (technoGeneratorInitialized) {
+    console.log('🎛️ Techno Generator already initialized')
     return
   }
 
+  console.log('🎛️ Initializing Techno Generator…')
   injectGlobalStyles()
   initializeStemControlValues()
 
@@ -7951,6 +8063,7 @@ function initTechnoGenerator() {
   // before generating any stems.  The modal will only appear once
   // per session.
   showSessionSetupModal()
+  console.log('✅ App ready (session ' + SESSION_TAG + ')')
 }
 
 // Expose init function for external triggers
@@ -7969,6 +8082,7 @@ async function checkWindowsUACStatus() {
     const elevationStatus = await window.electronAPI.getElevationStatus()
 
     if (elevationStatus.elevated && diagnostics.platform === 'win32') {
+      console.warn('[UAC] ⚠️  Running as Administrator - file operations may be affected!')
 
       // Show warning banner
       const uacWarning = document.createElement('div')
@@ -7992,6 +8106,7 @@ async function checkWindowsUACStatus() {
       document.body.appendChild(uacWarning)
     }
   } catch (err) {
+    console.warn('[UAC] Could not check elevation status:', err)
   }
 }
 
@@ -8061,6 +8176,7 @@ function setupDownloadStemModalListeners() {
 }
 
 export async function initApp() {
+  console.log('🎬 Initializing App Navigation System…')
 
   // Initialize WAV encoder worker for non-blocking audio encoding
   initWavEncoder()
@@ -8166,6 +8282,7 @@ export async function initApp() {
   window.addEventListener('loadStemState', async (event) => {
     const state = event.detail
     if (state && state.stems_snapshot) {
+      console.log('Loading cloud stem state:', state.state_name)
       // Show spinner
       const spinner = document.getElementById('loadSetSpinner')
       const label = document.getElementById('loadSetConfirmLabel')
@@ -8183,6 +8300,7 @@ export async function initApp() {
 
       try {
         await applyPlayerState(state.stems_snapshot)
+        console.log('Cloud stem state loaded successfully')
       } catch (err) {
         console.error('Failed to load cloud stem state:', err)
       }
@@ -8210,6 +8328,7 @@ export async function initApp() {
   // Add browser drag warning banner to DOM
   addBrowserDragWarningBanner()
 
+  console.log('✅ Navigation system ready')
 
   // Cleanup on page unload
   window.addEventListener('beforeunload', () => {
@@ -8253,8 +8372,10 @@ async function handleHashChange() {
       try {
         const { initConfirmEmailPage } = await import('./Auth/confirmEmail.js')
         if (typeof initConfirmEmailPage === 'function') {
+          console.log('[router] Initializing confirm email page logic')
           initConfirmEmailPage()
         } else {
+          console.warn('[router] initConfirmEmailPage not a function')
         }
       } catch (e) {
         console.error('[router] Failed to initialize confirm email page:', e?.message || e)
@@ -8294,23 +8415,34 @@ async function handleHashChange() {
 //    and the solo button uses 'S'.
 
 function customHeaderActionButtonsHTML(st) {
+  // Include mixer toggle button in all cards. Use ID only on first card (kick) for backwards compatibility
+  const isFirstCard = visibleInstruments.indexOf(st) === 0
+  const mixerButtonId = isFirstCard ? 'id="mixerToggleBtn"' : ''
+  
   return `
-        <div class="flex items-center gap-1.5">
-          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+        <div class="flex items-center gap-1.5 flex-nowrap">
+          <button class="sg-toggle w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
-            <i data-lucide="volume-2" class="w-4 h-4"></i>
+            <i data-lucide="volume-2" class="w-4 h-4 sm:w-5 sm:h-5"></i>
           </button>
-          <button class="sg-toggle w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="sg-toggle w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
-            <span class="font-bold text-sm">S</span>
+            <span class="font-bold text-sm sm:text-base">S</span>
           </button>
-          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
-            <i data-lucide="heart" class="w-4 h-4"></i>
+            <i data-lucide="heart" class="w-4 h-4 sm:w-5 sm:h-5"></i>
           </button>
-          <button class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                  data-action="download-stem" data-stem="${st}" title="Download">
-            <i data-lucide="download" class="w-4 h-4"></i>
+            <i data-lucide="download" class="w-4 h-4 sm:w-5 sm:h-5"></i>
+          </button>
+          <button ${mixerButtonId}
+                  class="mixer-toggle-btn flex items-center justify-center w-10 h-10 sm:w-11 sm:h-11 rounded-lg border border-white/20 player-surface hover:bg-white/10 transition"
+                  title="Toggle mixer"
+                  aria-label="Toggle mixer" 
+                  aria-pressed="false">
+            <i data-lucide="sliders" class="w-5 h-5 sm:w-6 sm:h-6"></i>
           </button>
         </div>
       `
@@ -8318,22 +8450,22 @@ function customHeaderActionButtonsHTML(st) {
 
 function customHeaderActionButtonsMobileHTML(st) {
   return `
-        <div class="flex w-full items-center gap-1 sm:hidden mt-1">
-          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+        <div class="flex w-full items-center gap-2 sm:hidden mt-2">
+          <button class="sg-toggle flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
-            <i data-lucide="volume-2" class="w-3 h-3"></i>
+            <i data-lucide="volume-2" class="w-4 h-4"></i>
           </button>
-          <button class="sg-toggle flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="sg-toggle flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="solo-stem" data-stem="${st}" title="Solo" aria-pressed="false">
-            <span class="font-bold text-[10px]">S</span>
+            <span class="font-bold text-xs">S</span>
           </button>
-          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+          <button class="flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="toggle-like" data-stem="${st}" aria-pressed="false" title="Save to Likes">
-            <i data-lucide="heart" class="w-3 h-3"></i>
+            <i data-lucide="heart" class="w-4 h-4"></i>
           </button>
-          <button class="flex-1 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
-                  data-action="download-stem" data-stem="${st}" title="Download">
-            <i data-lucide="download" class="w-3 h-3"></i>
+          <button class="flex-1 h-8 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
+                 data-action="download-stem" data-stem="${st}" title="Download">
+            <i data-lucide="download" class="w-4 h-4"></i>
           </button>
         </div>
       `
@@ -8512,7 +8644,7 @@ async function applyGenerateSettingsAndStart() {
   }
   hideGenerateSettingsModal()
   // Trigger generation for this stem
-  await generateStem(st, { surface: 'modal' })
+  await generateStem(st)
 }
 
 /* =========================================================

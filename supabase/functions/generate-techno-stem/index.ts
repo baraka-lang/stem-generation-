@@ -9,64 +9,8 @@
 // raw PCM clip, validates the result for expected onsets and trims
 // the audio to an exact number of bars using the same DSP pipeline
 // used in the client.  It returns a base64 encoded WAV along with
+// metadata describing the prompt and validation tier.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
-
-/**
- * Shared PostHog capture helper - Inlined for Dashboard/GUI users.
- */
-async function posthogCapture(options: {
-  host?: string;
-  apiKey?: string;
-  distinctId: string;
-  event: string;
-  properties?: Record<string, any>;
-}) {
-  try {
-    const host = options.host || Deno.env.get("POSTHOG_HOST") || "https://us.i.posthog.com";
-    const apiKey = options.apiKey || Deno.env.get("POSTHOG_PROJECT_API_KEY");
-    const tp_env = Deno.env.get("VITE_APP_ENV") || Deno.env.get("VITE_ENVIRONMENT") || "production";
-
-    if (!apiKey) {
-      console.warn("PostHog: No API Key found (tried POSTHOG_PROJECT_API_KEY)");
-      return;
-    }
-
-    console.log(`PostHog: Event "${options.event}" | Host: ${host} | Key: ${apiKey.slice(0, 5)}... | Env: ${tp_env}`);
-
-    const payload = {
-      api_key: apiKey,
-      event: options.event,
-      properties: {
-        ...options.properties,
-        distinct_id: options.distinctId,
-        $lib: "deno-edge-function",
-        tp_app: "tunepal",
-        tp_platform: "server",
-        tp_env: tp_env,
-      },
-      timestamp: new Date().toISOString(),
-    };
-
-    const resp = await fetch(`${host}/capture/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(err => {
-      console.error("PostHog: fetch error:", err);
-      return null;
-    });
-
-    if (resp && !resp.ok) {
-      const errText = await resp.text().catch(() => 'unknown error');
-      console.warn(`PostHog: API rejection (${resp.status}): ${errText}`);
-    } else if (resp) {
-      console.log(`PostHog: Event "${options.event}" sent successfully`);
-    }
-  } catch (err) {
-    console.error("PostHog capture error (non-fatal):", err);
-  }
-}
-
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -221,7 +165,7 @@ function getRootText(master) {
 // articulation and tone for each stem type.  They rely on the control
 // values passed from the client.
 function roleDirectives(st, c) {
-  switch (st) {
+  switch(st){
     case 'kick':
       return [
         'ROLE: single isolated kick only (Roland TR-909 voicing)',
@@ -393,8 +337,8 @@ function buildSessionContextFragment(targetStem, sessionContext) {
     const tempoTag = diag.detected_bpm
       ? `${diag.detected_bpm.toFixed(1)} BPM`
       : tempo
-        ? `${tempo.toFixed(1)} BPM`
-        : '';
+      ? `${tempo.toFixed(1)} BPM`
+      : '';
 
     const snippet = stem.promptText && stem.promptText.length > 0
       ? stem.promptText.slice(0, 120)
@@ -611,10 +555,10 @@ function convertRawPCMToChans(pcm, channels, sampleRate) {
   const frames = totalSamples / channels;
   const chans = Array.from({
     length: channels
-  }, () => new Float32Array(frames));
+  }, ()=>new Float32Array(frames));
   let offset = 0;
-  for (let i = 0; i < frames; i++) {
-    for (let c = 0; c < channels; c++) {
+  for(let i = 0; i < frames; i++){
+    for(let c = 0; c < channels; c++){
       const lo = pcm[offset];
       const hi = pcm[offset + 1];
       let val = hi << 8 | lo;
@@ -636,7 +580,7 @@ function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
   const x = buf.data[0];
   let sum = 0;
   const step = 512;
-  for (let i = 0; i < x.length; i += step) {
+  for(let i = 0; i < x.length; i += step){
     const v = x[i];
     sum += v * v;
   }
@@ -645,7 +589,7 @@ function countOnsets(buf, refractorySec = 0.08, relThresh = 0.35) {
   const refr = Math.max(1, Math.round(refractorySec * sr));
   let peaks = 0;
   let i = 0;
-  while (i < x.length) {
+  while(i < x.length){
     if (Math.abs(x[i]) >= thr) {
       peaks++;
       i += refr;
@@ -776,7 +720,7 @@ function analyzeSpectrum(buf, stem) {
   let reason = 'ok';
 
   if (stem === 'kick') {
-    if (spectrum.subBass < 0.3 || spectrum.high > 0.25) {
+    if (spectrum.subBass < 0.3 || spectrum.high > 0.15) {
       valid = false;
       reason = 'kick_spectrum_invalid';
     }
@@ -786,7 +730,7 @@ function analyzeSpectrum(buf, stem) {
       reason = 'hihat_has_low_freq_bleed';
     }
   } else if (stem === 'perc') {
-    if (spectrum.subBass > 0.3 || (spectrum.midLow + spectrum.midHigh) < 0.2) {
+    if (spectrum.subBass > 0.2 || (spectrum.midLow + spectrum.midHigh) < 0.3) {
       valid = false;
       reason = 'snare_spectrum_invalid';
     }
@@ -821,7 +765,7 @@ function checkPhaseCoherence(chans, sr, xfadeN) {
   }
 
   const coherence = correlation / (Math.sqrt(startEnergy * endEnergy) + 1e-10);
-  const valid = coherence > 0.35;
+  const valid = coherence > 0.5;
 
   return { valid, reason: valid ? 'ok' : 'phase_mismatch', coherence };
 }
@@ -854,7 +798,7 @@ function validateSnare(buf, bpm, bars) {
   const fullRms = computeRms(x, 256);
   if (fullRms > 0) {
     const lowRms = computeLowBandRms(x, sr, 170);
-    if (lowRms / fullRms > 0.6) {
+    if (lowRms / fullRms > 0.48) {
       return false;
     }
   }
@@ -887,7 +831,7 @@ function validateSnare(buf, bpm, bars) {
     sumAll += v * v;
   }
   const rmsAll = Math.sqrt(sumAll / Math.max(1, Math.floor(x.length / 512)));
-  const globalThr = Math.max(0.02, rmsAll * 5.0);
+  const globalThr = Math.max(0.02, rmsAll * 3.0);
   const allowed = [];
   for (let bar = 0; bar < bars; bar++) {
     const barStart = Math.round(bar * barSec * sr);
@@ -976,17 +920,17 @@ function detectHeadIndexArray(data, sr) {
   const maxN = Math.min(data.length, Math.round(maxMs / 1000 * sr));
   if (maxN <= 0) return 0;
   const env = new Float32Array(maxN);
-  for (let i = 0; i < maxN; i++)env[i] = Math.abs(data[i]);
+  for(let i = 0; i < maxN; i++)env[i] = Math.abs(data[i]);
   const win = Math.max(2, Math.round(8 / 1000 * sr));
   let acc = 0;
-  for (let i = 0; i < win && i < env.length; i++)acc += env[i];
+  for(let i = 0; i < win && i < env.length; i++)acc += env[i];
   const sm = new Float32Array(maxN);
-  for (let i = 0; i < maxN; i++) {
+  for(let i = 0; i < maxN; i++){
     if (i >= win) acc += env[i] - env[i - win];
     sm[i] = acc / Math.min(win, i + 1);
   }
   let peak = 0;
-  for (let i = 0; i < maxN; i++)if (sm[i] > peak) peak = sm[i];
+  for(let i = 0; i < maxN; i++)if (sm[i] > peak) peak = sm[i];
   const th = Math.max(Math.pow(10, -45 / 20), peak * 0.12);
   const backOff = Math.round(0.0035 * sr);
   const zeroFallback = Math.max(64, Math.round(0.008 * sr));
@@ -995,7 +939,7 @@ function detectHeadIndexArray(data, sr) {
     let bestVal = Math.abs(data[around] || 0);
     const a = Math.max(0, around - zeroFallback);
     const b = Math.min(data.length - 1, around + zeroFallback);
-    for (let i = a; i <= b; i++) {
+    for(let i = a; i <= b; i++){
       const v = Math.abs(data[i]);
       if (v < bestVal) {
         bestVal = v;
@@ -1004,7 +948,7 @@ function detectHeadIndexArray(data, sr) {
     }
     return best;
   }
-  for (let i = 0; i < maxN; i++) {
+  for(let i = 0; i < maxN; i++){
     if (sm[i] >= th) {
       const idx = Math.max(0, i - backOff);
       return Math.max(0, nearestZero(idx));
@@ -1018,14 +962,14 @@ function findBestSeamOffsetArray(data, startIdx, targetLen, xfadeN, sr) {
   const step = Math.max(1, Math.round(sr / 12000));
   let bestOff = 0;
   let bestScore = Number.POSITIVE_INFINITY;
-  const sampleAt = (idx) => {
-    while (idx < 0) idx += n;
-    while (idx >= n) idx -= n;
+  const sampleAt = (idx)=>{
+    while(idx < 0)idx += n;
+    while(idx >= n)idx -= n;
     return data[idx];
   };
-  for (let off = -search; off <= search; off += step) {
+  for(let off = -search; off <= search; off += step){
     let score = 0;
-    for (let i = 0; i < xfadeN; i += step) {
+    for(let i = 0; i < xfadeN; i += step){
       const a = sampleAt(startIdx + i + off);
       const b = sampleAt(startIdx + targetLen - xfadeN + i + off);
       const diff = a - b;
@@ -1042,9 +986,9 @@ function sliceWrapArray(data, start, len) {
   const ch = data.length;
   const out = Array.from({
     length: ch
-  }, () => new Float32Array(len));
+  }, ()=>new Float32Array(len));
   const n = data[0].length;
-  for (let c = 0; c < ch; c++) {
+  for(let c = 0; c < ch; c++){
     const src = data[c];
     const dst = out[c];
     const end = start + len;
@@ -1061,11 +1005,11 @@ function sliceWrapArray(data, start, len) {
 function applyEdgeRampsArray(chans, sr, rampMs) {
   const n = chans[0].length;
   const ramp = Math.max(2, Math.round(rampMs / 1000 * sr));
-  for (const d of chans) {
-    for (let i = 0; i < Math.min(ramp, n); i++) {
+  for (const d of chans){
+    for(let i = 0; i < Math.min(ramp, n); i++){
       d[i] *= Math.sin(0.5 * Math.PI * (i / (ramp - 1)));
     }
-    for (let i = 0; i < Math.min(ramp, n); i++) {
+    for(let i = 0; i < Math.min(ramp, n); i++){
       d[n - 1 - i] *= Math.sin(0.5 * Math.PI * (1 - i / (ramp - 1)));
     }
   }
@@ -1073,8 +1017,8 @@ function applyEdgeRampsArray(chans, sr, rampMs) {
 function applySeamCrossfadeArray(chans, sr, xfadeMs) {
   const n = chans[0].length;
   const xfadeN = Math.max(2, Math.round(xfadeMs / 1000 * sr));
-  for (const d of chans) {
-    for (let i = 0; i < xfadeN; i++) {
+  for (const d of chans){
+    for(let i = 0; i < xfadeN; i++){
       const t = i / (xfadeN - 1);
       const wa = Math.cos(0.5 * Math.PI * t);
       const wb = Math.sin(0.5 * Math.PI * t);
@@ -1231,8 +1175,8 @@ function makeWavFromPCM16(chans, sr) {
   view.setUint32(36, 0x64617461, false);
   view.setUint32(40, dataSize, true);
   let off = 44;
-  for (let i = 0; i < frames; i++) {
-    for (let c = 0; c < ch; c++) {
+  for(let i = 0; i < frames; i++){
+    for(let c = 0; c < ch; c++){
       let s = chans[c][i];
       if (s < -1) s = -1;
       else if (s > 1) s = 1;
@@ -1243,34 +1187,15 @@ function makeWavFromPCM16(chans, sr) {
   }
   return new Uint8Array(buffer);
 }
-Deno.serve(async (req) => {
-  const startTime = Date.now();
-  let userId = 'anon_server_request';
-  let body: any = null;
+Deno.serve(async (req)=>{
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (authHeader) {
-      // Very basic extraction, mostly for distinctId
-      const token = authHeader.replace('Bearer ', '');
-      if (token) {
-        // We don't verify here as Supabase does it, but we use it as a hint for distinctId
-        // In a real scenario, we might decode the JWT to get the sub (user_id)
-        try {
-          const payloadStr = token.split('.')[1];
-          if (payloadStr) {
-            const decoded = JSON.parse(atob(payloadStr));
-            userId = decoded.sub || userId;
-          }
-        } catch (_e) { }
-      }
-    }
-
     if (req.method === 'OPTIONS') {
       return new Response('ok', {
         status: 200,
         headers: corsHeaders
       });
     }
+    let body = null;
     if (req.method === 'GET') {
       const url = new URL(req.url);
       const payloadParam = url.searchParams.get('payload');
@@ -1279,7 +1204,7 @@ Deno.serve(async (req) => {
           const b64 = decodeURIComponent(payloadParam);
           const binary = atob(b64);
           const bytes = new Uint8Array(binary.length);
-          for (let i = 0; i < binary.length; i++) {
+          for(let i = 0; i < binary.length; i++){
             bytes[i] = binary.charCodeAt(i);
           }
           const decoder = new TextDecoder('utf-8');
@@ -1368,7 +1293,7 @@ Deno.serve(async (req) => {
     let usedFormat = 'pcm_24000';
     let formatSampleRate = 24000;
 
-    for (strictness = 0; strictness < 3; strictness++) {
+    for(strictness = 0; strictness < 3; strictness++){
       usedPrompt = buildStemPrompt(stem, controls, masterForPrompt, strictness, sessionContext);
       // Use generationBars (16) for audio generation, not target bars
       const beats = generationBars * 4;
@@ -1477,20 +1402,17 @@ Deno.serve(async (req) => {
         validationErrors.push('tempo drift detected');
       }
 
-      const spectrumResult = analyzeSpectrum(pcm, stem);
-      if (!spectrumResult.valid) {
-        validationErrors.push(spectrumResult.reason || 'unwanted frequency content');
+      const spectrumOk = analyzeSpectrum(pcm, stem);
+      if (!spectrumOk) {
+        validationErrors.push('unwanted frequency content');
       }
 
-      const phaseResult = checkPhaseCoherence(pcm.data, sampleRate, Math.round(12 / 1000 * sampleRate));
-      const needsPhaseCheck = ['kick', 'perc', 'hihat', 'bass', 'perc2'].includes(stem);
-      if (!phaseResult.valid && needsPhaseCheck) {
-        validationErrors.push(phaseResult.reason || 'phase discontinuity at loop boundary');
-      } else if (!phaseResult.valid) {
-        console.log(`Note: phase_mismatch detected for ${stem} but ignored (soft stem)`);
+      const phaseOk = checkPhaseCoherence(pcm.data, sampleRate, Math.round(12 / 1000 * sampleRate));
+      if (!phaseOk) {
+        validationErrors.push('phase discontinuity at loop boundary');
       }
 
-      validated = stemValidated && tempoDriftOk && spectrumResult.valid && (needsPhaseCheck ? phaseResult.valid : true);
+      validated = stemValidated && tempoDriftOk && spectrumOk && phaseOk;
 
       if (!validated && validationErrors.length > 0) {
         console.log(`Validation failed for ${stem} (attempt ${strictness}): ${validationErrors.join(', ')}`);
@@ -1579,7 +1501,7 @@ Deno.serve(async (req) => {
       outBytes = makeWavFromPCM16(trimmed, sampleRate);
     }
     let binary = '';
-    for (let i = 0; i < outBytes.length; i++)binary += String.fromCharCode(outBytes[i]);
+    for(let i = 0; i < outBytes.length; i++)binary += String.fromCharCode(outBytes[i]);
     const b64 = btoa(binary);
     const audio_b64 = `data:audio/wav;base64,${b64}`;
     const responseBody = {
@@ -1593,45 +1515,15 @@ Deno.serve(async (req) => {
       loopMethod: loopMethod,
       loopDiagnostics
     };
-    const res = new Response(JSON.stringify(responseBody), {
+    return new Response(JSON.stringify(responseBody), {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
         ...corsHeaders
       }
     });
-
-    const latency_ms = Date.now() - startTime;
-    await posthogCapture({
-      distinctId: userId,
-      event: "server_stem_generate_succeeded",
-      properties: {
-        instrument: stem,
-        latency_ms,
-        provider: 'elevenlabs',
-        tier,
-        validated,
-        loop_method: loopMethod,
-        tp_session_id: body?.tp_session_id || 'unknown'
-      }
-    });
-
-    return res;
   } catch (err) {
     console.error('generate-techno-stem error', err);
-    const latency_ms = Date.now() - startTime;
-    await posthogCapture({
-      distinctId: userId,
-      event: "server_stem_generate_failed",
-      properties: {
-        instrument: body?.stem || 'unknown',
-        latency_ms,
-        provider: 'elevenlabs',
-        error_message: err?.message || String(err),
-        tp_session_id: body?.tp_session_id || 'unknown'
-      }
-    });
-
     return new Response(JSON.stringify({
       error: 'Internal error',
       details: err?.message || String(err)

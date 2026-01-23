@@ -5,7 +5,6 @@
 
 import { signIn, signUp, resetPassword } from './index.js'
 import { initializeUserProfile } from './userProfile.js'
-import posthog from '../Config/posthog.js'
 
 export function showLoginModal() {
   const modal = document.getElementById('loginModal')
@@ -107,6 +106,7 @@ function validatePassword() {
  */
 function updateRequirementIndicator(element, isValid) {
   if (!element) {
+    console.warn('updateRequirementIndicator: element not found')
     return
   }
 
@@ -167,6 +167,7 @@ function updateRequirementIndicator(element, isValid) {
  * Note: This function is kept for compatibility but actual toggles are handled by event delegation
  */
 function setupPasswordToggles() {
+  console.log('Password toggles are handled by event delegation - no direct setup needed')
 }
 
 export function setupLoginPage() {
@@ -205,7 +206,7 @@ export function setupLoginPage() {
   const forgotPasswordModal = document.getElementById('forgotPasswordModal')
   const resetPasswordForm = document.getElementById('forgotPasswordForm')
   const resetCancelBtn = document.getElementById('resetCancelBtn')
-  const resetSubmitBtn = document.getElementById('forgotPasswordSubmitBtn')
+   const resetSubmitBtn = document.getElementById('forgotPasswordSubmitBtn')
   const resetBtnText = document.getElementById('resetBtnText')
   const resetBtnSpinner = document.getElementById('resetBtnSpinner')
 
@@ -215,6 +216,7 @@ export function setupLoginPage() {
   const resetSuccessText = document.getElementById('resetSuccessText')
 
   if (!loginForm || !loginBtn) {
+    console.warn('Login form elements not found')
     return
   }
 
@@ -280,7 +282,7 @@ export function setupLoginPage() {
       const isPassword = loginPasswordInput.type === 'password'
       loginPasswordInput.type = isPassword ? 'text' : 'password'
       loginToggleBtn.style.color = 'cyan'
-
+      
       return
     }
 
@@ -289,6 +291,7 @@ export function setupLoginPage() {
     if (signupToggleBtn) {
       e.preventDefault()
       e.stopPropagation()
+      console.log('Signup password toggle clicked')
 
       const signupPasswordInput = document.getElementById('signupPassword')
       const signupEyeIcon = document.getElementById('signupEyeIcon')
@@ -299,11 +302,12 @@ export function setupLoginPage() {
         signupPasswordInput.type = isPassword ? 'text' : 'password'
         signupEyeIcon.classList.toggle('hidden', !isPassword)
         signupEyeOffIcon.classList.toggle('hidden', isPassword)
+        console.log('Signup password toggled, new type:', signupPasswordInput.type)
 
         // Refresh Lucide icons after toggling
-        if (window.safeCreateIcons) {
-          window.safeCreateIcons()
-        }
+          if (window.safeCreateIcons) {
+            window.safeCreateIcons()
+          }
       } else {
         console.error('Signup password toggle elements not found')
       }
@@ -315,6 +319,7 @@ export function setupLoginPage() {
     if (confirmToggleBtn) {
       e.preventDefault()
       e.stopPropagation()
+      console.log('Signup confirm password toggle clicked')
 
       const confirmPasswordInput = document.getElementById('signupConfirmPassword')
       const confirmEyeIcon = document.getElementById('confirmEyeIcon')
@@ -325,11 +330,12 @@ export function setupLoginPage() {
         confirmPasswordInput.type = isPassword ? 'text' : 'password'
         confirmEyeIcon.classList.toggle('hidden', !isPassword)
         confirmEyeOffIcon.classList.toggle('hidden', isPassword)
+        console.log('Signup confirm password toggled, new type:', confirmPasswordInput.type)
 
         // Refresh Lucide icons after toggling
-        if (window.safeCreateIcons) {
-          window.safeCreateIcons()
-        }
+          if (window.safeCreateIcons) {
+            window.safeCreateIcons()
+          }
       } else {
         console.error('Signup confirm password toggle elements not found')
       }
@@ -396,25 +402,23 @@ export function setupLoginPage() {
     hideMessages()
 
     try {
-      // Flag for AuthGuard to track the correct event type
-      sessionStorage.setItem('tp_last_auth_action', 'signin')
       const { user, error } = await signIn(email, password)
 
       if (error) {
         const msg = getErrorMessage(error)
         showError(msg)
-          ; (async () => {
-            try {
-              const lower = (msg || '').toLowerCase()
-              if (lower.includes('verify your email') || lower.includes('email not confirmed')) {
-                try { localStorage.setItem('pendingEmail', email) } catch { }
-                const { showEmailConfirmationNotification } = await import('../UI/emailConfirmationNotification.js')
-                if (typeof showEmailConfirmationNotification === 'function') {
-                  showEmailConfirmationNotification(email)
-                }
+        ;(async () => {
+          try {
+            const lower = (msg || '').toLowerCase()
+            if (lower.includes('verify your email') || lower.includes('email not confirmed')) {
+              try { localStorage.setItem('pendingEmail', email) } catch {}
+              const { showEmailConfirmationNotification } = await import('../UI/emailConfirmationNotification.js')
+              if (typeof showEmailConfirmationNotification === 'function') {
+                showEmailConfirmationNotification(email)
               }
-            } catch { }
-          })()
+            }
+          } catch {}
+        })()
         return
       }
 
@@ -424,7 +428,6 @@ export function setupLoginPage() {
 
         showSuccess('Login successful!')
         setTimeout(() => {
-
           hideLoginModal()
         }, 1200)
       }
@@ -465,8 +468,6 @@ export function setupLoginPage() {
     hideSignupMessages()
 
     try {
-      // Flag for AuthGuard to track the correct event type
-      sessionStorage.setItem('tp_last_auth_action', 'signup')
       const { user, error, isNewUser } = await signUp(email, password, fullName)
 
       if (error) {
@@ -475,14 +476,14 @@ export function setupLoginPage() {
         try {
           const details = { name: error?.name, message: error?.message, status: error?.status, code: error?.code }
           console.error('[signup] UI error details:', details)
-        } catch { }
+        } catch {}
         return
       }
 
       if (user) {
         if (isNewUser) {
           showSignupSuccess('Account created! Please check your email to verify your account.')
-
+          
           // Clear form only on successful new user creation
           document.getElementById('signupEmail').value = ''
           document.getElementById('fullName').value = ''
@@ -722,6 +723,7 @@ export function setupLoginPage() {
       if (signupSubmitBtn) signupSubmitBtn.disabled = true
       if (resetSubmitBtn) resetSubmitBtn.disabled = true
 
+      console.warn('⚠️ Supabase not configured - authentication disabled')
     }
   }
 
@@ -731,12 +733,13 @@ export function setupLoginPage() {
   function checkEmailVerificationNotification() {
     const emailVerified = localStorage.getItem('emailVerified')
     const verifiedEmail = localStorage.getItem('verifiedEmail')
-
+    
     if (emailVerified === 'true' && verifiedEmail) {
-
+      console.log('[login-page] Email verification detected for:', verifiedEmail)
+      
       // Show success notification
       showEmailVerificationSuccess(verifiedEmail)
-
+      
       // Clear the stored verification data
       localStorage.removeItem('emailVerified')
       localStorage.removeItem('verifiedEmail')
@@ -769,15 +772,15 @@ export function setupLoginPage() {
         </div>
       </div>
     `
-
+    
     // Add to page
     document.body.appendChild(notification)
-
+    
     // Initialize Lucide icons
     if (window.safeCreateIcons) {
       window.safeCreateIcons()
     }
-
+    
     // Auto-remove after 5 seconds
     setTimeout(() => {
       if (notification.parentNode) {
@@ -805,13 +808,13 @@ export function setupLoginPage() {
       return 'We could not send the confirmation email. Please try again in a few minutes or contact support.'
     }
     // Handle various forms of "user already registered" messages
-    if (message.includes('user already registered') ||
-      message.includes('already registered') ||
-      message.includes('email address is already registered') ||
-      message.includes('user with this email already exists') ||
-      message.includes('email already in use') ||
-      message.includes('duplicate key value') ||
-      message.includes('already been registered')) {
+    if (message.includes('user already registered') || 
+        message.includes('already registered') ||
+        message.includes('email address is already registered') ||
+        message.includes('user with this email already exists') ||
+        message.includes('email already in use') ||
+        message.includes('duplicate key value') ||
+        message.includes('already been registered')) {
       return 'An account with this email already exists. Please try logging in instead.'
     }
     if (message.includes('password should be at least')) {
@@ -847,6 +850,7 @@ export function setupLoginPage() {
         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
           const isVisible = !loginPage.classList.contains('hidden')
           if (isVisible) {
+            console.log('Login page became visible, re-initializing password toggles')
             // Re-initialize password toggles when page becomes visible
             setTimeout(() => {
               setupPasswordToggles()
@@ -863,17 +867,17 @@ export function setupLoginPage() {
   }
 
 }
-const loginModal = document.getElementById('loginModal')
-const loginModalOverlay = document.getElementById('loginModalOverlay')
-const loginModalCloseBtn = document.getElementById('loginModalCloseBtn')
+  const loginModal = document.getElementById('loginModal')
+  const loginModalOverlay = document.getElementById('loginModalOverlay')
+  const loginModalCloseBtn = document.getElementById('loginModalCloseBtn')
 
-if (loginModalOverlay) {
-  loginModalOverlay.addEventListener('click', () => {
-    hideLoginModal()
-  })
-}
-if (loginModalCloseBtn) {
-  loginModalCloseBtn.addEventListener('click', () => {
-    hideLoginModal()
-  })
-}
+  if (loginModalOverlay) {
+    loginModalOverlay.addEventListener('click', () => {
+      hideLoginModal()
+    })
+  }
+  if (loginModalCloseBtn) {
+    loginModalCloseBtn.addEventListener('click', () => {
+      hideLoginModal()
+    })
+  }

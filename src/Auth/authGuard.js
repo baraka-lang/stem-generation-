@@ -4,7 +4,6 @@
  */
 
 import { getCurrentUser, isAuthenticated, onAuthStateChange } from './index.js'
-import posthog from '../Config/posthog.js'
 
 /**
  * Auth state management
@@ -44,18 +43,6 @@ class AuthGuard {
         this.handleAuthStateChange(event, session)
       })
 
-      // Ensure PostHog is synced after initial load (covers hard refresh)
-      this._syncPostHogIdentity()
-
-      // Track session restoration on hard refresh
-      if (this.isAuthenticated && typeof posthog !== 'undefined') {
-        posthog.capture('auth_signin_succeeded', {
-          auth_method: 'session_persistence',
-          surface: 'techno-generator-page',
-          email: this.currentUser?.email || undefined
-        })
-      }
-
       this.isInitialized = true
     } catch (error) {
       // Fallback to unauthenticated state
@@ -81,21 +68,21 @@ class AuthGuard {
     // Check if we should suppress notifications (e.g. on reset password page)
     // This prevents the app from redirecting away from the reset page when the session is established
     // We check for 'reset-password' in the URL or if the hash/query contains recovery tokens
-    const hasResetTokens = typeof window !== 'undefined' &&
-      (/access_token|type=recovery|token=/.test(window.location.hash) ||
-        /access_token|type=recovery|token=/.test(window.location.search))
-
-    const isResetPage = typeof window !== 'undefined' &&
-      (window.location.hash.includes('reset-password') ||
-        window.location.href.includes('reset-password') ||
-        hasResetTokens)
-
+    const hasResetTokens = typeof window !== 'undefined' && 
+      (/access_token|type=recovery|token=/.test(window.location.hash) || 
+       /access_token|type=recovery|token=/.test(window.location.search))
+      
+    const isResetPage = typeof window !== 'undefined' && 
+      (window.location.hash.includes('reset-password') || 
+       window.location.href.includes('reset-password') || 
+       hasResetTokens)
+    
     const shouldSuppressNotification = (this.isPasswordRecovery || isResetPage) && event === 'SIGNED_IN'
 
     // Only process significant auth state changes to prevent unnecessary reloads
-    const isSignificantChange =
-      event === 'SIGNED_IN' ||
-      event === 'SIGNED_OUT' ||
+    const isSignificantChange = 
+      event === 'SIGNED_IN' || 
+      event === 'SIGNED_OUT' || 
       event === 'PASSWORD_RECOVERY' ||
       (wasAuthenticated !== newIsAuthenticated) ||
       (this.currentUser?.id !== newUser?.id)
@@ -120,34 +107,6 @@ class AuthGuard {
       } catch (error) {
       }
     })
-
-    // PostHog Identity Unification: Ensure identity is always in sync
-    this._syncPostHogIdentity()
-
-    if (event === 'SIGNED_IN') {
-      const action = sessionStorage.getItem('tp_last_auth_action')
-      const metadata = {
-        auth_method: 'email_password',
-        surface: 'techno-generator-page',
-        email: this.currentUser?.email || undefined
-      }
-
-      if (action) {
-        sessionStorage.removeItem('tp_last_auth_action')
-        const eventName = action === 'signup' ? 'auth_signup_succeeded' : 'auth_signin_succeeded'
-
-        posthog.capture(eventName, {
-          ...metadata,
-          surface: 'login_modal' // Specific surface for manual login
-        })
-      } else {
-        // Automatic login (background refresh or session restoration)
-        posthog.capture('auth_signin_succeeded', {
-          ...metadata,
-          auth_method: 'token_refresh'
-        })
-      }
-    }
 
     // Handle sign out
     if (event === 'SIGNED_OUT' && wasAuthenticated) {
@@ -181,7 +140,7 @@ class AuthGuard {
    */
   addAuthListener(callback) {
     this.authListeners.push(callback)
-
+    
     // Return unsubscribe function
     return () => {
       const index = this.authListeners.indexOf(callback)
@@ -206,7 +165,7 @@ class AuthGuard {
    */
   async requireAuth(callback) {
     const authenticated = await this.checkAuth()
-
+    
 
 
     try {
@@ -252,19 +211,6 @@ class AuthGuard {
     }
     this.authListeners = []
     this.isInitialized = false
-  }
-
-  /**
-   * Sync the current user's identity with PostHog
-   * @private
-   */
-  _syncPostHogIdentity() {
-    if (this.currentUser?.id && typeof posthog !== 'undefined') {
-      posthog.identify(this.currentUser.id, {
-        email: this.currentUser.email || undefined,
-        full_name: this.currentUser.user_metadata?.full_name || undefined,
-      })
-    }
   }
 }
 

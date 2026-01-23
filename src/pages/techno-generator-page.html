@@ -93,9 +93,8 @@
     </div>
     
     <!-- Stem Cards -->
-    <!-- On mobile, use a 3-column grid to display all nine stem cards; on larger screens this grid remains 3 columns -->
-    <!-- Stem container: always 3 columns, with smaller gaps on mobile to reduce overall width. -->
-    <main id="stem-container" class="w-full max-w-full mx-auto px-2 sm:px-4 py-4 sm:py-6 grid grid-cols-3 gap-2 sm:gap-4 select-none cursor-default">
+    <!-- Responsive grid: 1 column on mobile, 2 on tablet, 3 on desktop for better UX -->
+    <main id="stem-container" class="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 lg:gap-6 select-none cursor-default">
       <!-- Cards injected by app.js -->
     </main>
   </div>

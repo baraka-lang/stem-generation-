@@ -16,6 +16,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 let localSupabase = null
 
 if (supabaseUrl && supabaseAnonKey) {
+  console.log('[spa-reset] Initializing dedicated Supabase client')
   localSupabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       autoRefreshToken: false,
@@ -30,6 +31,7 @@ const activeSupabase = localSupabase
 
 // Debug: module load
 if (typeof window !== 'undefined') {
+  console.log('[spa-reset] module loaded')
 }
 
 /**
@@ -39,6 +41,7 @@ function getRedirectUrl() {
   // Use the environment configuration to get the proper base URL
   const redirectUrl = urlGenerators.generateWelcomeRedirectUrl('#selection')
 
+  console.log('[spa-reset] Generated redirect URL:', redirectUrl)
   return redirectUrl
 }
 
@@ -166,10 +169,22 @@ function updateRequirementIndicator(element, isValid) {
 
 export function setupResetPasswordPage() {
   console.group('[spa-reset] setupResetPasswordPage')
+  console.log('[spa-reset] setupResetPasswordPage called at:', new Date().toISOString())
+  console.log('[spa-reset] DOM ready state:', document.readyState)
+  console.log('[spa-reset] window location:', window.location.href)
 
   try {
     window.addEventListener('hashchange', () => {
+      console.log('[spa-reset] hashchange ->', window.location.hash)
     })
+    console.log('[spa-reset] config', {
+      supabaseUrl: resetPasswordConfig.supabaseUrl,
+      hasAnonKey: !!resetPasswordConfig.supabaseKey && resetPasswordConfig.supabaseKey !== 'your-anon-key',
+      redirectUrl: resetPasswordConfig.redirectUrl,
+      showDemoMode: resetPasswordConfig.showDemoMode
+    })
+    console.log('[spa-reset] supabase present:', !!supabase)
+    console.log('[spa-reset] active supabase present:', !!activeSupabase)
 
     // Get form elements
     const resetPasswordForm = document.getElementById('resetPasswordForm')
@@ -184,6 +199,10 @@ export function setupResetPasswordPage() {
 
 
     if (!resetPasswordForm || !resetSubmitBtn) {
+      console.warn('[spa-reset] Reset password form elements not found', {
+        hasForm: !!resetPasswordForm,
+        hasBtn: !!resetSubmitBtn
+      })
       console.groupEnd()
       return
     }
@@ -198,14 +217,18 @@ export function setupResetPasswordPage() {
     checkResetTokens()
 
     // Reset password form submission
+    console.log('[spa-reset] Adding submit event listener to form')
     resetPasswordForm.addEventListener('submit', async (e) => {
       e.preventDefault()
+      console.log('[spa-reset] Form submitted')
       await handlePasswordReset()
     })
 
     // Also add click listener to button as backup
+    console.log('[spa-reset] Adding click event listener to button')
     resetSubmitBtn.addEventListener('click', async (e) => {
       e.preventDefault()
+      console.log('[spa-reset] Button clicked')
       await handlePasswordReset()
     })
 
@@ -272,9 +295,12 @@ export function setupResetPasswordPage() {
      */
     async function handlePasswordReset() {
       console.group('[spa-reset] handlePasswordReset')
+      console.log('[spa-reset] Password reset initiated at:', new Date().toISOString())
 
       const password = document.getElementById('newPasswordReset')?.value
       const confirmPassword = document.getElementById('confirmPasswordReset')?.value
+      console.log('[spa-reset] Form validation:', { hasPassword: !!password, hasConfirm: !!confirmPassword })
+      console.log('[spa-reset] Current URL:', window.location.href)
 
       if (!password || !confirmPassword) {
         showError('Please fill in all fields')
@@ -299,6 +325,7 @@ export function setupResetPasswordPage() {
         // Check for tokens in both URL hash and query parameters
         const rawHash = window.location.hash
         const rawSearch = window.location.search
+        console.log('[spa-reset] URL analysis:', { hash: rawHash, search: rawSearch })
 
         // Try to get tokens from hash first (for direct links)
         let hashParams = new URLSearchParams()
@@ -318,6 +345,7 @@ export function setupResetPasswordPage() {
           } else {
             resetPart = hashPart
           }
+          console.log('[spa-reset] Extracted reset part:', resetPart)
           hashParams = new URLSearchParams(resetPart)
         }
 
@@ -337,10 +365,25 @@ export function setupResetPasswordPage() {
         const email = hashParams.get('email') || searchParams.get('email')
         const isTokenHash = !!tokenHashFromHash || !!tokenHashFromWindow
 
+        console.log('[spa-reset] Token detection:', {
+          hasToken: !!tokenHash,
+          hasAccessToken: !!accessToken,
+          hasRefreshToken: !!refreshToken,
+          isFallback,
+          email,
+          tokenType: isTokenHash ? 'token_hash' : 'token'
+        })
 
+        console.log('[spa-reset] Extracted tokens:', {
+          tokenHash: tokenHash ? tokenHash.substring(0, 20) + '...' : null,
+          accessToken: accessToken ? accessToken.substring(0, 20) + '...' : null,
+          refreshToken: refreshToken ? refreshToken.substring(0, 20) + '...' : null,
+          email: email
+        })
 
         // 1. Check if we already have a session (preferred)
         // Sometimes the main Supabase client or a previous action already established a session
+        console.log('[spa-reset] Checking for existing session before verification...')
 
         // Check local client first
         let { data: { session: localSession } } = await activeSupabase.auth.getSession()
@@ -356,8 +399,10 @@ export function setupResetPasswordPage() {
         const sessionClient = localSession ? activeSupabase : (globalSession ? globalSupabase : null)
 
         if (session && session.user) {
+          console.log('[spa-reset] Active session found for:', session.user.email, 'using client:', localSession ? 'local' : 'global')
 
           console.time('[spa-reset] updateUser')
+          console.log('[spa-reset] Updating password for current session')
           const { data: updateData, error: updateError } = await sessionClient.auth.updateUser({ password })
           console.timeEnd('[spa-reset] updateUser')
 
@@ -371,7 +416,9 @@ export function setupResetPasswordPage() {
           clearForm()
           showSuccess('Password updated successfully! Redirecting to main app...')
           setTimeout(() => {
-            document.location = "/"
+            const redirectUrl = getRedirectUrl()
+            console.log('[spa-reset] redirecting to', redirectUrl)
+            window.location.href = redirectUrl
           }, 3000)
           console.groupEnd()
           return
@@ -379,6 +426,7 @@ export function setupResetPasswordPage() {
 
         // 2. No session, try PKCE flow if tokenHash is present
         if (tokenHash) {
+          console.log('[spa-reset] Using PKCE flow with token:', tokenHash.substring(0, 20) + '...')
 
           if (!activeSupabase) {
             console.error('[spa-reset] No Supabase client available')
@@ -393,8 +441,15 @@ export function setupResetPasswordPage() {
             { token_hash: tokenHash, type: 'recovery' } :
             { token: tokenHash, type: 'recovery' }
 
+          console.log('[spa-reset] Verifying token with params:', { type: verifyParams.type, hasToken: !!verifyParams.token || !!verifyParams.token_hash })
           const { data: verifyData, error: verifyError } = await activeSupabase.auth.verifyOtp(verifyParams)
           console.timeEnd('[spa-reset] verifyOtp')
+          console.log('[spa-reset] Token verification result:', {
+            success: !verifyError,
+            hasSession: !!verifyData?.session,
+            hasUser: !!verifyData?.user,
+            error: verifyError?.message
+          })
 
           if (verifyError) {
             console.error('[spa-reset] verifyOtp failed:', verifyError)
@@ -411,11 +466,17 @@ export function setupResetPasswordPage() {
             return
           }
 
+          console.log('[spa-reset] Session established for user:', verifyData.session.user?.email)
 
           // Now update the password
           console.time('[spa-reset] updateUser')
+          console.log('[spa-reset] Updating password for user')
           const { data: updateData, error: updateError } = await activeSupabase.auth.updateUser({ password })
           console.timeEnd('[spa-reset] updateUser')
+          console.log('[spa-reset] Password update result:', {
+            success: !updateError,
+            error: updateError?.message
+          })
 
           if (updateError) {
             console.error('[spa-reset] updateUser failed:', updateError)
@@ -428,6 +489,7 @@ export function setupResetPasswordPage() {
           showSuccess('Password updated successfully! Redirecting to main app...')
           setTimeout(() => {
             const redirectUrl = getRedirectUrl()
+            console.log('[spa-reset] redirecting to', redirectUrl)
             window.location.href = redirectUrl
           }, 3000)
           console.groupEnd()
@@ -436,6 +498,7 @@ export function setupResetPasswordPage() {
 
         // Handle case where we have only refreshToken (try to refresh session)
         if (refreshToken && !accessToken) {
+          console.log('[spa-reset] Has refresh token but no access token, attempting to refresh session')
 
           if (!activeSupabase) {
             console.error('[spa-reset] No Supabase client available')
@@ -449,6 +512,12 @@ export function setupResetPasswordPage() {
             refresh_token: refreshToken
           })
           console.timeEnd('[spa-reset] refreshSession')
+          console.log('[spa-reset] Session refresh result:', {
+            success: !refreshError,
+            hasSession: !!refreshData?.session,
+            hasUser: !!refreshData?.user,
+            error: refreshError?.message
+          })
 
           if (refreshError) {
             console.error('[spa-reset] refreshSession failed:', refreshError)
@@ -465,10 +534,16 @@ export function setupResetPasswordPage() {
             return
           }
 
+          console.log('[spa-reset] Session refreshed for user:', refreshData.session.user?.email)
 
           console.time('[spa-reset] updateUser')
+          console.log('[spa-reset] Updating password for user')
           const { data: updateData, error: updateError } = await activeSupabase.auth.updateUser({ password })
           console.timeEnd('[spa-reset] updateUser')
+          console.log('[spa-reset] Password update result:', {
+            success: !updateError,
+            error: updateError?.message
+          })
 
           if (updateError) {
             console.error('[spa-reset] updateUser failed:', updateError)
@@ -481,6 +556,7 @@ export function setupResetPasswordPage() {
           showSuccess('Password updated successfully! Redirecting to main app...')
           setTimeout(() => {
             const redirectUrl = getRedirectUrl()
+            console.log('[spa-reset] redirecting to', redirectUrl)
             window.location.href = redirectUrl
           }, 3000)
           console.groupEnd()
@@ -489,6 +565,7 @@ export function setupResetPasswordPage() {
 
         // Fallback to implicit flow (using access_token and refresh_token)
         if (accessToken && refreshToken) {
+          console.log('[spa-reset] Using implicit flow with access_token and refresh_token')
 
           if (!activeSupabase) {
             console.error('[spa-reset] No Supabase client available')
@@ -503,6 +580,11 @@ export function setupResetPasswordPage() {
             refresh_token: refreshToken
           })
           console.timeEnd('[spa-reset] setSession')
+          console.log('[spa-reset] Session establishment result:', {
+            success: !sessionError,
+            hasSession: !!sessionData?.session,
+            error: sessionError?.message
+          })
 
           if (sessionError) {
             console.error('[spa-reset] setSession failed:', sessionError)
@@ -519,10 +601,16 @@ export function setupResetPasswordPage() {
             return
           }
 
+          console.log('[spa-reset] Session established for user:', sessionData.session.user?.email)
 
           console.time('[spa-reset] updateUser')
+          console.log('[spa-reset] Updating password for user')
           const { data: updateData, error: updateError } = await activeSupabase.auth.updateUser({ password })
           console.timeEnd('[spa-reset] updateUser')
+          console.log('[spa-reset] Password update result:', {
+            success: !updateError,
+            error: updateError?.message
+          })
 
           if (updateError) {
             console.error('[spa-reset] updateUser failed:', updateError)
@@ -535,6 +623,7 @@ export function setupResetPasswordPage() {
           showSuccess('Password updated successfully! Redirecting to main app...')
           setTimeout(() => {
             const redirectUrl = getRedirectUrl()
+            console.log('[spa-reset] redirecting to', redirectUrl)
             window.location.href = redirectUrl
           }, 3000)
           console.groupEnd()
@@ -545,6 +634,7 @@ export function setupResetPasswordPage() {
         const checkEmail = hashParams.get('check_email') === 'true' || searchParams.get('check_email') === 'true'
         const requestReset = hashParams.get('request') === 'true' || searchParams.get('request') === 'true'
 
+        console.log('[spa-reset] Special URL parameters:', { checkEmail, requestReset, isFallback })
 
         if (checkEmail) {
           // User should check their email for the reset link
@@ -621,6 +711,7 @@ export function setupResetPasswordPage() {
      * Show error message
      */
     function showError(message) {
+      console.log('[spa-reset] Showing error:', message)
 
       if (errorText) {
         errorText.textContent = message
@@ -643,6 +734,7 @@ export function setupResetPasswordPage() {
      * Show success message
      */
     function showSuccess(message) {
+      console.log('[spa-reset] Showing success:', message)
 
       if (successText) successText.textContent = message
       if (successMessage) successMessage.classList.remove('hidden')
@@ -661,9 +753,6 @@ export function setupResetPasswordPage() {
      * Clear the password form
      */
     function clearForm() {
-      const passwordInput = document.getElementById('newPasswordReset')
-      const confirmPasswordInput = document.getElementById('confirmPasswordReset')
-
       if (passwordInput) passwordInput.value = ''
       if (confirmPasswordInput) confirmPasswordInput.value = ''
       hideMessages()
@@ -675,10 +764,12 @@ export function setupResetPasswordPage() {
     function checkResetTokens() {
       const rawHash = window.location.hash
       const rawSearch = window.location.search
+      console.log('[spa-reset] Checking reset tokens on page load:', { rawHash, rawSearch })
 
       // Check if we're on the reset password page
       const isOnResetPage = rawHash.includes('reset-password') || rawSearch.includes('reset-password')
       if (!isOnResetPage) {
+        console.log('[spa-reset] Not on reset password page')
         return
       }
 
@@ -700,6 +791,7 @@ export function setupResetPasswordPage() {
         } else {
           resetPart = hashPart
         }
+        console.log('[spa-reset] Extracted reset part from hash:', resetPart)
         hashParams = new URLSearchParams(resetPart)
       }
 
@@ -716,6 +808,28 @@ export function setupResetPasswordPage() {
       const checkEmail = hashParams.get('check_email') === 'true' || searchParams.get('check_email') === 'true'
       const requestReset = hashParams.get('request') === 'true' || searchParams.get('request') === 'true'
 
+      console.log('[spa-reset] Token check:', {
+        hasAccess: !!accessToken,
+        hasRefresh: !!refreshToken,
+        hasTokenHash: !!tokenHash,
+        tokenType,
+        isFallback,
+        email,
+        checkEmail,
+        requestReset,
+        hashTokens: {
+          access: hashParams.get('access_token'),
+          refresh: hashParams.get('refresh_token'),
+          token: hashParams.get('token'),
+          type: hashParams.get('type')
+        },
+        searchTokens: {
+          access: searchParams.get('access_token'),
+          refresh: searchParams.get('refresh_token'),
+          token: searchParams.get('token'),
+          type: searchParams.get('type')
+        }
+      })
 
       // Handle special URL parameters
       if (checkEmail) {
@@ -730,6 +844,7 @@ export function setupResetPasswordPage() {
 
       // Handle JWT token_hash format (from /auth/v1/verify endpoint)
       if (tokenHash && tokenType === 'recovery') {
+        console.log('[spa-reset] JWT token_hash found, will verify on form submission')
         // Store the token_hash for later verification
         window.resetTokenHash = tokenHash
         window.resetTokenType = tokenType
@@ -747,6 +862,7 @@ export function setupResetPasswordPage() {
       }
 
       // Tokens are present (either access_token, refresh_token, token_hash, or combination), user can proceed
+      console.log('[spa-reset] Valid reset tokens found, user can proceed with password reset')
       // Don't call setSession() here - only when user submits the form
     }
 

@@ -1,61 +1,5 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { ZipReader, BlobReader, BlobWriter } from "jsr:@zip-js/zip-js";
-
-/**
- * Shared PostHog capture helper - Inlined for Dashboard/GUI users.
- */
-async function posthogCapture(options: {
-  host?: string;
-  apiKey?: string;
-  distinctId: string;
-  event: string;
-  properties?: Record<string, any>;
-}) {
-  try {
-    const host = options.host || Deno.env.get("POSTHOG_HOST") || "https://us.i.posthog.com";
-    const apiKey = options.apiKey || Deno.env.get("POSTHOG_PROJECT_API_KEY");
-    const tp_env = Deno.env.get("VITE_APP_ENV") || Deno.env.get("VITE_ENVIRONMENT") || "production";
-
-    if (!apiKey) {
-      console.warn("PostHog: No API Key found (tried POSTHOG_PROJECT_API_KEY)");
-      return;
-    }
-
-    console.log(`PostHog: Event "${options.event}" | Host: ${host} | Key: ${apiKey.slice(0, 5)}... | Env: ${tp_env}`);
-
-    const payload = {
-      api_key: apiKey,
-      event: options.event,
-      properties: {
-        ...options.properties,
-        distinct_id: options.distinctId,
-        $lib: "deno-edge-function",
-        tp_app: "tunepal",
-        tp_platform: "server",
-        tp_env: tp_env,
-      },
-      timestamp: new Date().toISOString(),
-    };
-
-    const resp = await fetch(`${host}/capture/`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).catch(err => {
-      console.error("PostHog: fetch error:", err);
-      return null;
-    });
-
-    if (resp && !resp.ok) {
-      const errText = await resp.text().catch(() => 'unknown error');
-      console.warn(`PostHog: API rejection (${resp.status}): ${errText}`);
-    } else if (resp) {
-      console.log(`PostHog: Event "${options.event}" sent successfully`);
-    }
-  } catch (err) {
-    console.error("PostHog capture error (non-fatal):", err);
-  }
-}
-
 
 /**
  * Supabase Edge Function - ElevenLabs Stem Separation Proxy
@@ -98,7 +42,6 @@ interface SeparationRequest {
   audioData: string; // base64 (optionally a data: URL)
   stemType: string;  // internal stem type (kick, bass, etc.)
   outputFormat?: string; // e.g. "mp3_44100_128"
-  tp_session_id?: string;
 }
 
 /** Build CORS headers dynamically. */
@@ -205,259 +148,207 @@ async function extractStemsFromZip(zipData: ArrayBuffer): Promise<Record<StemExt
 }
 
 Deno.serve(async (req: Request) => {
-  const startTime = Date.now();
   const cors = corsHeadersFor(req);
-  let userId = 'anon_server_request';
-  let body: any = null;
+
+  // CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: cors });
+  }
+
+  // Health check
+  if (req.method === "GET") {
+    const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+    return new Response(
+      JSON.stringify({
+        status: "healthy",
+        service: "separate-stems",
+        version: "1.1.0",
+        apiKeyConfigured: Boolean(apiKey),
+        timestamp: new Date().toISOString(),
+      }),
+      { status: 200, headers: { ...cors, "Content-Type": "application/json" } },
+    );
+  }
+
+  const startTime = Date.now();
+
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '');
-      if (token) {
-        try {
-          const payloadStr = token.split('.')[1];
-          if (payloadStr) {
-            const decoded = JSON.parse(atob(payloadStr));
-            userId = decoded.sub || userId;
-          }
-        } catch (_e) { }
-      }
-    }
-
-    if (req.method === "OPTIONS") {
-      return new Response(null, { status: 204, headers: cors });
-    }
-
-    // Health check
-    if (req.method === "GET") {
-      const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+    if (req.method !== "POST") {
       return new Response(
-        JSON.stringify({
-          status: "healthy",
-          service: "separate-stems",
-          version: "1.1.0",
-          apiKeyConfigured: Boolean(apiKey),
-          timestamp: new Date().toISOString(),
-        }),
-        { status: 200, headers: { ...cors, "Content-Type": "application/json" } },
+        JSON.stringify({ success: false, error: "Method not allowed" }),
+        { status: 405, headers: { ...cors, "Content-Type": "application/json" } },
       );
     }
 
+    let body: SeparationRequest;
     try {
-      if (req.method !== "POST") {
-        return new Response(
-          JSON.stringify({ success: false, error: "Method not allowed" }),
-          { status: 405, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      try {
-        body = await req.json();
-      } catch {
-        return new Response(
-          JSON.stringify({ success: false, error: "Invalid JSON body" }),
-          { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      const { audioData, stemType, outputFormat = "mp3_44100_128" } = body;
-
-      if (!audioData || !stemType) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "Missing required fields: audioData and stemType",
-          }),
-          { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      const targetStem = STEM_TYPE_MAPPING[stemType];
-      if (!targetStem) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: `Invalid stem type "${stemType}"`,
-            hint: `Supported: ${Object.keys(STEM_TYPE_MAPPING).join(", ")}`,
-          }),
-          { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
-      if (!apiKey) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "API key not configured",
-            hint: "Set ELEVENLABS_API_KEY in project secrets",
-          }),
-          { status: 500, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      // Decode base64
-      let bytes: Uint8Array;
-      try {
-        const normalized = normalizeBase64(audioData);
-        bytes = base64ToBytes(normalized);
-        if (bytes.length === 0) throw new Error("Decoded audio is empty");
-      } catch (e) {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "Failed to decode base64 audio",
-            hint: (e as Error)?.message ?? "Invalid base64 string",
-          }),
-          { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      const { mime, ext } = guessMime(bytes);
-      const fileName = `audio.${ext}`;
-
-      // Build request (docs: POST /v1/music/stem-separation; returns ZIP)
-      // Pass output_format as query param to avoid server ignoring a form field.
-      const url = new URL("https://api.elevenlabs.io/v1/music/stem-separation");
-      if (outputFormat) url.searchParams.set("output_format", outputFormat);
-
-      const form = new FormData();
-      form.append("file", new Blob([bytes], { type: mime }), fileName);
-
-      const controller = new AbortController();
-      // Supabase free plan request idle timeout is 150s — keep lower than that.
-      const timeoutMs = 140_000;
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const resp = await fetch(url.toString(), {
-        method: "POST",
-        headers: {
-          "xi-api-key": apiKey,
-          // Helps the server negotiate the correct content.
-          "accept": "application/zip",
-        },
-        body: form,
-        signal: controller.signal,
-      }).finally(() => clearTimeout(timer));
-
-      if (!resp.ok) {
-        const text = await resp.text().catch(() => "");
-        let message = "Stem separation failed";
-        let hint = "";
-        switch (resp.status) {
-          case 401:
-            message = "Authentication failed"; hint = "Invalid or missing API key"; break;
-          case 413:
-            message = "Audio file too large"; hint = "Try a shorter clip"; break;
-          case 422:
-            message = "Invalid audio format"; hint = "Unsupported or corrupted audio"; break;
-          case 429:
-            message = "Rate limit exceeded"; hint = "Retry after a short delay"; break;
-          default:
-            if (resp.status >= 500) {
-              message = "Service temporarily unavailable"; hint = "Retry shortly";
-            }
-        }
-        return new Response(
-          JSON.stringify({ success: false, error: message, hint, statusCode: resp.status, details: text }),
-          { status: resp.status, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      const zipBuffer = await resp.arrayBuffer();
-
-      // Extract stems from ZIP
-      const stems = await extractStemsFromZip(zipBuffer);
-      const selected = stems[targetStem];
-      if (!selected) {
-        const available = Object.keys(stems);
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: `Target stem '${targetStem}' not found in ZIP`,
-            hint: `Available stems: ${available.join(", ") || "none"}`,
-          }),
-          { status: 500, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-
-      const base64Audio = bytesToBase64(selected);
-      const duration = Date.now() - startTime;
-
-      const res = new Response(
-        JSON.stringify({
-          success: true,
-          audioData: base64Audio,
-          stemType: targetStem,
-          requestedInstrument: stemType,
-          format: outputFormat,
-          processingTimeMs: duration,
-        }),
-        { status: 200, headers: { ...cors, "Content-Type": "application/json" } },
+      body = await req.json();
+    } catch {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid JSON body" }),
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
       );
+    }
 
-      const latency_ms = Date.now() - startTime;
-      await posthogCapture({
-        distinctId: userId,
-        event: "server_stem_separate_succeeded",
-        properties: {
-          instrument: stemType,
-          target_stem: targetStem,
-          latency_ms,
-          provider: 'moises',
-          tp_session_id: body?.tp_session_id || 'unknown'
-        }
-      });
+    const { audioData, stemType, outputFormat = "mp3_44100_128" } = body;
 
-      return res;
-    } catch (error) {
-      const duration = Date.now() - startTime;
-      const latency_ms = duration;
-      const bodyText = await req.clone().text().catch(() => '');
-      let bodyJson: any = {};
-      try { bodyJson = JSON.parse(bodyText); } catch (_) { }
-
-      await posthogCapture({
-        distinctId: userId,
-        event: "server_stem_separate_failed",
-        properties: {
-          instrument: bodyJson?.stemType || 'unknown',
-          latency_ms,
-          provider: 'moises',
-          error_message: (error as Error)?.message || String(error),
-          tp_session_id: bodyJson?.tp_session_id || 'unknown'
-        }
-      });
-
-      const err = error as Error;
-      if ((error as any)?.name === "AbortError") {
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error: "Request timeout",
-            hint: "Separation took too long. Try a shorter clip.",
-            processingTimeMs: duration,
-          }),
-          { status: 504, headers: { ...cors, "Content-Type": "application/json" } },
-        );
-      }
-      console.error("[separate-stems] Unexpected error:", err?.name, err?.message, err?.stack);
+    if (!audioData || !stemType) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: "Internal server error",
-          hint: err?.message ?? "Unexpected error",
-          errorType: err?.name ?? "UnknownError",
-          processingTimeMs: duration,
+          error: "Missing required fields: audioData and stemType",
+        }),
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
+      );
+    }
+
+    const targetStem = STEM_TYPE_MAPPING[stemType];
+    if (!targetStem) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Invalid stem type "${stemType}"`,
+          hint: `Supported: ${Object.keys(STEM_TYPE_MAPPING).join(", ")}`,
+        }),
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
+      );
+    }
+
+    const apiKey = Deno.env.get("ELEVENLABS_API_KEY");
+    if (!apiKey) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "API key not configured",
+          hint: "Set ELEVENLABS_API_KEY in project secrets",
         }),
         { status: 500, headers: { ...cors, "Content-Type": "application/json" } },
       );
     }
-  } catch (outerError) {
-    console.error("[separate-stems] Fatal outer error:", outerError);
+
+    // Decode base64
+    let bytes: Uint8Array;
+    try {
+      const normalized = normalizeBase64(audioData);
+      bytes = base64ToBytes(normalized);
+      if (bytes.length === 0) throw new Error("Decoded audio is empty");
+    } catch (e) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Failed to decode base64 audio",
+          hint: (e as Error)?.message ?? "Invalid base64 string",
+        }),
+        { status: 400, headers: { ...cors, "Content-Type": "application/json" } },
+      );
+    }
+
+    const { mime, ext } = guessMime(bytes);
+    const fileName = `audio.${ext}`;
+
+    // Build request (docs: POST /v1/music/stem-separation; returns ZIP)
+    // Pass output_format as query param to avoid server ignoring a form field.
+    const url = new URL("https://api.elevenlabs.io/v1/music/stem-separation");
+    if (outputFormat) url.searchParams.set("output_format", outputFormat);
+
+    const form = new FormData();
+    form.append("file", new Blob([bytes], { type: mime }), fileName);
+
+    const controller = new AbortController();
+    // Supabase free plan request idle timeout is 150s — keep lower than that.
+    const timeoutMs = 140_000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    const resp = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "xi-api-key": apiKey,
+        // Helps the server negotiate the correct content.
+        "accept": "application/zip",
+      },
+      body: form,
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timer));
+
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      let message = "Stem separation failed";
+      let hint = "";
+      switch (resp.status) {
+        case 401:
+          message = "Authentication failed"; hint = "Invalid or missing API key"; break;
+        case 413:
+          message = "Audio file too large"; hint = "Try a shorter clip"; break;
+        case 422:
+          message = "Invalid audio format"; hint = "Unsupported or corrupted audio"; break;
+        case 429:
+          message = "Rate limit exceeded"; hint = "Retry after a short delay"; break;
+        default:
+          if (resp.status >= 500) {
+            message = "Service temporarily unavailable"; hint = "Retry shortly";
+          }
+      }
+      return new Response(
+        JSON.stringify({ success: false, error: message, hint, statusCode: resp.status, details: text }),
+        { status: resp.status, headers: { ...cors, "Content-Type": "application/json" } },
+      );
+    }
+
+    const zipBuffer = await resp.arrayBuffer();
+
+    // Extract stems from ZIP
+    const stems = await extractStemsFromZip(zipBuffer);
+    const selected = stems[targetStem];
+    if (!selected) {
+      const available = Object.keys(stems);
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: `Target stem '${targetStem}' not found in ZIP`,
+          hint: `Available stems: ${available.join(", ") || "none"}`,
+        }),
+        { status: 500, headers: { ...cors, "Content-Type": "application/json" } },
+      );
+    }
+
+    const base64Audio = bytesToBase64(selected);
+    const duration = Date.now() - startTime;
+
     return new Response(
-      JSON.stringify({ success: false, error: "Internal server error", hint: outerError?.message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      JSON.stringify({
+        success: true,
+        audioData: base64Audio,
+        stemType: targetStem,
+        requestedInstrument: stemType,
+        format: outputFormat,
+        processingTimeMs: duration,
+      }),
+      { status: 200, headers: { ...cors, "Content-Type": "application/json" } },
+    );
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    const err = error as Error;
+    if ((error as any)?.name === "AbortError") {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Request timeout",
+          hint: "Separation took too long. Try a shorter clip.",
+          processingTimeMs: duration,
+        }),
+        { status: 504, headers: { ...cors, "Content-Type": "application/json" } },
+      );
+    }
+    console.error("[separate-stems] Unexpected error:", err?.name, err?.message, err?.stack);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Internal server error",
+        hint: err?.message ?? "Unexpected error",
+        errorType: err?.name ?? "UnknownError",
+        processingTimeMs: duration,
+      }),
+      { status: 500, headers: { ...cors, "Content-Type": "application/json" } },
     );
   }
 });

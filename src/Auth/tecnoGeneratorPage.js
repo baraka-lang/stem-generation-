@@ -5,7 +5,6 @@
 
 import { signIn, signUp, signOut, getCurrentSession } from './index.js'
 import { getAuthGuard } from './authGuard.js'
-import { showLoginModal } from './loginPage.js'
 
 /**
  * Initialize techno generator page functionality
@@ -357,7 +356,7 @@ async function updateUserMenuInfo(user) {
  */
 async function handleLogout() {
   try {
-    const { error } = await signOut({ surface: 'user_menu' })
+    const { error } = await signOut()
     if (error) {
       console.error('Logout error:', error)
       return
@@ -425,12 +424,12 @@ export function showSaveLoginModal() {
   // Add event listeners
   document.getElementById('saveModalLoginBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
-    showLoginModal()
+    window.location.hash = '#login'
   })
 
   document.getElementById('saveModalSignupBtn').addEventListener('click', () => {
     document.body.removeChild(modal)
-    showLoginModal()
+    window.location.hash = '#login'
   })
 
   document.getElementById('saveModalCancelBtn').addEventListener('click', () => {
@@ -523,46 +522,30 @@ function renderSelectionAuthenticatedUI(user) {
   const userStatusContainer = document.getElementById('userStatusContainer')
   const loggedInUserMenu = document.getElementById('logedInUserMenu')
   if (!userStatusContainer || !loggedInUserMenu) return
-
-  // Responsive user greeting: only initials or simple welcome on mobile if needed, or hidden
-  userStatusContainer.innerHTML = `<div class="flex items-center justify-end me-2 md:me-3"><span class="text-xs md:text-sm text-white/60 hidden md:inline">Welcome, ${user.email}</span></div>`
-
+  userStatusContainer.innerHTML = `<div class="flex items-center space-x-4 justify-end me-3"><span class="text-sm text-white/60">Welcome, ${user.email}</span></div>`
   loggedInUserMenu.innerHTML = `
-    <div class="flex items-center space-x-2 md:space-x-4">
+    <div class="flex items-center space-x-4">
       <button data-likes-menu-toggle data-anchor-id="selection-menu"
-        class="w-8 h-8 md:w-9 md:h-9 rounded-full border border-white/10 md:border-white/20 flex items-center justify-center hover:bg-white/10 transition"
+        class="w-9 h-9 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10 transition"
         title="Likes &amp; Sets">
-        <i data-lucide="memory-stick" class="w-4 h-4 text-white/80"></i>
+        <i data-lucide="memory-stick" class="w-4 h-4"></i>
       </button>
-      <button id="helpBtnSel" class="hidden sm:flex w-8 h-8 md:w-auto md:px-2 md:py-1 text-xs rounded-full md:rounded-md border border-white/10 md:border-white/15 hover:bg-white/10 items-center justify-center" title="Help">
-        <i data-lucide="help-circle" class="w-4 h-4 text-white/80 sm:mr-1 md:mr-0"></i>
+      <button id="helpBtnSel" class="px-2 py-1 text-xs rounded-md border border-white/15 hover:bg-white/10 flex items-center justify-center" title="Help">
+        <i data-lucide="help-circle" class="w-4 h-4"></i>
       </button>
       <div class="relative">
-        <button id="userMenuBtnSel" class="w-8 h-8 md:w-9 md:h-9 rounded-full border border-white/20 bg-white/5 flex items-center justify-center hover:bg-white/10 ring-2 ring-transparent hover:ring-white/10 transition-all" aria-haspopup="true" aria-expanded="false" title="User menu">
-          <i data-lucide="user" class="w-4 h-4 md:w-5 md:h-5 text-white"></i>
+        <button id="userMenuBtnSel" class="w-8 h-8 rounded-full border border-white/20 flex items-center justify-center hover:bg-white/10" aria-haspopup="true" aria-expanded="false" title="User menu">
+          <i data-lucide="user" class="w-4 h-4"></i>
         </button>
-        <div id="userMenuSel" class="absolute right-0 top-full mt-2 w-48 bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl hidden z-40 overflow-hidden ring-1 ring-black/50">
+        <div id="userMenuSel" class="absolute right-0 top-full mt-2 w-40 bg-zinc-800 border border-white/10 rounded-md shadow-lg hidden z-40">
           
-          <div class="px-4 py-3 text-xs border-b border-white/5 bg-white/5">
-            <p class="text-white/50 mb-1">Signed in as</p>
-            <p class="text-white font-medium truncate">${user.email}</p>
-          </div>
-
-          <div class="px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center bg-purple-500/10 border-b border-white/5">
-            <span class="text-purple-300">Credits</span>
-            <span id="headerCreditsValue" class="font-bold text-purple-400">100</span>
+          <div class="px-4 py-2 text-xs text-white/70 whitespace-nowrap flex justify-between items-center">
+            <span>Credits</span>
+            <span id="headerCreditsValue" class="font-medium">100</span>
           </div>
           
-          <div class="p-1">
-            <button id="userMenuAccountSel" class="w-full text-left px-3 py-2 text-sm text-white/80 hover:bg-white/10 rounded-lg flex items-center gap-2 transition-colors">
-              <i data-lucide="settings" class="w-4 h-4 text-white/50"></i>
-              Account
-            </button>
-            <button id="userMenuLogoutSel" class="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-red-500/10 rounded-lg flex items-center gap-2 transition-colors">
-              <i data-lucide="log-out" class="w-4 h-4"></i>
-              Log out
-            </button>
-          </div>
+          <button id="userMenuAccountSel" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Account</button>
+          <button id="userMenuLogoutSel" class="w-full text-left px-4 py-2 text-xs hover:bg-white/10">Log out</button>
         </div>
       </div>
     </div>
@@ -583,11 +566,9 @@ function renderSelectionGuestUI() {
   const userStatusContainer = document.getElementById('userStatusContainer')
   if (!userStatusContainer) return
   userStatusContainer.innerHTML = `
-    <div class="flex items-center space-x-3 md:space-x-4">
-      <span class="text-xs md:text-sm text-white/60 hidden sm:block">Guest Mode</span>
-      <button id="loginBtnSel" class="px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105 shadow-md shadow-purple-500/20">
-        Login
-      </button>
+    <div class="flex items-center space-x-4">
+      <span class="text-sm text-white/60">Guest Mode</span>
+      <button id="loginBtnSel" class="px-4 py-2 bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 rounded-lg text-white font-medium transition-all duration-300 hover:scale-105">Login</button>
     </div>
   `
   const loginBtn = document.getElementById('loginBtnSel')
@@ -689,7 +670,7 @@ async function updateSelectionUserMenuInfo(user) {
 
 async function handleSelectionLogout() {
   try {
-    const { error } = await signOut({ surface: 'selection_menu' })
+    const { error } = await signOut()
     if (error) return
     await selectionCheckAuthenticationStatus()
   } catch { }

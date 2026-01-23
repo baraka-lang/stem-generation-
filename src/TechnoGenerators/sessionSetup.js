@@ -10,7 +10,6 @@ import { getPlaybackBars } from '../Utilities/barUtils.js'
 import { saveSessionSettingsToCloud } from '../Auth/stemApi.js'
 import { getAuthGuard } from '../Auth/authGuard.js'
 import { showSuccessToast } from '../UI/toast.js'
-import posthog from '../Config/posthog.js'
 
 /**
  * Load session settings from localStorage if available
@@ -222,17 +221,6 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
     try { e.preventDefault() } catch { }
     try { e.stopPropagation() } catch { }
 
-    // Check if there are active stems to save before showing implicit save modal
-    let hasStemsToSave = false
-    if (typeof window.hasActiveStemsToSave === 'function') {
-      hasStemsToSave = window.hasActiveStemsToSave()
-    }
-
-    if (!hasStemsToSave) {
-      await proceedWithSessionSetup()
-      return
-    }
-
     // Always show modal to ask user if they want to save current state
     showSaveStateBeforeSessionModal(async (shouldSave) => {
       // Show loading state on Start Session button
@@ -344,15 +332,6 @@ export function showSessionSetupModal(sessionSetupDone, stemControlValues, setSe
       selected_accidental: selectedAccidental,
       mode: modeVal
     }
-
-    // Track session started
-    posthog.capture('session_started', {
-      tempo: tempoVal,
-      bars: barsVal,
-      key: `${rootBase}${selectedAccidental}`,
-      scale: modeVal,
-      surface: 'modal'
-    })
 
     // 1. Replace the session setting in local storage immediately
     saveSessionSettingsToStorage(sessionValues)
