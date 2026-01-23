@@ -5644,7 +5644,7 @@ function createBuilderStemCard(st, cfg) {
   // the title and number.  On sm and above, the action buttons appear inline to the right of
   // the title.  We wrap the desktop actions in a hidden container on mobile and include a
   // separate mobile action row using headerActionButtonsMobileHTML.
-  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-3 sm:mb-4">\n          <!-- First row on mobile: name and number indicator are aligned horizontally. -->\n          <div class="flex items-center justify-between w-full sm:w-auto gap-3">\n            <div class="flex items-center gap-2 sm:gap-3">\n              <h3 class="text-base sm:text-lg font-medium text-white">${cfg.name}</h3>\n            </div>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 text-xs sm:text-sm font-semibold rounded-full border border-white/30">${idx}</span>\n          </div>\n          <!-- Action icons centered on desktop -->\n          <div class="hidden sm:flex flex-1 items-center justify-center gap-2">${customHeaderActionButtonsHTML(st)}</div>\n          ${customHeaderActionButtonsMobileHTML(st)}\n        </div>\n      `
+  const headerHTML = `\n        <div class="flex flex-col sm:flex-row sm:items-center mb-3 sm:mb-4">\n          <!-- First row on mobile: name and number indicator are aligned horizontally. -->\n          <div class="flex items-center justify-between w-full sm:w-auto gap-3">\n            <div class="flex items-center gap-2 sm:gap-3">\n              <h3 class="text-base sm:text-lg font-medium text-white">${cfg.name}</h3>\n            </div>\n            <span data-card-number="${st}" class="stem-index inline-flex items-center justify-center w-6 h-6 sm:w-7 sm:h-7 text-xs sm:text-sm font-semibold rounded-full border border-white/30">${idx}</span>\n          </div>\n        </div>\n      `
   
 
   // Removed EQ and Filter controls from the card; these will be shown in the mixer instead.
@@ -5743,7 +5743,7 @@ function createBuilderStemCard(st, cfg) {
   
   // Keep data-clean-container and data-drag-container for functionality
   const cleanContainerHTML = `\n        <div class="hidden" data-clean-container="${st}"></div>\n      `
-  card.innerHTML = headerHTML + eqFilterHTML + volumeHTML + waveformHTML + actionButtonsRowHTML + dragButtonHTML + cleanContainerHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
+  card.innerHTML = headerHTML + `<div class="hidden sm:flex flex-1 items-center justify-center gap-1.5 mb-3 sm:mb-4">${customHeaderActionButtonsHTML(st)}</div>` + customHeaderActionButtonsMobileHTML(st) + eqFilterHTML + volumeHTML + waveformHTML + actionButtonsRowHTML + dragButtonHTML + cleanContainerHTML + genCreateButtonHTML + `\n        <div class="status-line hidden mt-2 text-sm text-white/80">Ready to create</div>\n      `
   // Enhance the create button markup by attaching classes that allow responsive font and icon sizing.
   // The span within the create button becomes the label, and the icon gets a special class so
   // CSS can target them on mobile.  We cannot edit the template literal easily, so we modify
@@ -8420,7 +8420,7 @@ function customHeaderActionButtonsHTML(st) {
   const mixerButtonId = isFirstCard ? 'id="mixerToggleBtn"' : ''
   
   return `
-        <div class="flex items-center gap-2 sm:gap-2.5 flex-nowrap">
+        <div class="flex items-center gap-1.5 flex-nowrap">
           <button class="sg-toggle w-9 h-9 sm:w-10 sm:h-10 flex items-center justify-center rounded-lg hover:bg-white/10 transition"
                   data-action="mute-stem" data-stem="${st}" title="Mute/Unmute" aria-pressed="false">
             <i data-lucide="volume-2" class="w-4 h-4 sm:w-5 sm:h-5"></i>

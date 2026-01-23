@@ -831,7 +831,7 @@ function buildDropdown() {
   dropdownEl.innerHTML = `
     <div class="flex items-center justify-between px-4 py-3 border-b border-white/10">
       <div class="inline-flex bg-white/5 border border-white/10 rounded-lg overflow-hidden text-sm">
-        <button data-tab="likes" class="tab-btn px-3 py-1.5 font-medium">Likes</button>
+        <button data-tab="likes" class="tab-btn px-3 py-1.5 font-medium">Stems</button>
         <button data-tab="sets" class="tab-btn px-3 py-1.5 text-white/70">Sets</button>
         <button data-tab="stems" class="tab-btn px-3 py-1.5 text-white/70">Stems</button>
       </div>
@@ -1157,19 +1157,10 @@ function renderFilterPanel(container, prefix, context = 'dropdown') {
 
   const currentStars = filters.stars || 0
 
-  // Scope Toggle HTML
-  const scopeHtml = `
-    <div class="flex bg-white/10 rounded-lg p-0.5 ml-auto mr-2">
-        <button data-scope="${prefix}" data-value="current" class="px-2 py-0.5 rounded-md text-[10px] transition-colors ${currentScope === 'current' ? 'bg-purple-500 text-white' : 'text-white/60 hover:text-white'}">Session</button>
-        <button data-scope="${prefix}" data-value="all" class="px-2 py-0.5 rounded-md text-[10px] transition-colors ${currentScope === 'all' ? 'bg-purple-500 text-white' : 'text-white/60 hover:text-white'}">All</button>
-    </div>
-  `
-
   container.innerHTML = `
     <div class="flex items-center justify-between gap-2 text-[11px] uppercase tracking-[0.2em] text-white/50">
       <div class="flex items-center flex-1">
           <span>${label}</span>
-          ${scopeHtml}
       </div>
       <button data-filter="clear" class="text-[11px] text-purple-300 hover:text-white">Reset</button>
     </div>
@@ -1385,7 +1376,9 @@ function renderLikeCard(item, variant = 'dropdown') {
         </div>
         <div class="text-[11px] text-white/70">${item.bpm} BPM · ${item.key}</div>
         <div class="mt-0.5">
-          ${renderStarRating(rating, item.id, 'sm', true)}
+          <button data-toggle-like-card="${item.stemId}|${item.takeIndex}" class="w-6 h-6 flex items-center justify-center rounded-lg hover:bg-white/10 transition text-red-400" aria-pressed="true" title="Unlike">
+            <i data-lucide="heart" class="w-4 h-4 fill-current"></i>
+          </button>
         </div>
       </div>
       <div class="flex items-center gap-2 flex-1 min-w-0 relative">
@@ -1418,6 +1411,16 @@ function attachLikeCardHandlers(container, variant, itemMap) {
       e.preventDefault()
       e.stopPropagation()
       const [stemId, takeIdx] = (btn.getAttribute('data-unlike') || '').split('|')
+      const idxNum = parseInt(takeIdx, 10)
+      removeLike(stemId, idxNum)
+    })
+  })
+
+  container.querySelectorAll('[data-toggle-like-card]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const [stemId, takeIdx] = (btn.getAttribute('data-toggle-like-card') || '').split('|')
       const idxNum = parseInt(takeIdx, 10)
       removeLike(stemId, idxNum)
     })
