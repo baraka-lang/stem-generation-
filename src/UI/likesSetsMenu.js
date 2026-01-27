@@ -1359,6 +1359,7 @@ function renderLikeCard(item, variant = 'dropdown') {
             </div>
             <div class="flex flex-col items-end gap-2 flex-shrink-0 min-w-[120px]">
               <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-purple-400/60 bg-purple-500/10 hover:bg-purple-500/20 text-sm w-full">Insert</button>
+              <button data-download-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm w-full">Download</button>
               <button data-unlike="${item.stemId}|${item.takeIndex}" class="px-3 py-1.5 rounded-lg border border-white/15 bg-white/5 hover:bg-white/10 text-sm text-red-200 w-full">Remove</button>
             </div>
           </div>
@@ -1386,7 +1387,15 @@ function renderLikeCard(item, variant = 'dropdown') {
           <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-3.5 h-3.5" data-like-play-icon></i>
         </button>
         ${renderLikeWaveformCanvas(item, 'dropdown')}
-        <button data-insert-like="${item.id}" class="absolute right-2 px-3 py-1.5 rounded-lg border border-white/20 bg-black/40 hover:bg-black/60 backdrop-blur-sm text-xs font-medium">Insert</button>
+        <div class="absolute right-2 flex items-center gap-1.5 z-10">
+          <button data-download-like="${item.id}" class="p-1.5 rounded-lg border border-white/20 bg-black/40 hover:bg-black/60 backdrop-blur-sm text-white" title="Download">
+            <i data-lucide="download" class="w-3.5 h-3.5"></i>
+          </button>
+          <button data-delete-like="${item.stemId}|${item.takeIndex}" class="p-1.5 rounded-lg border border-white/20 bg-black/40 hover:bg-red-500/20 hover:text-red-400 backdrop-blur-sm text-white/60" title="Delete">
+            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          </button>
+          <button data-insert-like="${item.id}" class="px-3 py-1.5 rounded-lg border border-white/20 bg-black/40 hover:bg-black/60 backdrop-blur-sm text-xs font-medium">Insert</button>
+        </div>
       </div>
     </div>
   `
@@ -1437,6 +1446,55 @@ function attachLikeCardHandlers(container, variant, itemMap) {
       } else {
         console.warn('attachLikeCardHandlers: Item not found for insert', id)
       }
+    })
+  })
+
+  container.querySelectorAll('[data-download-like]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const id = btn.getAttribute('data-download-like')
+      const item = itemMap.get(id)
+      
+      if (!item) {
+        console.warn('attachLikeCardHandlers: Item not found for download', id)
+        return
+      }
+
+      const originalIcon = btn.innerHTML
+      btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i>`
+      window.lucide?.createIcons()
+
+      try {
+        // Ensure audio is loaded
+        if (!item.audioBuffer) {
+          await loadLikeAudio(item)
+        }
+
+        if (item.audioBuffer) {
+          const filename = `${item.stemName || 'stem'}_${item.bpm} bpm_${item.key || 'unknown'}.wav`
+          bufferToWavAndDownload(item.audioBuffer, filename)
+        } else {
+          console.error('Download failed: No audio buffer available')
+        }
+      } catch (err) {
+        console.error('Download error', err)
+      } finally {
+        btn.innerHTML = originalIcon
+        window.lucide?.createIcons()
+      }
+    })
+  })
+
+  container.querySelectorAll('[data-delete-like]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!confirm('Are you sure you want to remove this from your likes?')) return
+      
+      const [stemId, takeIdx] = (btn.getAttribute('data-delete-like') || '').split('|')
+      const idxNum = parseInt(takeIdx, 10)
+      removeLike(stemId, idxNum)
     })
   })
 
@@ -2031,6 +2089,65 @@ function renderSavedStems() {
       })
     })
 
+    // Attach Like Toggle Handlers
+    container.querySelectorAll('[data-toggle-like-saved-stem]').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        const id = btn.getAttribute('data-toggle-like-saved-stem')
+        const item = filtered.find(s => s.id === id)
+        
+        if (!item) return
+
+        // Ensure audio is loaded if needed
+        if (!item.audioBuffer && item.audio_url) {
+          item.audioKey = item.audio_url
+          try {
+            await loadLikeAudio(item)
+          } catch (err) {
+            console.error('Failed to load audio for like toggle', err)
+          }
+        }
+
+        const stemId = item.stem_type
+        const takeIndex = item.take_index ?? -1
+        const audioKey = item.audio_url || item.audioKey || null
+
+        // Map stem_type to color name (matching stemConfigs)
+        const stemColorMap = {
+          kick: 'red',
+          perc: 'cyan',
+          bass: 'yellow',
+          lead: 'green',
+          hihat: 'orange',
+          pad: 'purple',
+          arp: 'blue',
+          fx: 'pink',
+          pluck: 'green'
+        }
+        const colorName = stemColorMap[stemId] || 'purple'
+
+        // Create track object similar to handleStemLikeToggle
+        const track = {
+          id: audioKey ? `like-${audioKey}` : `${stemId}-${takeIndex}-${Date.now()}`,
+          stemId,
+          takeIndex,
+          stemName: item.stem_type,
+          stemColor: colorName,
+          bpm: item.bpm || 130,
+          key: item.key || 'A Minor',
+          bars: item.bars || null,
+          audioBuffer: item.audioBuffer || null,
+          audioKey: audioKey
+        }
+
+        // Toggle like status
+        await toggleLikeForStem(stemId, track)
+        
+        // Re-render to update UI
+        renderSavedStems()
+      })
+    })
+
     // Attach Download Handlers
     container.querySelectorAll('[data-download-saved-stem]').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
@@ -2181,10 +2298,25 @@ function getFilteredSavedStems() {
     .sort((a, b) => b.timestamp - a.timestamp)
 }
 
+function isSavedStemLiked(item) {
+  const audioKey = item.audio_url || item.audioKey || null
+  const stemId = item.stem_type
+  const takeIndex = item.take_index ?? -1
+  
+  return likedTracks.some((liked) => {
+    if (audioKey && liked.audioKey === audioKey) return true
+    return liked.stemId === stemId && liked.takeIndex === takeIndex
+  })
+}
+
 function renderSavedStemCard(item) {
   const dateStr = new Date(item.created_at).toLocaleDateString()
   const duration = item.duration_seconds ? `${Math.round(item.duration_seconds)}s` : ''
   const size = item.file_size ? `${(item.file_size / 1024 / 1024).toFixed(1)}MB` : ''
+  const isLiked = isSavedStemLiked(item)
+  const likeButtonClass = isLiked 
+    ? 'p-2 rounded-full bg-red-500/10 hover:bg-red-500/20 transition-colors text-red-400 border border-red-400/40'
+    : 'p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white/80 hover:text-white'
 
   return `
     <div class="flex items-center justify-between bg-white/5 border border-white/10 rounded-xl p-3 group hover:bg-white/10 transition-colors">
@@ -2213,6 +2345,10 @@ function renderSavedStemCard(item) {
       </div>
       
       <div class="flex items-center gap-2 ml-3 flex-shrink-0">
+        <button data-toggle-like-saved-stem="${item.id}" class="${likeButtonClass}" aria-pressed="${isLiked}" title="${isLiked ? 'Unlike' : 'Like'}">
+          <i data-lucide="heart" class="w-4 h-4 ${isLiked ? 'fill-current' : ''}"></i>
+        </button>
+        
         <button data-play-saved-stem="${item.id}" class="p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white">
           <i data-lucide="${activePreviewId === item.id ? 'pause' : 'play'}" class="w-4 h-4"></i>
         </button>
