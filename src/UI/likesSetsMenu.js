@@ -1,5 +1,5 @@
 import { drawTinyWaveform, getColorRGB } from '../Utilities/waveform.js'
-import { getStemStates, getAllStemStates, deleteStemState, updateStemState, getUserStems, deleteStem, upsertUserLike, removeUserLike } from '../Auth/stemApi.js'
+import { getStemStates, getAllStemStates, deleteStemState, updateStemState, getUserStems, deleteStem, upsertUserLike, removeUserLike, getDemoStemStates } from '../Auth/stemApi.js'
 import { supabase } from '../Auth/index.js'
 import { encodeWAVSync } from '../audioEncoder.js'
 import { bufferToWavAndDownload } from '../DownloadAudio/index.js'
@@ -41,6 +41,9 @@ let stemStatesSyncInProgress = false
 let savedStemsSyncInProgress = false
 const externalLikesContainers = []
 
+// Persistent cache for audio buffers to avoid re-downloading/re-decoding
+const audioBufferCache = new Map()
+
 const paginations = {
   likes: 1,
   sets: 1,
@@ -74,11 +77,45 @@ async function ensureWaveformAudioContext() {
 async function loadLikeAudio(item) {
   if (!item) return null
 
+  // Demo stems: Try to load audio (files should now be in staging storage)
+  // Only skip if explicitly marked as no-audio demo
+  if (item.isDemo && item.skipAudioLoad) {
+    console.log('loadLikeAudio: Skipping audio load for demo stem (marked skipAudioLoad)', item.id)
+    return null
+  }
+
+  // Check persistent cache first to avoid redundant downloads/decoding
+  const cacheKey = item.audioKey || item.id
+  const cachedBuffer = audioBufferCache.get(cacheKey)
+  if (cachedBuffer) {
+    if (item.isDemo) {
+      console.log(`loadLikeAudio: [DEMO] Using cached buffer for ${item.id} (key: ${cacheKey})`)
+    }
+    item.audioBuffer = cachedBuffer // Sync to item for consistency
+    return cachedBuffer
+  }
+
+  // Also check item.audioBuffer (for backward compatibility)
+  if (item.audioBuffer) {
+    if (item.isDemo) {
+      console.log(`loadLikeAudio: [DEMO] Using item.audioBuffer for ${item.id}`)
+    }
+    audioBufferCache.set(cacheKey, item.audioBuffer) // Sync to cache
+    return item.audioBuffer
+  }
+
+  if (item.isDemo) {
+    console.log('loadLikeAudio: Attempting to load audio for demo stem', item.id, 'audioKey:', item.audioKey)
+  }
+
   const ctx = await ensureWaveformAudioContext()
+
+  console.log(`[DEBUG] loadLikeAudio: Loading for ${item.id}`, { hasAudioData: !!item.audio_data, audioKey: item.audioKey, isDemo: item.isDemo })
 
   // 0. Direct audio data check (from DB bytea/base64)
   if (item.audio_data) {
     try {
+      console.log(`[DEBUG] loadLikeAudio: processing audio_data for ${item.id}`)
       let arrayBuffer = null
       if (typeof item.audio_data === 'string') {
         if (item.audio_data.startsWith('\\x')) {
@@ -100,7 +137,7 @@ async function loadLikeAudio(item) {
             }
             arrayBuffer = u8.buffer
           } catch (b64Err) {
-            console.warn('loadLikeAudio: Failed to parse as base64', b64Err)
+            console.warn('[DEBUG] loadLikeAudio: Failed to parse as base64', b64Err)
           }
         }
       } else if (item.audio_data instanceof ArrayBuffer || item.audio_data.buffer instanceof ArrayBuffer) {
@@ -110,17 +147,25 @@ async function loadLikeAudio(item) {
       if (arrayBuffer && arrayBuffer.byteLength > 0) {
         // Use slice(0) to pass a copy to avoid neutered buffer issues in some contexts
         const decoded = await ctx.decodeAudioData(arrayBuffer.slice(0))
+        const cacheKey = item.audioKey || item.id
+        audioBufferCache.set(cacheKey, decoded)
         item.audioBuffer = decoded
+        console.log(`[DEBUG] loadLikeAudio: Decoded audio_data success for ${item.id}`)
         return decoded
+      } else {
+        console.warn(`[DEBUG] loadLikeAudio: audio_data processed but arrayBuffer empty for ${item.id}`)
       }
     } catch (err) {
-      console.error('loadLikeAudio: Failed to decode audio_data', err)
+      console.error('[DEBUG] loadLikeAudio: Failed to decode audio_data', err)
       // If decoding failed, maybe it's not a valid audio format or corrupted
     }
   }
 
   // 1. Storage bucket download
-  if (!item.audioKey) return null
+  if (!item.audioKey) {
+    console.warn(`[DEBUG] loadLikeAudio: No audioKey and no valid audio_data for ${item.id}`)
+    return null
+  }
 
   // Direct URL check
   if (/^https?:\/\//i.test(item.audioKey)) {
@@ -129,6 +174,8 @@ async function loadLikeAudio(item) {
       if (res.ok) {
         const buf = await res.arrayBuffer()
         const decoded = await ctx.decodeAudioData(buf)
+        const cacheKey = item.audioKey || item.id
+        audioBufferCache.set(cacheKey, decoded)
         item.audioBuffer = decoded
         return decoded
       }
@@ -142,14 +189,19 @@ async function loadLikeAudio(item) {
   let storagePath = item.audioKey
 
   // Decide primary bucket based on item metadata
-  // Stems usually have stem_type, while Likes might not (or have it but we prioritize the liked-audios bucket)
+  // Demo stems should use audio-files bucket (where demo audio is stored)
   const stemsBucket = (import.meta.env.VITE_SUPABASE_AUDIO_BUCKET || 'audio-files').trim()
   const likesBucket = (import.meta.env.VITE_SUPABASE_LIKES_BUCKET || 'liked-audios').trim()
 
-  // If item is a stem from the stems table (has tempo/bars/stem_type)
+  // Demo stems always use audio-files bucket (demo audio is stored there)
+  // Otherwise, if item is a stem from the stems table (has tempo/bars/stem_type)
   const isDedicatedStem = !!(item.stem_type || (item.tempo && item.bars))
-  const primaryBucket = isDedicatedStem ? stemsBucket : likesBucket
-  const secondaryBucket = isDedicatedStem ? likesBucket : stemsBucket
+  const primaryBucket = item.isDemo ? stemsBucket : (isDedicatedStem ? stemsBucket : likesBucket)
+  const secondaryBucket = item.isDemo ? likesBucket : (isDedicatedStem ? likesBucket : stemsBucket)
+
+  if (item.isDemo) {
+    console.log(`loadLikeAudio: Demo stem - using primary bucket: ${primaryBucket}, audioKey: ${item.audioKey}`)
+  }
 
   async function tryDownload(bucketName) {
     let cleanPath = storagePath
@@ -161,12 +213,32 @@ async function loadLikeAudio(item) {
       if (cleanPath.startsWith(b + '/')) cleanPath = cleanPath.replace(b + '/', '')
     })
 
-    console.log(`loadLikeAudio: Attempting download from [${bucketName}]:`, cleanPath)
+    console.log(`loadLikeAudio: Attempting download from [${bucketName}]:`, cleanPath, item.isDemo ? '(DEMO)' : '')
     const { data, error } = await supabase.storage.from(bucketName).download(cleanPath)
-    if (error) throw error
+    if (error) {
+      if (item.isDemo) {
+        console.warn(`loadLikeAudio: Demo stem audio download failed for ${cleanPath}:`, error.message)
+      }
+      throw error
+    }
 
     const buf = await data.arrayBuffer()
-    return await ctx.decodeAudioData(buf)
+    if (item.isDemo) {
+      console.log(`loadLikeAudio: Downloaded demo audio file: ${cleanPath}, size: ${buf.byteLength} bytes (${(buf.byteLength / 1024).toFixed(2)} KB)`)
+      if (buf.byteLength === 0) {
+        console.error(`loadLikeAudio: ⚠️ WARNING - Demo audio file is empty (0 bytes): ${cleanPath}`)
+        throw new Error('Downloaded file is empty')
+      }
+    }
+    const decoded = await ctx.decodeAudioData(buf)
+    if (item.isDemo) {
+      console.log(`loadLikeAudio: ✅ Successfully decoded demo stem audio: ${cleanPath} (duration: ${decoded.duration.toFixed(2)}s, sampleRate: ${decoded.sampleRate}Hz)`)
+    }
+    // Cache the decoded buffer
+    const cacheKey = item.audioKey || item.id
+    audioBufferCache.set(cacheKey, decoded)
+    item.audioBuffer = decoded
+    return decoded
   }
 
   try {
@@ -196,7 +268,7 @@ function ensureDropdownContentRendered() {
   syncSavedStems()
 
   renderFilters()
-  renderLikes()
+  renderLikes().catch(err => console.error('Error rendering likes:', err))
   renderSets()
 }
 
@@ -289,7 +361,7 @@ export function refreshFavoritesUI() {
     switchTab(currentTab)
   }
   renderFilters()
-  renderLikes()
+  renderLikes().catch(err => console.error('Error rendering likes:', err))
   renderSets()
   renderSavedStems()
 }
@@ -302,14 +374,14 @@ export function getLikedTracks() {
 export function addLikesContainer(el, variant = 'page') {
   if (!el) return
   externalLikesContainers.push({ el, variant })
-  renderLikes()
+  renderLikes().catch(err => console.error('Error rendering likes:', err))
 }
 
 export function removeLikesContainer(el) {
   const idx = externalLikesContainers.findIndex((c) => c.el === el)
   if (idx >= 0) {
     externalLikesContainers.splice(idx, 1)
-    renderLikes()
+    renderLikes().catch(err => console.error('Error rendering likes:', err))
   }
 }
 
@@ -329,7 +401,7 @@ export async function toggleLikeForStem(stemId, track) {
     // UNLIKE
     console.log('Unliking stem', stemId)
     const removedItem = likedTracks.splice(existingIndex, 1)[0]
-    renderLikes()
+    renderLikes().catch(err => console.error('Error rendering likes:', err))
     notifyLikeChange(stemId)
     persistLikesToLocalStorage()
 
@@ -359,7 +431,7 @@ export async function toggleLikeForStem(stemId, track) {
   }
 
   likedTracks.unshift(newLike)
-  renderLikes()
+  renderLikes().catch(err => console.error('Error rendering likes:', err))
   notifyLikeChange(stemId)
   persistLikesToLocalStorage()
 
@@ -470,7 +542,7 @@ export async function setLikeRating(trackId, rating) {
   const track = likedTracks.find(t => t.id === trackId)
   if (track) {
     track.rating = Math.max(1, Math.min(5, rating))
-    renderLikes()
+    renderLikes().catch(err => console.error('Error rendering likes:', err))
     persistLikesToLocalStorage()
 
     // Sync to DB
@@ -587,7 +659,7 @@ function attachStarHandlers(container, type) {
           filters.stars = value
         }
         renderFilters()
-        renderLikes()
+        renderLikes().catch(err => console.error('Error rendering likes:', err))
         renderSets()
       }
     })
@@ -833,22 +905,15 @@ function buildDropdown() {
       <div class="inline-flex bg-white/5 border border-white/10 rounded-lg overflow-hidden text-sm">
         <button data-tab="likes" class="tab-btn px-3 py-1.5 font-medium">Stems</button>
         <button data-tab="sets" class="tab-btn px-3 py-1.5 text-white/70">Sets</button>
-        <button data-tab="stems" class="tab-btn px-3 py-1.5 text-white/70">Stems</button>
       </div>
       <button data-close-menu class="w-8 h-8 rounded-lg hover:bg-white/10 flex items-center justify-center" aria-label="Close menu">
         <i data-lucide="x" class="w-4 h-4"></i>
       </button>
     </div>
     <div class="p-4 space-y-3">
-      <div id="likesFilters" class="filter-panel"></div>
       <div id="likesList" class="max-h-80 overflow-y-auto space-y-2"></div>
       <div id="setsPanel" class="hidden space-y-3">
-        <div id="setsFilters" class="filter-panel"></div>
         <div id="setsList" class="max-h-80 overflow-y-auto space-y-2"></div>
-      </div>
-      <div id="stemsPanel" class="hidden space-y-3">
-        <div id="stemsFilters" class="filter-panel"></div>
-        <div id="stemsList" class="max-h-80 overflow-y-auto space-y-2"></div>
       </div>
       <div class="pt-1 border-t border-white/10 flex items-center justify-between text-xs text-white/70">
         <span class="hidden sm:inline">Need more space? Open your library.</span>
@@ -884,10 +949,10 @@ function ensureOverlay() {
 
 function attachAnchorHandlers() {
   anchorButtons.forEach((btn) => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation()
       if (btn.dataset.anchorId === 'studio-menu' || btn.dataset.anchorId === 'selection-menu') {
-        openLikesModal(btn)
+        await openLikesModal(btn)
         return
       }
       if (shouldUsePageView()) {
@@ -924,14 +989,28 @@ function openMenu(anchor) {
   window.lucide?.createIcons()
 }
 
-function openLikesModal(anchor) {
+async function openLikesModal(anchor) {
+  // Allow unauthenticated users to open modal to view demo sets
+  // Check authentication to determine which tab to show
+  let isAuthenticated = false
+  try {
+    const { canUserSave } = await import('../Auth/selectionPage.js')
+    isAuthenticated = await canUserSave()
+  } catch (err) {
+    console.error('Auth check failed in openLikesModal:', err)
+    // Continue anyway - allow unauthenticated users to see demo sets
+  }
+
   if (!dropdownEl) buildDropdown()
   ensureOverlay()
   if (!dropdownEl || !overlayEl) return
 
   ensureDropdownContentRendered()
 
-  dropdownEl.dataset.anchor = anchor.dataset.anchorId || ''
+  // Don't force switch tab - let users see both Stems and Sets tabs
+  // Demo stems will be shown in Stems tab, demo sets in Sets tab
+
+  dropdownEl.dataset.anchor = anchor?.dataset?.anchorId || ''
 
   overlayEl.classList.remove('hidden')
   // Force reflow then fade in overlay
@@ -947,8 +1026,58 @@ function openLikesModal(anchor) {
   void dropdownEl.offsetHeight
   dropdownEl.classList.remove('opacity-0')
   anchorButtons.forEach((btn) => btn.classList.remove('ring-2', 'ring-purple-400/60', 'bg-white/5'))
-  anchor.classList.add('ring-2', 'ring-purple-400/60', 'bg-white/5')
+  if (anchor) {
+    anchor.classList.add('ring-2', 'ring-purple-400/60', 'bg-white/5')
+  }
   window.lucide?.createIcons()
+
+  // Sync data to ensure demo sets are shown for unauthenticated users
+  syncStemStates().catch(err => console.error('Error syncing stem states:', err))
+}
+
+// Export function to open the likes modal programmatically (without requiring an anchor button)
+export async function openLikesSetsModal() {
+  // Allow unauthenticated users to open modal to view demo sets
+  // Check authentication to determine which tab to show
+  let isAuthenticated = false
+  try {
+    const { canUserSave } = await import('../Auth/selectionPage.js')
+    isAuthenticated = await canUserSave()
+  } catch (err) {
+    console.error('Auth check failed in openLikesSetsModal:', err)
+    // Continue anyway - allow unauthenticated users to see demo sets
+  }
+
+  if (!dropdownEl) buildDropdown()
+  ensureOverlay()
+  if (!dropdownEl || !overlayEl) return
+
+  ensureDropdownContentRendered()
+
+  // Don't force switch tab - let users see both Stems and Sets tabs
+  // Demo stems will be shown in Stems tab, demo sets in Sets tab
+
+  dropdownEl.dataset.anchor = 'auto-open'
+
+  overlayEl.classList.remove('hidden')
+  // Force reflow then fade in overlay
+  void overlayEl.offsetHeight
+  overlayEl.classList.remove('opacity-0')
+  dropdownEl.classList.remove('hidden')
+  // Center the dropdown as a modal
+  dropdownEl.style.right = 'auto'
+  dropdownEl.style.left = '50%'
+  dropdownEl.style.top = '50%'
+  dropdownEl.style.transform = 'translate(-50%, -50%)'
+  // Force reflow then fade in dropdown
+  void dropdownEl.offsetHeight
+  dropdownEl.classList.remove('opacity-0')
+  // Clear any active anchor button styling
+  anchorButtons.forEach((btn) => btn.classList.remove('ring-2', 'ring-purple-400/60', 'bg-white/5'))
+  window.lucide?.createIcons()
+
+  // Sync data to ensure demo sets are shown (works for both authenticated and unauthenticated users)
+  syncStemStates().catch(err => console.error('Error syncing stem states:', err))
 }
 
 function closeMenu() {
@@ -1014,30 +1143,18 @@ function switchTab(tab) {
       btn.classList.toggle('text-white/70', !isActive)
     })
 
-    const likesFilters = dropdownEl.querySelector('#likesFilters')
     const likesList = dropdownEl.querySelector('#likesList')
     const setsPanel = dropdownEl.querySelector('#setsPanel')
-    const stemsPanel = dropdownEl.querySelector('#stemsPanel')
 
-    if (likesFilters && likesList && setsPanel && stemsPanel) {
+    if (likesList && setsPanel) {
       if (currentTab === 'likes') {
-        likesFilters.classList.remove('hidden')
         likesList.classList.remove('hidden')
         setsPanel.classList.add('hidden')
-        stemsPanel.classList.add('hidden')
       } else if (currentTab === 'sets') {
-        likesFilters.classList.add('hidden')
         likesList.classList.add('hidden')
         setsPanel.classList.remove('hidden')
-        stemsPanel.classList.add('hidden')
-      } else if (currentTab === 'stems') {
-        likesFilters.classList.add('hidden')
-        likesList.classList.add('hidden')
-        setsPanel.classList.add('hidden')
-        stemsPanel.classList.remove('hidden')
-        // Trigger sync when switching to stems
-        syncStemStates()
       }
+      // Note: 'stems' tab is not available in dropdown, only in favorites page
     }
   }
 
@@ -1126,9 +1243,7 @@ function attachSetsSubTabHandlers() {
 }
 
 function renderFilters() {
-  renderFilterPanel(dropdownEl?.querySelector('#likesFilters'), 'likes')
-  renderFilterPanel(dropdownEl?.querySelector('#setsFilters'), 'sets')
-  renderFilterPanel(dropdownEl?.querySelector('#stemsFilters'), 'stems')
+  // Skip rendering filters for dropdown - only render for favorites page
   renderFilterPanel(favoritesPageRefs?.likesFilters, 'likes', 'page')
   renderFilterPanel(favoritesPageRefs?.setsFilters, 'sets', 'page')
   renderFilterPanel(favoritesPageRefs?.stemsFilters, 'stems', 'page')
@@ -1248,11 +1363,11 @@ function handleFilterChange(e, prefix) {
   }
 }
 
-function renderLikes() {
+async function renderLikes() {
   const containers = getLikesContainers()
   if (!containers.length) return
 
-  containers.forEach(({ el, variant }) => {
+  for (const { el, variant } of containers) {
     if (cloudSyncInProgress) {
       el.innerHTML = `
         <div class="space-y-2">
@@ -1261,15 +1376,33 @@ function renderLikes() {
           ${renderLikeSkeleton(variant)}
         </div>
       `
-      return
+      continue
     }
 
     const filtered = getFilteredLikes()
+    console.log('renderLikes: likedTracks.length:', likedTracks.length, 'filtered.length:', filtered.length, 'likesScope:', likesScope)
     const itemMap = new Map(filtered.map((item) => [item.id, item]))
     if (!filtered.length) {
-      el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No liked tracks yet. Press ♥ on any stem to add it here.</div>`
-      return
+      // Check if user is guest to show appropriate message
+      let isEmptyMessage = 'No liked tracks yet. Press ♥ on any stem to add it here.'
+      try {
+        const { getAuthGuard } = await import('../Auth/authGuard.js')
+        const guard = getAuthGuard()
+        if (!guard?.isAuthenticated) {
+          isEmptyMessage = 'No demo stems available. Sign up to like and save your own stems!'
+        }
+      } catch { }
+      el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">${isEmptyMessage}</div>`
+      continue
     }
+
+    // Check if user is viewing demo stems
+    let isGuestViewingDemo = false
+    try {
+      const { getAuthGuard } = await import('../Auth/authGuard.js')
+      const guard = getAuthGuard()
+      isGuestViewingDemo = !guard?.isAuthenticated && filtered.some(item => item.isDemo)
+    } catch { }
 
     // Pagination logic for page variant
     let displayedItems = filtered
@@ -1281,17 +1414,48 @@ function renderLikes() {
       paginationHtml = renderPaginationControls('likes', filtered.length)
     }
 
-    el.innerHTML = displayedItems
+    // Add demo message banner if guest is viewing demo stems
+    let demoBannerHtml = ''
+    if (isGuestViewingDemo) {
+      demoBannerHtml = `
+        <div class="mb-3 p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+          <p class="text-sm text-white/90 font-medium mb-1">🎵 Demo Stems</p>
+          <p class="text-xs text-white/70">These are demo stems. <a href="#" data-open-login-modal class="text-purple-400 hover:text-purple-300 underline">Log in</a> to create and save your own stems!</p>
+        </div>
+      `
+    }
+
+    el.innerHTML = demoBannerHtml + displayedItems
       .map((item) => renderLikeCard(item, variant))
       .join('') + paginationHtml
 
     attachLikeCardHandlers(el, variant, itemMap)
     renderLikeWaveforms(el, itemMap)
 
+    // Attach login modal handler for demo banner
+    if (isGuestViewingDemo) {
+      const loginLink = el.querySelector('[data-open-login-modal]')
+      if (loginLink) {
+        loginLink.addEventListener('click', async (e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          try {
+            const { showLoginModal } = await import('../Auth/loginPage.js')
+            if (typeof showLoginModal === 'function') {
+              showLoginModal()
+              closeMenu() // Close the library modal when opening login
+            }
+          } catch (err) {
+            console.error('Error opening login modal:', err)
+          }
+        })
+      }
+    }
+
     if (variant === 'page') {
       attachPaginationHandlers(el, 'likes', filtered.length, renderLikes)
     }
-  })
+  }
 
   updateLikePlayButtons()
   renderStats()
@@ -1316,6 +1480,11 @@ function getFilteredLikes() {
     const bpmOk = item.bpm >= filters.bpmMin && item.bpm <= filters.bpmMax
     const keyOk = filters.key === 'Any Key' || item.key === filters.key
     const starsOk = filters.stars === null || (item.rating ?? 3) === filters.stars
+
+    // Demo stems should always be shown regardless of scope
+    if (item.isDemo) {
+      return bpmOk && keyOk && starsOk
+    }
 
     let scopeOk = true
     if (likesScope === 'current') {
@@ -1521,51 +1690,174 @@ function renderLikeWaveforms(container, itemMap) {
   if (!canvases.length) return
 
   // Small delay to ensure DOM dimensions are calculated if we're in a transition
-  requestAnimationFrame(() => {
-    canvases.forEach(async (canvas) => {
+  requestAnimationFrame(async () => {
+    // Use for...of instead of forEach to properly handle async/await
+    for (const canvas of canvases) {
       const id = canvas.getAttribute('data-like-waveform')
       const item = itemMap.get(id)
 
       if (!item) {
         console.warn('renderLikeWaveforms: Item not found for ID', id)
-        return
+        continue
       }
 
       const rect = canvas.getBoundingClientRect()
       const width = rect.width || Number(canvas.getAttribute('width')) || 320
       const height = rect.height || Number(canvas.getAttribute('height')) || 64
 
-      // Update canvas internal resolution to match displayed size
-      // Multiplying by devicePixelRatio for sharper waveforms on retina screens
-      const dpr = window.devicePixelRatio || 1
-      canvas.width = width * dpr
-      canvas.height = height * dpr
-
-      const draw = (buf) => {
-        const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
-        drawTinyWaveform(canvas, buf, color, 'rgba(255,255,255,0.05)')
+      // Skip if canvas is not connected to DOM
+      if (!canvas.isConnected) {
+        if (item.isDemo) {
+          console.warn(`renderLikeWaveforms: [DEMO] Canvas not connected for ${item.id}, skipping`)
+        }
+        continue
       }
 
-      if (item.audioBuffer) {
-        draw(item.audioBuffer)
-      } else if (item.audioKey || item.audio_data) {
-        // Show placeholder while loading
+      // Set canvas dimensions
+      // IMPORTANT: Setting canvas.width/height clears the canvas!
+      // Only resize if dimensions actually changed to avoid unnecessary clearing
+      // Multiplying by devicePixelRatio for sharper waveforms on retina screens
+      const dpr = window.devicePixelRatio || 1
+      const newWidth = width * dpr
+      const newHeight = height * dpr
+      const currentWidth = canvas.width || 0
+      const currentHeight = canvas.height || 0
+
+      // Only resize if dimensions changed (prevents clearing already-drawn waveforms)
+      if (currentWidth !== newWidth || currentHeight !== newHeight) {
+        canvas.width = newWidth
+        canvas.height = newHeight
+      }
+
+      const draw = (buf) => {
+        if (!buf) {
+          console.warn(`renderLikeWaveforms: Cannot draw - buffer is null/undefined for ${item.id}`)
+          return
+        }
+        if (!canvas.isConnected) {
+          if (item.isDemo) {
+            console.warn(`renderLikeWaveforms: [DEMO] Canvas disconnected, cannot draw for ${item.id}`)
+          }
+          return
+        }
+        const color = `rgba(${getColorRGB(item.stemColor)},0.9)`
+        if (item.isDemo) {
+          console.log(`renderLikeWaveforms: [DEMO] Drawing waveform for ${item.id}, buffer duration: ${buf.duration.toFixed(2)}s, canvas size: ${canvas.width}x${canvas.height}`)
+        }
+        // drawTinyWaveform handles canvas dimensions correctly (uses canvas.width/height which are already scaled by dpr)
+        drawTinyWaveform(canvas, buf, color, 'rgba(255,255,255,0.05)')
+        if (item.isDemo) {
+          console.log(`renderLikeWaveforms: ✅ [DEMO] Waveform drawn successfully for ${item.id}`)
+        }
+      }
+
+      // Helper function to draw placeholder
+      const drawPlaceholder = () => {
         const ctx = canvas.getContext('2d')
-        if (ctx) {
-          ctx.fillStyle = 'rgba(255,255,255,0.08)'
-          ctx.fillRect(0, 0, canvas.width, canvas.height)
+        if (!ctx) return
+        ctx.fillStyle = 'rgba(255,255,255,0.08)'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        // Draw a simple placeholder pattern
+        ctx.fillStyle = `rgba(${getColorRGB(item.stemColor)},0.3)`
+        const centerY = canvas.height / 2
+        const barWidth = 2 * dpr
+        const spacing = 4 * dpr
+        for (let x = 0; x < canvas.width; x += spacing + barWidth) {
+          const barHeight = Math.random() * (canvas.height * 0.4) + (canvas.height * 0.1)
+          ctx.fillRect(x, centerY - barHeight / 2, barWidth, barHeight)
+        }
+      }
+
+      // Check persistent cache first, then item.audioBuffer
+      const cacheKey = item.audioKey || item.id
+      const cachedBuffer = audioBufferCache.get(cacheKey) || item.audioBuffer
+
+      if (cachedBuffer) {
+        // Use cached buffer (from persistent cache or item)
+        if (!item.audioBuffer) {
+          item.audioBuffer = cachedBuffer // Sync to item for consistency
+        }
+        if (item.isDemo) {
+          console.log(`renderLikeWaveforms: [DEMO] Using cached audioBuffer for ${item.id} (from ${audioBufferCache.has(cacheKey) ? 'persistent cache' : 'item cache'})`)
+        }
+        draw(cachedBuffer)
+      } else if (item.audioKey || item.audio_data) {
+        if (item.isDemo) {
+          console.log(`renderLikeWaveforms: [DEMO] No cached buffer, will load audio for ${item.id}, audioKey: ${item.audioKey}`)
+        }
+        // Try to load audio (including demo stems - files are now available)
+        // Show loading placeholder while fetching
+        const loadingCtx = canvas.getContext('2d')
+        if (loadingCtx) {
+          loadingCtx.fillStyle = 'rgba(255,255,255,0.05)'
+          loadingCtx.fillRect(0, 0, canvas.width, canvas.height)
+          // Show a subtle loading indicator
+          loadingCtx.fillStyle = `rgba(${getColorRGB(item.stemColor)},0.2)`
+          loadingCtx.fillRect(0, canvas.height / 2 - 1, canvas.width, 2)
         }
 
         try {
+          if (item.isDemo) {
+            console.log(`renderLikeWaveforms: [DEMO] Starting audio load for ${item.id}, audioKey: ${item.audioKey}`)
+          }
           const decoded = await loadLikeAudio(item)
-          if (decoded && canvas.isConnected) {
-            draw(decoded)
+          if (decoded) {
+            // Store the decoded buffer in both persistent cache and item for future use
+            const cacheKey = item.audioKey || item.id
+            audioBufferCache.set(cacheKey, decoded)
+            item.audioBuffer = decoded
+            if (item.isDemo) {
+              console.log(`renderLikeWaveforms: [DEMO] Audio decoded successfully for ${item.id}, duration: ${decoded.duration.toFixed(2)}s, cached with key: ${cacheKey}`)
+            }
+            // Only draw if canvas is still connected (not removed from DOM)
+            if (canvas.isConnected) {
+              // Clear canvas before drawing
+              const ctx = canvas.getContext('2d')
+              if (ctx) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height)
+              }
+              draw(decoded)
+              if (item.isDemo) {
+                console.log(`renderLikeWaveforms: ✅ [DEMO] Successfully rendered waveform for ${item.id}`)
+              }
+            } else {
+              if (item.isDemo) {
+                console.warn(`renderLikeWaveforms: [DEMO] Canvas disconnected, cannot draw for ${item.id}`)
+              }
+            }
+          } else {
+            // Decoded is null/undefined - loading failed
+            if (item.isDemo) {
+              console.error(`renderLikeWaveforms: [DEMO] ❌ Audio returned null for ${item.id}, audioKey: ${item.audioKey}`)
+              if (canvas.isConnected) {
+                drawPlaceholder()
+              }
+            }
           }
         } catch (err) {
-          console.error('renderLikeWaveforms: Error loading/drawing waveform', err)
+          // Loading failed with an error
+          console.error('renderLikeWaveforms: [ERROR] Loading waveform failed', {
+            itemId: item.id,
+            isDemo: item.isDemo,
+            audioKey: item.audioKey,
+            error: err.message || err
+          })
+          // Show placeholder for demo stems on error
+          if (item.isDemo && canvas.isConnected) {
+            console.warn(`renderLikeWaveforms: [DEMO] Showing placeholder due to error for ${item.id}`)
+            drawPlaceholder()
+          }
+        }
+      } else {
+        // No audioKey or audio_data available - show placeholder for demo stems only
+        if (item.isDemo) {
+          console.warn(`renderLikeWaveforms: [DEMO] No audioKey or audio_data for ${item.id}, showing placeholder`)
+          if (canvas.isConnected) {
+            drawPlaceholder()
+          }
         }
       }
-    })
+    }
   })
 }
 
@@ -1629,7 +1921,7 @@ function removeLike(stemId, takeIndex) {
   if (index >= 0) {
     const [removed] = likedTracks.splice(index, 1)
     stopPreviewForItem(removed)
-    renderLikes()
+    renderLikes().catch(err => console.error('Error rendering likes:', err))
     notifyLikeChange(stemId)
     persistLikesToLocalStorage()
   }
@@ -1650,11 +1942,13 @@ function updateLikePlayButtons() {
   window.lucide?.createIcons()
 }
 
-function renderSets() {
+async function renderSets() {
   const containers = getSetContainers()
   if (!containers.length) return
 
-  containers.forEach(({ el, variant }) => {
+  console.log('renderSets: stemStatesCache length:', stemStatesCache.length, 'stemStatesSyncInProgress:', stemStatesSyncInProgress)
+
+  for (const { el, variant } of containers) {
     if (stemStatesSyncInProgress) {
       el.innerHTML = `
         <div class="space-y-2">
@@ -1663,13 +1957,23 @@ function renderSets() {
           ${renderSetSkeleton(variant)}
         </div>
       `
-      return
+      continue
     }
 
     const filtered = getFilteredSets()
+    console.log('renderSets: filtered sets count:', filtered.length)
     if (!filtered.length) {
-      el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">No saved sets found. Save your current session from the player bar.</div>`
-      return
+      // Check if user is guest to show appropriate message
+      let isEmptyMessage = 'No saved sets found. Save your current session from the player bar.'
+      try {
+        const { getAuthGuard } = await import('../Auth/authGuard.js')
+        const guard = getAuthGuard()
+        if (!guard?.isAuthenticated) {
+          isEmptyMessage = 'No demo sets available. Sign up to create your own sets!'
+        }
+      } catch { }
+      el.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4">${isEmptyMessage}</div>`
+      continue
     }
 
     // Pagination logic for page variant
@@ -1703,10 +2007,17 @@ function renderSets() {
     el.querySelectorAll('[data-load-cloud-set]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const id = parseInt(btn.getAttribute('data-load-cloud-set'), 10)
-        const state = stemStatesCache.find(s => s.stem_state_id === id)
+        console.log('Loading cloud set, looking for id:', id, 'in cache:', stemStatesCache.length, 'items')
+        const state = stemStatesCache.find(s => s.stem_state_id === id || s.id === id)
+        console.log('Found state:', state ? 'yes' : 'no', state)
         if (state) {
+          console.log('Dispatching loadStemState event with state:', state.state_name || state.id)
+          console.log('State has stems_snapshot:', !!state.stems_snapshot)
+          // The event listener expects the full state object, which it will use state.stems_snapshot from
           window.dispatchEvent(new CustomEvent('loadStemState', { detail: state }))
           closeMenu()
+        } else {
+          console.error('Could not find state with id:', id, 'Available IDs:', stemStatesCache.map(s => s.stem_state_id || s.id))
         }
       })
     })
@@ -1719,7 +2030,7 @@ function renderSets() {
         const res = await deleteStemState(id)
         if (res.success) {
           stemStatesCache = stemStatesCache.filter(s => s.stem_state_id !== id)
-          renderSets()
+          await renderSets()
         } else {
           // showToast('Failed to delete set', 'error')
           console.error('Failed to delete set')
@@ -1732,7 +2043,7 @@ function renderSets() {
     if (variant === 'page') {
       attachRenameHandlers(el)
     }
-  })
+  }
 
   renderStats()
 }
@@ -1740,36 +2051,62 @@ function renderSets() {
 async function syncStemStates() {
   if (stemStatesSyncInProgress) return
   stemStatesSyncInProgress = true
-  renderSets() // Show skeletons
+  await renderSets() // Show skeletons
 
   try {
-    if (setsScope === 'all') {
-      const resAll = await getAllStemStates()
-      console.log('syncStemStates [All]: Got states', resAll.states?.length)
-      if (resAll.success && Array.isArray(resAll.states)) {
-        stemStatesCache = resAll.states
+    // Check if user is authenticated
+    let isAuthenticated = false
+    try {
+      const { getAuthGuard } = await import('../Auth/authGuard.js')
+      const guard = getAuthGuard()
+      isAuthenticated = guard?.isAuthenticated ?? false
+    } catch {
+      // If auth guard not available, assume unauthenticated
+      isAuthenticated = false
+    }
+
+    // For unauthenticated users (guests), load demo sets
+    if (!isAuthenticated) {
+      const { getDemoStemStates } = await import('../Auth/stemApi.js')
+      const demoResult = await getDemoStemStates()
+      console.log('syncStemStates [Guest]: Got demo states', demoResult.states?.length, 'Result:', demoResult)
+      if (demoResult.success && Array.isArray(demoResult.states)) {
+        stemStatesCache = demoResult.states
+        console.log('syncStemStates [Guest]: Set stemStatesCache to', stemStatesCache.length, 'items')
       } else {
+        console.warn('syncStemStates [Guest]: Failed to get demo states or empty result', demoResult)
         stemStatesCache = []
       }
     } else {
-      const sessionSettingId = resolveSessionId()
-      console.log('syncStemStates [Current]: Resolved sessionSettingId', sessionSettingId)
-
-      if (!sessionSettingId) {
-        console.log('syncStemStates [Current]: No session ID found, clearing list')
-        stemStatesCache = []
-        renderSets()
-        stemStatesSyncInProgress = false
-        return
-      }
-
-      console.log('syncStemStates [Current]: Calling getAllStemStates with', sessionSettingId)
-      const result = await getAllStemStates(sessionSettingId)
-      console.log('syncStemStates [Current]: result', result)
-      if (result.success && Array.isArray(result.states)) {
-        stemStatesCache = result.states
+      // Authenticated users: load their own sets
+      if (setsScope === 'all') {
+        const resAll = await getAllStemStates()
+        console.log('syncStemStates [All]: Got states', resAll.states?.length)
+        if (resAll.success && Array.isArray(resAll.states)) {
+          stemStatesCache = resAll.states
+        } else {
+          stemStatesCache = []
+        }
       } else {
-        stemStatesCache = []
+        const sessionSettingId = resolveSessionId()
+        console.log('syncStemStates [Current]: Resolved sessionSettingId', sessionSettingId)
+
+        if (!sessionSettingId) {
+          console.log('syncStemStates [Current]: No session ID found, clearing list')
+          stemStatesCache = []
+          await renderSets()
+          stemStatesSyncInProgress = false
+          return
+        }
+
+        console.log('syncStemStates [Current]: Calling getAllStemStates with', sessionSettingId)
+        const result = await getAllStemStates(sessionSettingId)
+        console.log('syncStemStates [Current]: result', result)
+        if (result.success && Array.isArray(result.states)) {
+          stemStatesCache = result.states
+        } else {
+          stemStatesCache = []
+        }
       }
     }
   } catch (err) {
@@ -1777,7 +2114,7 @@ async function syncStemStates() {
   } finally {
     stemStatesSyncInProgress = false
     // renderStemStates() // No longer rendering snapshots in Stems tab
-    renderSets()
+    await renderSets()
   }
 }
 
@@ -1786,17 +2123,19 @@ async function syncSavedStems() {
   savedStemsSyncInProgress = true
   renderSavedStems() // Show skeletons
 
+  console.log('[DEBUG] syncSavedStems: Starting sync...')
+
   try {
     let sessionSettingId = null
 
     // Determine session ID if needed
     if (stemsScope === 'current') {
       sessionSettingId = resolveSessionId()
-      console.log('syncSavedStems [Current]: Resolved sessionSettingId', sessionSettingId)
+      console.log('[DEBUG] syncSavedStems [Current]: Resolved sessionSettingId', sessionSettingId)
 
       // If filtering by current but no session ID, clear list
       if (!sessionSettingId) {
-        console.log('syncSavedStems [Current]: No session ID found, clearing list')
+        console.log('[DEBUG] syncSavedStems [Current]: No session ID found, clearing list')
         savedStemsCache = []
         renderSavedStems()
         savedStemsSyncInProgress = false
@@ -1806,26 +2145,28 @@ async function syncSavedStems() {
 
     // If scope is 'all', sessionSettingId remains null, which getUserStems interprets as "fetch all"
     // If scope is 'current', we pass the ID.
-    console.log('syncSavedStems: Calling getUserStems with scope:', stemsScope, 'ID:', sessionSettingId)
+    console.log('[DEBUG] syncSavedStems: Calling getUserStems with scope:', stemsScope, 'ID:', sessionSettingId)
     const res = await getUserStems(stemsScope === 'all' ? null : sessionSettingId)
-    console.log('syncSavedStems: API Response', res)
+    console.log('[DEBUG] syncSavedStems: API Response received', res)
 
     if (res.success && Array.isArray(res.stems)) {
-      console.log('syncSavedStems: Raw stems count:', res.stems.length)
+      console.log('[DEBUG] syncSavedStems: Raw stems count:', res.stems.length)
       // Relaxed filter: include those with audio_url OR audio_data (bytea check might be implied if url missing)
       // For now, let's log how many have audio_url
       const withUrl = res.stems.filter(s => s.audio_url && s.audio_url.trim() !== '')
-      console.log('syncSavedStems: Stems with audio_url:', withUrl.length)
+      const withData = res.stems.filter(s => s.audio_data)
+      console.log('[DEBUG] syncSavedStems: Stems with audio_url:', withUrl.length)
+      console.log('[DEBUG] syncSavedStems: Stems with audio_data:', withData.length)
 
       // If user wants to see their generated stems, we should probably show them even if no url yet
       savedStemsCache = res.stems.filter(s => (s.audio_url && s.audio_url.trim() !== '') || (s.audio_data))
-      console.log('syncSavedStems: Cache updated, final count:', savedStemsCache.length)
+      console.log('[DEBUG] syncSavedStems: Cache updated, final count:', savedStemsCache.length)
     } else {
-      console.warn('syncSavedStems: Failed to get stems or empty', res)
+      console.warn('[DEBUG] syncSavedStems: Failed to get stems or empty', res)
       savedStemsCache = []
     }
   } catch (err) {
-    console.error('Exception syncing saved stems:', err)
+    console.error('[DEBUG] Exception syncing saved stems:', err)
   } finally {
     savedStemsSyncInProgress = false
     renderSavedStems()
@@ -1834,7 +2175,7 @@ async function syncSavedStems() {
 
 export function setLikesScope(scope) {
   likesScope = scope === 'all' ? 'all' : 'current'
-  renderLikes()
+  renderLikes().catch(err => console.error('Error rendering likes:', err))
   renderStats()
 }
 
@@ -1843,7 +2184,7 @@ export function setSessionScope(scope) {
   likesScope = s
   setsScope = s
   stemsScope = s
-  renderLikes()
+  renderLikes().catch(err => console.error('Error rendering likes:', err))
     ; (async () => {
       await syncStemStates()
       await syncSavedStems()
@@ -1880,10 +2221,7 @@ function resolveSessionId() {
 
 function getStemContainers() {
   const containers = []
-  if (dropdownContentRendered) {
-    const dropdownList = dropdownEl?.querySelector('#stemsList')
-    if (dropdownList) containers.push(dropdownList)
-  }
+  // Note: Stems tab is not available in dropdown, only in favorites page
   if (favoritesPageRefs?.stemsList) containers.push(favoritesPageRefs.stemsList)
   return containers
 }
@@ -1999,13 +2337,17 @@ function renderStemSkeleton() {
 
 function renderSavedStems() {
   const containers = getStemContainers()
-  if (!containers.length) return
+  if (!containers.length) {
+    console.warn('[DEBUG] renderSavedStems: No container found!')
+    return
+  }
 
   const filtered = getFilteredSavedStems()
-  console.log('renderSavedStems: Rendering', {
-    total: savedStemsCache.length,
-    filtered: filtered.length,
-    containers: containers.length
+  console.log('[DEBUG] renderSavedStems: Rendering', {
+    totalInCache: savedStemsCache.length,
+    filteredCount: filtered.length,
+    containersCount: containers.length,
+    savedStemsSyncInProgress
   })
 
   containers.forEach((container) => {
@@ -2021,6 +2363,7 @@ function renderSavedStems() {
       return
     }
     if (!filtered.length) {
+      console.log('[DEBUG] renderSavedStems: filtered list is empty. Cache size:', savedStemsCache.length)
       if (savedStemsCache.length > 0) {
         container.innerHTML = `<div class="text-sm text-white/60 bg-white/5 border border-white/10 rounded-xl p-4"> No saved stems match the current filters.</div> `
       } else {
@@ -2234,7 +2577,7 @@ function renderSavedStemWaveforms(container, itemMap) {
       if (item.audioBuffer) {
         draw(item.audioBuffer)
       } else if (item.audioKey || item.audio_data) {
-        console.log('renderSavedStemWaveforms: Loading audio for', id)
+        console.log('[DEBUG] renderSavedStemWaveforms: Loading audio for', id, { audioKey: item.audioKey, hasData: !!item.audio_data })
         const ctx = canvas.getContext('2d')
         if (ctx) {
           ctx.fillStyle = 'rgba(255,255,255,0.08)'
@@ -2242,16 +2585,19 @@ function renderSavedStemWaveforms(container, itemMap) {
         }
         try {
           const decoded = await loadLikeAudio(item)
-          if (decoded && canvas.isConnected) {
-            draw(decoded)
+          if (decoded) {
+            console.log('[DEBUG] renderSavedStemWaveforms: Audio loaded. Canvas connected:', canvas.isConnected)
+            if (canvas.isConnected) {
+              draw(decoded)
+            }
           } else {
-            console.warn('renderSavedStemWaveforms: Failed to decode or canvas disconnected', id)
+            console.warn('[DEBUG] renderSavedStemWaveforms: loadLikeAudio returned null for', id)
           }
         } catch (err) {
-          console.error('renderSavedStemWaveforms: Error', err)
+          console.error('[DEBUG] renderSavedStemWaveforms: Error', err)
         }
       } else {
-        console.warn('renderSavedStemWaveforms: No audio data available for', id)
+        console.warn('[DEBUG] renderSavedStemWaveforms: No audio data available for', id)
       }
     })
   })
@@ -2389,6 +2735,7 @@ function getFilteredSets() {
     const totalTakes = meta.totalTakes ?? Object.values(snapshot.stems || {}).reduce((sum, stem) => sum + (stem?.takes?.length || 0), 0)
     const timestamp = new Date(item.created_at).getTime()
     const rating = meta.rating ?? 3
+    const isDemo = meta.is_demo === true
     return {
       type: 'cloud',
       item,
@@ -2400,7 +2747,8 @@ function getFilteredSets() {
       totalTakes,
       name: item.state_name || `Cloud Set ${item.stem_state_id}`,
       timestamp,
-      rating
+      rating,
+      isDemo
     }
   })
 
@@ -2416,11 +2764,13 @@ function getFilteredSets() {
 
 
 function renderSetCard(entry, variant = 'dropdown') {
-  const { type, id, bpm, key, bars, name, activeStemCount, totalTakes, rating } = entry
+  const { type, id, bpm, key, bars, name, activeStemCount, totalTakes, rating, item } = entry
   const label = name
   const displayRating = rating ?? 3
 
   const isLocal = type === 'local'
+  // Check if this is a demo set
+  const isDemo = item?.stems_snapshot?.metadata?.is_demo === true
 
   if (variant === 'page') {
     return `
@@ -2434,6 +2784,7 @@ function renderSetCard(entry, variant = 'dropdown') {
           </div>
           <div class="flex flex-wrap items-center gap-2 text-[12px] text-white/70">
             ${!isLocal ? '<span class="px-2 py-1 rounded-lg bg-blue-500/20 border border-blue-400/30 text-blue-200">Cloud</span>' : ''}
+            ${isDemo ? '<span class="px-2 py-1 rounded-lg bg-purple-500/20 border border-purple-400/30 text-purple-200" title="Demo Set">Demo</span>' : ''}
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${bpm} BPM</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${bars} bars</span>
             <span class="px-2 py-1 rounded-lg bg-white/5 border border-white/10">${key}</span>
@@ -2454,9 +2805,9 @@ function renderSetCard(entry, variant = 'dropdown') {
           ${isLocal
         ? `<button data-load-set="${id}" class="text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>`
         : `<div class="flex gap-2">
-                 <button data-delete-cloud-set="${id}" class="text-sm px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 hover:bg-red-500/20 text-red-200 w-full sm:w-auto" title="Delete from cloud">
+                 ${!isDemo ? `<button data-delete-cloud-set="${id}" class="text-sm px-3 py-2 rounded-lg border border-red-400/30 bg-red-500/10 hover:bg-red-500/20 text-red-200 w-full sm:w-auto" title="Delete from cloud">
                    <i data-lucide="trash-2" class="w-4 h-4"></i>
-                 </button>
+                 </button>` : ''}
                  <button data-load-cloud-set="${id}" class="flex-1 text-sm px-4 py-2 rounded-lg border border-purple-400/60 bg-purple-500/20 hover:bg-purple-500/30 w-full sm:w-auto">Load set</button>
                </div>`
       }
@@ -2474,7 +2825,7 @@ function renderSetCard(entry, variant = 'dropdown') {
             ${renderStarRating(displayRating, isLocal ? id.toString() : 'cloud-' + id, 'sm', true)}
           </div>
         </div>
-        <div class="text-xs text-white/60">${!isLocal ? 'Cloud · ' : ''}${bpm} BPM · ${bars} bars · ${key}</div>
+        <div class="text-xs text-white/60">${!isLocal ? 'Cloud' + (isDemo ? ' · Demo' : '') + ' · ' : ''}${bpm} BPM · ${bars} bars · ${key}</div>
       </div>
       ${isLocal
       ? `<button data-load-set="${id}" class="text-sm text-purple-300 hover:text-white ml-3 flex-shrink-0">Load</button>`
@@ -2549,13 +2900,149 @@ function persistLikesToLocalStorage() {
 async function syncLikesWithCloud() {
   if (cloudSyncInProgress) return
   cloudSyncInProgress = true
-  renderLikes() // Show skeletons
+  await renderLikes() // Show skeletons
   try {
+    // Check if user is authenticated
+    let isAuthenticated = false
+    try {
+      const { getAuthGuard } = await import('../Auth/authGuard.js')
+      const guard = getAuthGuard()
+      isAuthenticated = guard?.isAuthenticated ?? false
+    } catch {
+      isAuthenticated = false
+    }
+
+    // For unauthenticated users, extract demo stems from demo sets
+    if (!isAuthenticated) {
+      const { getDemoStemStates } = await import('../Auth/stemApi.js')
+      const demoResult = await getDemoStemStates()
+      console.log('syncLikesWithCloud [Guest]: Got demo sets', demoResult.states?.length)
+
+      if (demoResult.success && Array.isArray(demoResult.states)) {
+        // Extract individual stems from demo sets
+        const demoStems = []
+        console.log('syncLikesWithCloud [Guest]: Processing', demoResult.states.length, 'demo sets')
+
+        demoResult.states.forEach((demoSet, setIndex) => {
+          const snapshot = demoSet.stems_snapshot
+          console.log(`syncLikesWithCloud [Guest]: Set ${setIndex}:`, {
+            hasSnapshot: !!snapshot,
+            snapshotKeys: snapshot ? Object.keys(snapshot) : [],
+            setId: demoSet.id || demoSet.stem_state_id
+          })
+
+          if (!snapshot) {
+            console.warn(`syncLikesWithCloud [Guest]: Set ${setIndex} has no snapshot`)
+            return
+          }
+
+          // Handle nested structure: stems_snapshot.stems.stems or stems_snapshot.stems
+          const stemsData = snapshot.stems
+          console.log(`syncLikesWithCloud [Guest]: Set ${setIndex} stemsData:`, {
+            hasStemsData: !!stemsData,
+            stemsDataType: typeof stemsData,
+            stemsDataKeys: stemsData ? Object.keys(stemsData) : []
+          })
+
+          if (!stemsData) {
+            console.warn(`syncLikesWithCloud [Guest]: Set ${setIndex} has no stemsData`)
+            return
+          }
+
+          // Get actual stems object (could be nested)
+          const stems = stemsData.stems || stemsData
+          console.log(`syncLikesWithCloud [Guest]: Set ${setIndex} stems:`, {
+            hasStems: !!stems,
+            stemsType: typeof stems,
+            stemsKeys: stems && typeof stems === 'object' ? Object.keys(stems) : [],
+            isArray: Array.isArray(stems)
+          })
+
+          if (!stems || typeof stems !== 'object') {
+            console.warn(`syncLikesWithCloud [Guest]: Set ${setIndex} has invalid stems structure`)
+            return
+          }
+
+          // Get metadata from either location
+          const metadata = snapshot.metadata || stemsData.metadata || {}
+          console.log(`syncLikesWithCloud [Guest]: Set ${setIndex} metadata:`, metadata)
+
+          let stemsProcessed = 0
+          let stemsAdded = 0
+
+          Object.entries(stems).forEach(([stemType, stemData]) => {
+            stemsProcessed++
+            console.log(`syncLikesWithCloud [Guest]: Set ${setIndex} stem "${stemType}":`, {
+              stemDataType: typeof stemData,
+              stemDataKeys: stemData && typeof stemData === 'object' ? Object.keys(stemData) : [],
+              activeIndex: stemData?.activeIndex,
+              hasAudioKey: !!stemData?.audioKey,
+              audioKey: stemData?.audioKey
+            })
+
+            // Only include stems that have audio (activeIndex >= 0 and audioKey)
+            if (stemData && typeof stemData === 'object' &&
+              stemData.activeIndex !== undefined &&
+              stemData.activeIndex >= 0 &&
+              stemData.audioKey) {
+              stemsAdded++
+              demoStems.push({
+                id: `demo-${demoSet.stem_state_id || demoSet.id}-${stemType}-${stemData.activeIndex}`,
+                stemId: stemType,
+                takeIndex: stemData.activeIndex,
+                stemName: stemType.charAt(0).toUpperCase() + stemType.slice(1),
+                stemColor: getStemColor(stemType),
+                bpm: metadata.tempo || 132,
+                key: metadata.key || 'A Minor',
+                bars: metadata.bars || 8,
+                audioBuffer: null,
+                audioKey: stemData.audioKey,
+                timestamp: metadata.timestamp || Date.now(),
+                rating: 3,
+                isDemo: true
+              })
+            } else {
+              console.log(`syncLikesWithCloud [Guest]: Set ${setIndex} stem "${stemType}" skipped:`, {
+                hasObject: stemData && typeof stemData === 'object',
+                activeIndexDefined: stemData?.activeIndex !== undefined,
+                activeIndexValid: stemData?.activeIndex >= 0,
+                hasAudioKey: !!stemData?.audioKey
+              })
+            }
+          })
+
+          console.log(`syncLikesWithCloud [Guest]: Set ${setIndex} summary:`, {
+            processed: stemsProcessed,
+            added: stemsAdded
+          })
+        })
+
+        console.log('syncLikesWithCloud [Guest]: Extracted demo stems', demoStems.length, 'Sample:', demoStems[0])
+        console.log('syncLikesWithCloud [Guest]: likedTracks before update:', likedTracks.length)
+        if (demoStems.length > 0) {
+          likedTracks.splice(0, likedTracks.length, ...demoStems)
+          console.log('syncLikesWithCloud [Guest]: likedTracks after update:', likedTracks.length)
+          persistLikesToLocalStorage()
+        } else {
+          console.warn('syncLikesWithCloud [Guest]: No demo stems extracted from demo sets')
+          likedTracks.splice(0, likedTracks.length)
+        }
+        cloudSyncInProgress = false
+        console.log('syncLikesWithCloud [Guest]: Calling renderLikes, likedTracks.length:', likedTracks.length)
+        await renderLikes()
+        console.log('syncLikesWithCloud [Guest]: renderLikes completed')
+        return
+      } else {
+        console.warn('syncLikesWithCloud [Guest]: Failed to get demo sets or result is not an array', demoResult)
+      }
+    }
+
+    // Authenticated users: fetch their likes from cloud
     const { getUserLikes } = await import('../Auth/stemApi.js')
     const res = await getUserLikes()
     if (!res.success) {
       cloudSyncInProgress = false
-      renderLikes()
+      await renderLikes()
       return
     }
 
@@ -2589,7 +3076,24 @@ async function syncLikesWithCloud() {
     console.error('syncLikesWithCloud: Error', err)
   } finally {
     cloudSyncInProgress = false
-    renderLikes()
+    await renderLikes()
   }
+}
+
+// Helper function to get stem color based on stem type
+function getStemColor(stemType) {
+  const colorMap = {
+    kick: 'red',
+    snare: 'orange',
+    hihat: 'yellow',
+    bass: 'green',
+    lead: 'blue',
+    pad: 'purple',
+    arp: 'pink',
+    fx: 'cyan',
+    perc: 'amber',
+    perc2: 'amber'
+  }
+  return colorMap[stemType.toLowerCase()] || 'purple'
 }
 

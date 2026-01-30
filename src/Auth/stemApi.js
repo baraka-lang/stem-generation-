@@ -1159,6 +1159,46 @@ export async function getAllStemStates(sessionSettingId = null) {
 }
 
 /**
+ * Get demo stem states for unauthenticated users (guests)
+ * @returns {Promise<{success: boolean, states?: Array, error?: string}>}
+ */
+export async function getDemoStemStates() {
+  if (!supabase) {
+    return { success: false, error: 'Supabase not configured' }
+  }
+  try {
+    // Query demo_state_sets table - no RLS restrictions, accessible to everyone
+    const { data, error } = await supabase
+      .from('demo_state_sets')
+      .select('*')
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false })
+      .limit(10) // Limit to prevent excessive data transfer
+
+    if (error) {
+      console.error('getDemoStemStates error:', error, 'Code:', error.code, 'Message:', error.message)
+      return { success: false, error: error.message }
+    }
+
+    console.log('getDemoStemStates: Raw data count:', data?.length || 0)
+    
+    // Map demo_state_sets structure to match stem_states structure for compatibility
+    // demo_state_sets uses 'id' instead of 'stem_state_id'
+    const demoStates = (data || []).map(state => ({
+      ...state,
+      stem_state_id: state.id, // Add stem_state_id for compatibility with existing code
+      session_settings_id: null // Demo sets don't belong to a user session
+    }))
+
+    console.log('getDemoStemStates: Mapped demo states count:', demoStates.length)
+    return { success: true, states: demoStates }
+  } catch (err) {
+    console.error('Exception fetching demo stem states:', err)
+    return { success: false, error: err.message }
+  }
+}
+
+/**
  * Delete a stem state (soft delete)
  * @param {number} stemStateId - ID of the stem state
  * @returns {Promise<{success: boolean, error?: string}>}
